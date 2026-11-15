@@ -1,0 +1,145 @@
+from assetindex.cli import main
+from assetindex.db import connect
+
+
+def test_missing_root_is_reported_and_other_roots_still_scanned(monkeypatch, tmp_path, asset_root):
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("ASSET_ROOTS", f"gone={tmp_path / 'unmounted'};art={asset_root}")
+    monkeypatch.setenv("ASSET_DATA_DIR", str(data_dir))
+
+    exit_code = main(["scan"])
+
+    assert exit_code == 1
+    conn = connect(data_dir / "index.db")
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM files WHERE root = 'art'").fetchone()[0] == 5
+    finally:
+        conn.close()
+
+
+def test_unknown_root_name_returns_2(monkeypatch, tmp_path, asset_root):
+    monkeypatch.setenv("ASSET_ROOTS", f"art={asset_root}")
+    monkeypatch.setenv("ASSET_DATA_DIR", str(tmp_path / "data"))
+    assert main(["scan", "--root", "nope"]) == 2
+
+
+def _env(monkeypatch, tmp_path, asset_root):
+    monkeypatch.setenv("ASSET_ROOTS", f"art={asset_root}")
+    monkeypatch.setenv("ASSET_DATA_DIR", str(tmp_path / "data"))
+    return tmp_path / "data"
+
+
+def test_scan_refuses_to_run_while_another_scan_holds_the_lock(monkeypatch, tmp_path, asset_root):
+    from assetindex.scanlock import scan_lock
+
+    data_dir = _env(monkeypatch, tmp_path, asset_root)
+    with scan_lock(data_dir):
+        assert main(["scan"]) == 3
+
+
+def test_scan_prunes_orphan_thumbnails(monkeypatch, tmp_path, asset_root):
+    import os
+
+    data_dir = _env(monkeypatch, tmp_path, asset_root)
+    orphan = data_dir / "thumbs" / "999" / "999999_1.webp"
+    orphan.parent.mkdir(parents=True)
+    orphan.write_bytes(b"x")
+    os.utime(orphan, (1, 1))
+
+    assert main(["scan"]) == 0
+    assert not orphan.exists()
+
+
+def test_retry_errors_forgets_crashed_attempts(monkeypatch, tmp_path, asset_root):
+    from assetindex.attempts import begin
+
+    data_dir = _env(monkeypatch, tmp_path, asset_root)
+    conn = connect(data_dir / "index.db")
+    try:
+        begin(conn, 42, "list")
+    finally:
+        conn.close()
+
+    main(["scan", "--retry-errors"])
+
+    conn = connect(data_dir / "index.db")
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM scan_attempts").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
+def test_scan_every_repeats_until_stopped(monkeypatch, tmp_path, asset_root):
+    from assetindex import cli
+
+    _env(monkeypatch, tmp_path, asset_root)
+    runs, sleeps = [], []
+    monkeypatch.setattr(cli, "_scan", lambda *a: runs.append(a) or 0)
+
+    def fake_sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.time, "sleep", fake_sleep)
+
+    assert main(["scan", "--every", "60"]) == 0
+    assert len(runs) == 2 and sleeps == [60, 60]
+
+
+def test_check_command_reports_failures_with_nonzero_exit(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("ASSET_ROOTS", f"gone={tmp_path / 'missing'}")
+    monkeypatch.setenv("ASSET_DATA_DIR", str(tmp_path / "data"))
+
+    assert main(["check"]) == 1
+    out = capsys.readouterr().out
+    assert "FAIL" in out and "root gone readable" in out
+
+
+def test_sigterm_unwinds_so_attempts_are_not_counted_as_crashes():
+    import signal
+
+    import pytest
+
+    from assetindex import cli
+
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        cli._exit_on_sigterm()
+        handler = signal.getsignal(signal.SIGTERM)
+        with pytest.raises(SystemExit):
+            handler(signal.SIGTERM, None)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def test_scan_every_survives_a_failed_round(monkeypatch, tmp_path, asset_root):
+    from assetindex import cli
+
+    _env(monkeypatch, tmp_path, asset_root)
+    calls = []
+
+    def flaky(*a):
+        calls.append(a)
+        if len(calls) == 1:
+            raise RuntimeError("database is locked")
+        return 0
+
+    def stop_on_second_sleep(seconds, _count=[]):
+        _count.append(seconds)
+        if len(_count) == 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "_scan", flaky)
+    monkeypatch.setattr(cli.time, "sleep", stop_on_second_sleep)
+
+    assert main(["scan", "--every", "60"]) == 0
+    assert len(calls) == 2
+
+
+def test_scan_every_rejects_non_positive_interval(monkeypatch, tmp_path, asset_root):
+    import pytest
+
+    _env(monkeypatch, tmp_path, asset_root)
+    with pytest.raises(SystemExit):
+        main(["scan", "--every", "0"])

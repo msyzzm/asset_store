@@ -1,0 +1,17 @@
+# Keep the build context small and never bake the local index/thumbnails into the image.
+data/
+.venv/
+.git/
+.pytest_cache/
+.ruff_cache/
+.coverage
+tmp*/
+pytest-of-*/
+**/__pycache__/
+tests/
+docs/
+.env
+*.db
+*.sqlite*
+*.pem
+*.key

@@ -1,0 +1,30 @@
+[project]
+name = "assetindex"
+version = "0.1.0"
+description = "Index and browse game art/audio/package assets on a NAS"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "pillow>=10.4",
+    "py7zr>=1.1.4",
+    "rarfile>=4.5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+    "pytest-cov>=7.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["assetindex"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

@@ -1,0 +1,43 @@
+# Copy .env.example to .env and edit it, then: docker compose up -d --build
+# Both services share one image and one data volume. The scanner writes the index; the
+# web process reads it and writes on-demand thumbnails.
+
+x-app: &app
+  build: .
+  image: assetindex:latest
+  restart: unless-stopped
+  init: true  # forwards SIGTERM so `docker compose stop` doesn't wait 10s and SIGKILL
+  # Both parse untrusted archives and images: no extra privileges for a compromised parser.
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  environment:
+    ASSET_ROOTS: ${ASSET_ROOTS:-nas=/assets}
+    ASSET_THUMB_CACHE_MB: ${ASSET_THUMB_CACHE_MB:-4096}
+  volumes:
+    # The NAS, read-only: nothing here ever writes to it.
+    - ${ASSET_NAS_PATH:?set ASSET_NAS_PATH in .env}:/assets:ro
+    # Index + thumbnails. Must be local disk (SQLite WAL and file locks break on NFS).
+    - asset-data:/data
+
+services:
+  web:
+    <<: *app
+    ports:
+      # No login: publish on the LAN address only (Docker port rules bypass ufw).
+      - "${ASSET_BIND:?set ASSET_BIND to the LXC LAN IP in .env}:${ASSET_PORT:-8000}:8000"
+    # Up to 4 thumbnail renders of 50-megapixel images at once, ~200 MB each while decoding.
+    mem_limit: ${WEB_MEM_LIMIT:-2g}
+
+  scanner:
+    <<: *app
+    command: ["python", "-m", "assetindex", "scan", "--every", "${SCAN_INTERVAL_SECONDS:-21600}"]
+    healthcheck:
+      disable: true
+    # An archive that blows past this gets the scanner killed; after 2 such kills the
+    # archive is marked bad and skipped (see assetindex/attempts.py).
+    mem_limit: ${SCANNER_MEM_LIMIT:-3g}
+
+volumes:
+  asset-data:

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>素材库</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- three.js is vendored (the server may have no internet) and only loaded when a model is opened. -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/vendor/three/build/three.module.min.js",
+        "three/addons/": "/vendor/three/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <header class="bar">
+    <h1>素材库</h1>
+    <input id="q" type="search" placeholder="搜索文件名或路径，空格分隔多个词" autocomplete="off" autofocus>
+    <select id="kind" aria-label="类型">
+      <option value="">全部类型</option>
+      <option value="image">图片</option>
+      <option value="audio">音频</option>
+      <option value="video">视频</option>
+      <option value="model">模型</option>
+      <option value="archive">压缩包</option>
+      <option value="unreal">Unreal</option>
+      <option value="other">其他</option>
+    </select>
+  </header>
+  <p id="stats" class="stats"></p>
+  <p id="summary" class="summary"></p>
+  <main id="grid" class="grid"></main>
+  <button id="more" class="more" type="button" hidden>加载更多</button>
+
+  <dialog id="viewer" class="viewer">
+    <div class="viewer-head">
+      <h2 id="v-name"></h2>
+      <button id="v-close" class="icon-btn" type="button" aria-label="关闭">✕</button>
+    </div>
+    <div id="v-preview" class="viewer-preview"></div>
+    <dl id="v-meta" class="viewer-meta"></dl>
+    <div class="viewer-actions">
+      <a id="v-download" class="btn">下载</a>
+      <button id="v-copy" class="btn secondary" type="button">复制路径</button>
+    </div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

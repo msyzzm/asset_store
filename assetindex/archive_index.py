@@ -1,0 +1,105 @@
+"""Keep the `archives` / `archive_entries` tables in sync with archive files on disk."""
+
+import logging
+import sqlite3
+from dataclasses import dataclass
+from pathlib import Path
+
+from assetindex import attempts
+from assetindex.archives import ARCHIVE_EXTS, ArchiveError, ArchiveListing, list_archive
+
+log = logging.getLogger(__name__)
+
+MAX_ERROR_LENGTH = 300
+STAGE = "list"
+CRASH_ERROR = "scanner was killed while reading this archive (out of memory?)"
+
+
+@dataclass(frozen=True)
+class ArchiveStats:
+    listed: int
+    failed: int  # corrupt/encrypted: recorded, retried only when the file changes
+    unreadable: int  # I/O errors: nothing recorded, retried next scan
+    unchanged: int
+
+
+def _ext_of(path: str) -> str:
+    name = path.rsplit("/", 1)[-1]
+    return name.rsplit(".", 1)[-1].lower() if "." in name else ""
+
+
+def _store(
+    conn: sqlite3.Connection, file_id: int, size: int, mtime: float,
+    listing: ArchiveListing | None, error: str | None,
+) -> None:
+    conn.execute("DELETE FROM archive_entries WHERE file_id = ?", (file_id,))
+    entries = listing.entries if listing else ()
+    conn.executemany(
+        "INSERT INTO archive_entries (file_id, path, ext, size, guid, has_preview) VALUES (?, ?, ?, ?, ?, ?)",
+        [(file_id, e.path, _ext_of(e.path), e.size, e.guid, int(e.has_preview)) for e in entries],
+    )
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO archives
+            (file_id, size, mtime, status, error, entry_count, truncated, engine, engine_version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            file_id, size, mtime, "error" if error else "ok", error, len(entries),
+            int(bool(listing and listing.truncated)),
+            listing.engine if listing else None, listing.engine_version if listing else None,
+        ),
+    )
+
+
+def index_archives(
+    conn: sqlite3.Connection, root_name: str, root: Path, retry_errors: bool = False
+) -> ArchiveStats:
+    """List every new or changed archive under one root. Commits per archive, so an
+    interrupted run resumes where it stopped. retry_errors relists archives recorded as
+    bad (e.g. after upgrading a parser library)."""
+    placeholders = ",".join("?" * len(ARCHIVE_EXTS))
+    rows = conn.execute(
+        f"""
+        SELECT f.id, f.rel_path, f.ext, f.size, f.mtime, a.size AS a_size, a.mtime AS a_mtime, a.status
+        FROM files f LEFT JOIN archives a ON a.file_id = f.id
+        WHERE f.root = ? AND f.ext IN ({placeholders})
+        """,
+        (root_name, *sorted(ARCHIVE_EXTS)),
+    ).fetchall()
+
+    counts = {"listed": 0, "failed": 0, "unreadable": 0, "unchanged": 0}
+    for row in rows:
+        retry = retry_errors and row["status"] == "error"
+        if not retry and (row["a_size"], row["a_mtime"]) == (row["size"], row["mtime"]):
+            counts["unchanged"] += 1
+            continue
+        if not attempts.begin(conn, row["id"], STAGE):
+            log.warning("archive %r killed the scanner %d times; marked bad", row["rel_path"], attempts.MAX_ATTEMPTS)
+            with conn:
+                _store(conn, row["id"], row["size"], row["mtime"], None, CRASH_ERROR)
+            attempts.finish(conn, row["id"], STAGE)  # a changed file gets a fresh chance
+            counts["failed"] += 1
+            continue
+        try:
+            counts[_list_one(conn, root, row)] += 1
+        finally:
+            attempts.finish(conn, row["id"], STAGE)
+    return ArchiveStats(**counts)
+
+
+def _list_one(conn: sqlite3.Connection, root: Path, row: sqlite3.Row) -> str:
+    try:
+        listing = list_archive(root / row["rel_path"], row["ext"])
+    except (OSError, MemoryError) as err:
+        # Transient (NAS hiccup, memory pressure): keep old entries, retry next scan.
+        log.warning("cannot read archive %r: %r", row["rel_path"], err)
+        return "unreadable"
+    except ArchiveError as err:
+        log.info("bad archive %r: %s", row["rel_path"], err)
+        with conn:
+            _store(conn, row["id"], row["size"], row["mtime"], None, str(err)[:MAX_ERROR_LENGTH] or "unreadable")
+        return "failed"
+    with conn:
+        _store(conn, row["id"], row["size"], row["mtime"], listing, None)
+    return "listed"

@@ -1,0 +1,140 @@
+"""SQLite schema and connection helper."""
+
+import sqlite3
+from pathlib import Path
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS files (
+    id       INTEGER PRIMARY KEY,
+    root     TEXT    NOT NULL,
+    rel_path TEXT    NOT NULL,
+    name     TEXT    NOT NULL,
+    ext      TEXT    NOT NULL,
+    kind     TEXT    NOT NULL,
+    size     INTEGER NOT NULL,
+    mtime    REAL    NOT NULL,
+    scan_id  INTEGER NOT NULL,
+    seq_key    TEXT,     -- see assetindex/sequences.py
+    seq_index  INTEGER,
+    seq_frames INTEGER,
+    UNIQUE (root, rel_path)
+);
+CREATE INDEX IF NOT EXISTS idx_files_kind ON files(kind);
+CREATE INDEX IF NOT EXISTS idx_files_rel_path ON files(rel_path, id);
+CREATE INDEX IF NOT EXISTS idx_files_root_scan ON files(root, scan_id);
+
+-- Trigram index makes LIKE '%term%' fast for terms of 3+ chars;
+-- shorter terms (e.g. 2-char Chinese) still work via a full scan.
+CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
+    rel_path, content='files', content_rowid='id', tokenize='trigram'
+);
+CREATE TRIGGER IF NOT EXISTS files_ai AFTER INSERT ON files BEGIN
+    INSERT INTO files_fts(rowid, rel_path) VALUES (new.id, new.rel_path);
+END;
+CREATE TRIGGER IF NOT EXISTS files_ad AFTER DELETE ON files BEGIN
+    INSERT INTO files_fts(files_fts, rowid, rel_path) VALUES ('delete', old.id, old.rel_path);
+END;
+-- Only rel_path is indexed; rescans that just bump scan_id/size don't touch FTS.
+CREATE TRIGGER IF NOT EXISTS files_au AFTER UPDATE OF rel_path ON files BEGIN
+    INSERT INTO files_fts(files_fts, rowid, rel_path) VALUES ('delete', old.id, old.rel_path);
+    INSERT INTO files_fts(rowid, rel_path) VALUES (new.id, new.rel_path);
+END;
+
+-- Archive contents (see assetindex/archive_index.py). size/mtime are the archive file's
+-- values when listed: a mismatch with `files` means it must be listed again.
+CREATE TABLE IF NOT EXISTS archives (
+    file_id        INTEGER PRIMARY KEY,
+    size           INTEGER NOT NULL,
+    mtime          REAL    NOT NULL,
+    status         TEXT    NOT NULL,  -- 'ok' | 'error'
+    error          TEXT,
+    entry_count    INTEGER NOT NULL DEFAULT 0,
+    truncated      INTEGER NOT NULL DEFAULT 0,
+    engine         TEXT,              -- 'unreal' | 'unity' | NULL
+    engine_version TEXT,              -- inferred from folder names, e.g. '5.1'
+    preview_state  INTEGER            -- NULL pending, 0 nothing to show, 1 sheet built
+);
+CREATE TABLE IF NOT EXISTS archive_entries (
+    id          INTEGER PRIMARY KEY,
+    file_id     INTEGER NOT NULL,
+    path        TEXT    NOT NULL,
+    ext         TEXT    NOT NULL,
+    size        INTEGER NOT NULL,
+    guid        TEXT,                 -- unitypackage asset folder
+    has_preview INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_entries_file ON archive_entries(file_id, path);
+-- Archives the scanner was working on when it last died (see assetindex/attempts.py).
+CREATE TABLE IF NOT EXISTS scan_attempts (
+    file_id  INTEGER NOT NULL,
+    stage    TEXT    NOT NULL,  -- 'list' | 'preview'
+    attempts INTEGER NOT NULL,
+    PRIMARY KEY (file_id, stage)
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
+    path, content='archive_entries', content_rowid='id', tokenize='trigram'
+);
+CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON archive_entries BEGIN
+    INSERT INTO entries_fts(rowid, path) VALUES (new.id, new.path);
+END;
+CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON archive_entries BEGIN
+    INSERT INTO entries_fts(entries_fts, rowid, path) VALUES ('delete', old.id, old.path);
+END;
+-- A trigger rather than ON DELETE CASCADE: foreign keys are off unless enabled per connection.
+CREATE TRIGGER IF NOT EXISTS files_ad_archive AFTER DELETE ON files BEGIN
+    DELETE FROM archive_entries WHERE file_id = old.id;
+    DELETE FROM archives WHERE file_id = old.id;
+END;
+-- Separate trigger so databases created before scan_attempts existed get it too.
+CREATE TRIGGER IF NOT EXISTS files_ad_attempts AFTER DELETE ON files BEGIN
+    DELETE FROM scan_attempts WHERE file_id = old.id;  -- ids get reused
+END;
+"""
+
+# Columns added after the first release; old databases get them via ALTER TABLE.
+ADDED_COLUMNS = (
+    ("files", "seq_key", "TEXT"),
+    ("files", "seq_index", "INTEGER"),
+    ("files", "seq_frames", "INTEGER"),
+    ("archives", "preview_state", "INTEGER"),
+)
+# Created after migration, since they reference added columns.
+POST_MIGRATION_SQL = (
+    "CREATE INDEX IF NOT EXISTS idx_files_seq ON files(root, seq_key, seq_index)",
+    # Maps a matched hidden frame to its sequence head during search.
+    "CREATE INDEX IF NOT EXISTS idx_files_seq_head ON files(root, seq_key) WHERE seq_frames > 0",
+)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    existing = {
+        table: {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        for table in {t for t, _, _ in ADDED_COLUMNS}
+    }
+    with conn:
+        for table, name, sql_type in ADDED_COLUMNS:
+            if name not in existing[table]:
+                try:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}")
+                except sqlite3.OperationalError as err:
+                    # Web server and scanner may migrate the same old DB at once.
+                    if "duplicate column" not in str(err):
+                        raise
+        for sql in POST_MIGRATION_SQL:
+            conn.execute(sql)
+
+
+def connect(db_path: Path, init_schema: bool = True) -> sqlite3.Connection:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    # FastAPI may run a request's dependency and handler on different threadpool threads.
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    # Keep SQLite temp files (statement journals, FTS merges) in memory: the system
+    # temp dir may be unwritable or scanned by antivirus, which fails big transactions.
+    conn.execute("PRAGMA temp_store=MEMORY")
+    if init_schema:
+        conn.executescript(SCHEMA)
+        _migrate(conn)
+    return conn
