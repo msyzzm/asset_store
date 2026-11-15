@@ -227,3 +227,41 @@ def test_scan_every_rejects_non_positive_interval(monkeypatch, tmp_path, asset_r
     _env(monkeypatch, tmp_path, asset_root)
     with pytest.raises(SystemExit):
         main(["scan", "--every", "0"])
+
+
+
+def test_scan_embeds_cards_when_semantic_search_is_set_up(monkeypatch, tmp_path, asset_root):
+    from assetindex import embedding
+    from assetindex.embedding import EmbedConfig
+    from tests.fake_embed import FakeEmbedServer
+
+    data_dir = _env(monkeypatch, tmp_path, asset_root)
+    with FakeEmbedServer() as server:
+        embedding.save_config(data_dir, EmbedConfig(enabled=True, base_url=server.base_url, model="m"))
+        assert main(["scan"]) == 0
+
+        server.fail_status = 500  # API down: the scan itself still succeeds
+        (asset_root / "new.txt").write_text("x")
+        assert main(["scan"]) == 0
+
+    conn = connect(data_dir / "index.db")
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM embeddings WHERE vector IS NOT NULL").fetchone()[0] == 5
+    finally:
+        conn.close()
+
+
+
+def test_unexpected_embedding_failure_does_not_fail_the_scan(monkeypatch, tmp_path, asset_root):
+    from assetindex import cli, embedding, scan_request
+    from assetindex.embedding import EmbedConfig
+
+    data_dir = _env(monkeypatch, tmp_path, asset_root)
+    embedding.save_config(data_dir, EmbedConfig(enabled=True, base_url="http://127.0.0.1:9/v1", model="m"))
+
+    def boom(*a, **kw):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(cli, "embed_pending", boom)
+    assert main(["scan"]) == 0
+    assert scan_request.read_status(data_dir).ok is True

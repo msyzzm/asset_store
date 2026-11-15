@@ -1,17 +1,19 @@
 """FastAPI app: search API, file preview/download, static UI."""
 
+import contextlib
 import io
 import logging
 import mimetypes
 import sqlite3
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Iterator
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
 from fastapi import Path as PathParam
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,11 +21,23 @@ from fastapi.staticfiles import StaticFiles
 from assetindex.archive_queries import list_entries
 from assetindex.config import Settings
 from assetindex.db import connect
+from assetindex.embed_stage import progress
+from assetindex.embedding import (
+    EmbedClient,
+    EmbedConfig,
+    EmbedError,
+    apply_update,
+    load_config,
+    probe,
+    public_view,
+    save_config,
+)
 from assetindex.extract import ExtractError, find_bsdtar, read_member
 from assetindex.kinds import KINDS, LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.scan_request import is_requested, read_status, request_scan
 from assetindex.scanlock import is_scan_running
 from assetindex.search import MAX_LIMIT, MAX_QUERY_LENGTH, parse_terms, search
+from assetindex.semantic import NoVectors, VectorIndex, semantic_search
 from assetindex.sequences import frames_of
 from assetindex.thumbs import (
     entry_thumb_path,
@@ -57,6 +71,40 @@ RAW_SECURITY_HEADERS = {
 }
 
 FileId = Annotated[int, PathParam(ge=1, le=SQLITE_MAX_INT)]
+QUERY_EMBED_TIMEOUT_SECONDS = 15
+QUERY_VECTOR_CACHE_SIZE = 256  # "load more" asks for the same query again
+
+
+PROBE_SLOTS = 1  # connection tests at once
+SEMANTIC_SLOTS = 4  # semantic searches waiting on the API at once
+
+
+class _Busy:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.running = 0
+
+
+@contextlib.contextmanager
+def slot(busy: _Busy, limit: int, message: str) -> Iterator[None]:
+    """Run at most `limit` of something at once; refuse (429) rather than queue."""
+    with busy.lock:
+        if busy.running >= limit:
+            raise HTTPException(429, message)
+        busy.running += 1
+    try:
+        yield
+    finally:
+        with busy.lock:
+            busy.running -= 1
+
+
+def page_request(x_requested_with: Annotated[str | None, Header()] = None) -> None:
+    """Guard for state-changing endpoints. There is no login, but this keeps other
+    websites from acting through a visitor's browser: a cross-origin request carrying a
+    custom header needs a CORS preflight, which this app never allows."""
+    if not x_requested_with:
+        raise HTTPException(403, "missing X-Requested-With header")
 
 
 def _render_or_415(source: Path | io.BytesIO, target: Path, box: tuple[int, int] | None = None) -> None:
@@ -105,6 +153,10 @@ def create_app(settings: Settings) -> FastAPI:
     thumb_slots = threading.BoundedSemaphore(THUMB_CONCURRENCY)
     extract_slots = threading.BoundedSemaphore(EXTRACT_CONCURRENCY)
     failed_entries: dict[Path, float] = {}  # cache path -> time of failure
+    vectors = VectorIndex()
+    query_vectors: OrderedDict[tuple[str, str, str], list[float]] = OrderedDict()
+    cache_lock = threading.Lock()
+    probe_busy, semantic_busy = _Busy(), _Busy()
 
     def recently_failed(target: Path) -> bool:
         failed_at = failed_entries.get(target)
@@ -142,12 +194,75 @@ def create_app(settings: Settings) -> FastAPI:
         kind: str | None = None,
         limit: int = Query(50, ge=1, le=MAX_LIMIT),
         offset: int = Query(0, ge=0),
+        mode: Literal["text", "semantic"] = "text",
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> dict:
         if kind and kind not in KINDS:
             raise HTTPException(422, f"unknown kind {kind!r}")
-        result = search(conn, q, kind=kind, limit=limit, offset=offset)
+        if mode == "semantic" and parse_terms(q):
+            result = semantic(conn, q, kind, limit, offset)
+        else:
+            result = search(conn, q, kind=kind, limit=limit, offset=offset)
         return {"total": result.total, "items": result.items}
+
+    def query_vector(config: EmbedConfig, q: str) -> list[float]:
+        key = (config.base_url, config.model, q)
+        with cache_lock:
+            if key in query_vectors:
+                query_vectors.move_to_end(key)
+                return query_vectors[key]
+        vector = EmbedClient(config, timeout=QUERY_EMBED_TIMEOUT_SECONDS).embed_texts([q])[0]
+        with cache_lock:
+            query_vectors[key] = vector
+            while len(query_vectors) > QUERY_VECTOR_CACHE_SIZE:
+                query_vectors.popitem(last=False)
+        return vector
+
+    def semantic(conn: sqlite3.Connection, q: str, kind: str | None, limit: int, offset: int):
+        config = load_config(settings.data_dir)
+        if not config.active:
+            raise HTTPException(409, "语义搜索还没启用：在设置里填好接口并启用")
+        # Each new query is a call to the API (maybe a paid one) holding a request thread.
+        with slot(semantic_busy, SEMANTIC_SLOTS, "语义搜索正忙，稍后再试"):
+            try:
+                vector = query_vector(config, q)
+                return semantic_search(
+                    conn, vectors, EmbedClient(config), config.model, q, kind, limit, offset, query_vector=vector
+                )
+            except EmbedError as err:
+                raise HTTPException(502, f"向量接口出错：{err}") from None
+            except NoVectors:
+                raise HTTPException(409, "还没有可用的向量：等扫描算完再搜（换了模型也要重新算）") from None
+
+    @app.get("/api/settings/embedding")
+    def api_embedding_settings(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+        config = load_config(settings.data_dir)
+        return {**public_view(config), "progress": progress(conn, config.model)}
+
+    @app.put("/api/settings/embedding", dependencies=[Depends(page_request)])
+    def api_save_embedding_settings(
+        update: Annotated[dict, Body()], conn: sqlite3.Connection = Depends(get_conn)
+    ) -> dict:
+        try:
+            config = apply_update(load_config(settings.data_dir), update)
+        except ValueError as err:
+            raise HTTPException(422, str(err)) from None
+        try:
+            save_config(settings.data_dir, config)
+        except OSError as err:
+            log.error("cannot save embedding settings: %r", err)
+            raise HTTPException(503, "设置保存失败，检查数据目录") from None
+        with conn:  # inputs refused under the old settings get another try under the new ones
+            conn.execute("DELETE FROM embeddings WHERE vector IS NULL")
+        return {**public_view(config), "progress": progress(conn, config.model)}
+
+    @app.post("/api/settings/embedding/test", dependencies=[Depends(page_request)])
+    def api_test_embedding() -> dict:
+        config = load_config(settings.data_dir)
+        if not config.base_url or not config.model:
+            raise HTTPException(409, "先填好接口地址和模型名并保存")
+        with slot(probe_busy, PROBE_SLOTS, "上一次测试还没结束"):
+            return probe(config)
 
     @app.get("/api/stats")
     def api_stats(conn: sqlite3.Connection = Depends(get_conn)) -> dict[str, int]:
@@ -166,13 +281,9 @@ def create_app(settings: Settings) -> FastAPI:
         return scan_state()
 
     # No login anywhere, so anyone who can open the page can press this; it only wakes
-    # the scanner early (one pending request, one scan at a time, a minimum gap between
-    # scans). The custom header keeps other websites from pressing it through a visitor's
-    # browser: a cross-origin request carrying it needs a CORS preflight, which we never allow.
-    @app.post("/api/scan", status_code=202)
-    def api_scan_request(x_requested_with: Annotated[str | None, Header()] = None) -> dict:
-        if not x_requested_with:
-            raise HTTPException(403, "missing X-Requested-With header")
+    # the scanner early (one pending request, one scan at a time, a minimum gap between scans).
+    @app.post("/api/scan", status_code=202, dependencies=[Depends(page_request)])
+    def api_scan_request() -> dict:
         try:
             request_scan(settings.data_dir)
         except OSError as err:

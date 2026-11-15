@@ -197,3 +197,21 @@ def test_file_vanishing_mid_sweep_does_not_abort_prune(conn, tmp_path, monkeypat
 
     assert prune_thumbs(conn, thumbs, max_bytes=0).removed == 0
 
+
+
+
+def test_check_tests_the_embedding_api_once_configured(settings, asset_root):
+    from assetindex import embedding
+    from assetindex.embedding import EmbedConfig
+    from tests.fake_embed import FakeEmbedServer
+
+    assert not any(r.name == "embedding API" for r in run_checks(settings))
+
+    with FakeEmbedServer() as server:
+        embedding.save_config(settings.data_dir, EmbedConfig(enabled=True, base_url=server.base_url, model="m"))
+        result = next(r for r in run_checks(settings) if r.name == "embedding API")
+        assert result.ok and "6" in result.detail
+
+        server.fail_status = 401
+        result = next(r for r in run_checks(settings) if r.name == "embedding API")
+        assert not result.ok and "401" in result.detail

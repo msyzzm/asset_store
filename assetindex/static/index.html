@@ -29,7 +29,11 @@
       <option value="unreal">Unreal</option>
       <option value="other">其他</option>
     </select>
+    <label id="semantic-toggle" class="toggle" title="按意思找：可以用中文描述画面或用途" hidden>
+      <input id="semantic" type="checkbox"> 按描述搜
+    </label>
     <button id="scan" class="btn secondary" type="button" title="NAS 上加了新素材后，点这里马上重新扫描">扫描</button>
+    <button id="settings-btn" class="btn secondary" type="button">设置</button>
   </header>
   <p id="stats" class="stats"></p>
   <p id="scan-status" class="stats" aria-live="polite"></p>
@@ -50,6 +54,31 @@
     </div>
   </dialog>
 
+  <dialog id="settings" class="viewer settings">
+    <div class="viewer-head">
+      <h2>语义搜索</h2>
+      <button id="s-close" class="icon-btn" type="button" aria-label="关闭">✕</button>
+    </div>
+    <p class="hint">接一个 OpenAI 兼容的 embeddings 接口后，可以用描述来搜，比如「蓝色的冰魔法特效」。扫描时会把每个素材的路径（和缩略图）发给这个接口。</p>
+    <form id="s-form" class="settings-form">
+      <label class="check"><input name="enabled" type="checkbox"> 启用</label>
+      <label>接口地址 <input name="base_url" placeholder="http://192.168.1.10:8000/v1" autocomplete="off"></label>
+      <label>模型名 <input name="model" autocomplete="off"></label>
+      <label>API key <input name="api_key" type="password" autocomplete="new-password"></label>
+      <label id="s-clear-key" class="check" hidden><input name="clear_key" type="checkbox"> 删除已保存的 key</label>
+      <p class="hint">key 只保存在服务器上，不会再显示出来。改了接口地址要重新填 key。</p>
+      <label>图片格式 <select name="image_format"></select></label>
+      <label>每批数量 <input name="batch_size" type="number" min="1" max="256" required></label>
+      <div class="viewer-actions">
+        <button class="btn" type="submit">保存</button>
+        <button id="s-test" class="btn secondary" type="button">测试连接</button>
+      </div>
+    </form>
+    <p id="s-status" class="settings-status" aria-live="polite"></p>
+    <p id="s-progress" class="hint"></p>
+  </dialog>
+
   <script src="app.js"></script>
+  <script src="settings.js"></script>
 </body>
 </html>

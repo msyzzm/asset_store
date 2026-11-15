@@ -5,6 +5,7 @@ import logging
 import signal
 import sqlite3
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from assetindex import attempts, scan_request
@@ -14,6 +15,8 @@ from assetindex.cache_prune import prune_thumbs
 from assetindex.check import run_checks
 from assetindex.config import Settings, load_settings
 from assetindex.db import connect
+from assetindex.embed_stage import embed_pending
+from assetindex.embedding import load_config
 from assetindex.extract import find_bsdtar
 from assetindex.scan_request import ScanStatus
 from assetindex.scanlock import ScanLocked, scan_lock
@@ -90,6 +93,7 @@ def _scan(only_root: str | None, retry_errors: bool = False) -> int:
                 results = [_scan_one(conn, settings, name, path, tool, retry_errors) for name, path in roots.items()]
                 pruned = prune_thumbs(conn, settings.thumb_dir, settings.thumb_cache_bytes)
                 log.info("thumbnail cache: removed %d files, %.1f MB", pruned.removed, pruned.freed_bytes / 1024**2)
+                _embed(conn, replace(settings, roots=roots), retry_errors)  # only the roots scanned
                 ok = all(results)
             finally:
                 conn.close()
@@ -98,6 +102,26 @@ def _scan(only_root: str | None, retry_errors: bool = False) -> int:
         log.error("%s; not starting another", err)
         return 3
     return 0 if ok else 1
+
+
+def _embed(conn: sqlite3.Connection, settings: Settings, retry_errors: bool) -> None:
+    """Semantic search vectors, if switched on in the web UI. An unreachable API only
+    postpones them to the next scan; it doesn't fail this one."""
+    config = load_config(settings.data_dir)
+    if not config.active:
+        return
+    started = time.monotonic()
+    try:
+        stats = embed_pending(conn, settings, config, retry_errors=retry_errors)
+    except Exception:  # e.g. "database is locked": vectors are extra, the scan itself worked
+        log.exception("embedding failed, will try again next scan")
+        return
+    log.info(
+        "embeddings (%s) in %.1fs: text %d, image %d, rejected %d",
+        config.model, time.monotonic() - started, stats.texts, stats.images, stats.rejected,
+    )
+    if stats.error:
+        log.warning("embedding stopped early, will continue next scan: %s", stats.error)
 
 
 def _set_status(data_dir: Path, status: ScanStatus) -> None:

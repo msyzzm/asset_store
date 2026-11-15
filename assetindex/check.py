@@ -14,6 +14,7 @@ from pathlib import Path
 
 from assetindex.config import Settings
 from assetindex.db import connect
+from assetindex.embedding import load_config, probe
 from assetindex.extract import ExtractError, find_bsdtar, read_member
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -91,6 +92,21 @@ def _viewer() -> CheckResult:
     return CheckResult("3D viewer files", True, str(STATIC_DIR / "vendor"))
 
 
+def _embedding(settings: Settings) -> list[CheckResult]:
+    """Only once semantic search is switched on in the settings page."""
+    config = load_config(settings.data_dir)
+    if not config.active:
+        return []
+    result = probe(config)
+    checks = [("embedding API", result["text"])]
+    if result["image"] is not None:
+        checks.append(("embedding API (images)", result["image"]))
+    return [
+        CheckResult(name, r["ok"], f"{config.base_url} {config.model}: " + (f"{r['dim']} dims" if r["ok"] else r["error"]))
+        for name, r in checks
+    ]
+
+
 def run_checks(settings: Settings) -> list[CheckResult]:
     return [
         _data_dir(settings),
@@ -98,4 +114,5 @@ def run_checks(settings: Settings) -> list[CheckResult]:
         *(_root(name, path) for name, path in settings.roots.items()),
         *_bsdtar(),
         _viewer(),
+        *_embedding(settings),
     ]

@@ -81,15 +81,20 @@ def search(
     ids = [r[0] for r in conn.execute(f"SELECT f.id FROM files f {where} ORDER BY f.rel_path, f.id", params)]
     start = max(0, offset)
     page = ids[start : start + max(1, min(limit, MAX_LIMIT))]
-    if not page:
-        return SearchResult(total=len(ids), items=[])
+    return SearchResult(total=len(ids), items=fetch_items(conn, page, terms))
+
+
+def fetch_items(conn: sqlite3.Connection, ids: list[int], terms: list[str]) -> list[dict]:
+    """Result cards for these file ids, in the given order."""
+    if not ids:
+        return []
     rows = conn.execute(
         f"SELECT {FILE_COLUMNS} FROM files f LEFT JOIN archives a ON a.file_id = f.id"
-        f" WHERE f.id IN ({','.join('?' * len(page))}) ORDER BY f.rel_path, f.id",
-        page,
+        f" WHERE f.id IN ({','.join('?' * len(ids))})",
+        ids,
     ).fetchall()
-    items = [
+    by_id = {r["id"]: r for r in rows}
+    return [
         {**dict(r), "hits": entry_hits(conn, r["id"], r["rel_path"], terms) if r["entry_count"] else []}
-        for r in rows
+        for r in (by_id[i] for i in ids if i in by_id)
     ]
-    return SearchResult(total=len(ids), items=items)

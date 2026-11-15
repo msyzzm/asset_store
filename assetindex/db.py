@@ -85,6 +85,19 @@ CREATE TRIGGER IF NOT EXISTS files_ad_archive AFTER DELETE ON files BEGIN
     DELETE FROM archive_entries WHERE file_id = old.id;
     DELETE FROM archives WHERE file_id = old.id;
 END;
+-- Semantic search vectors (see assetindex/embed_stage.py), one per card and source.
+CREATE TABLE IF NOT EXISTS embeddings (
+    file_id INTEGER NOT NULL,
+    source  TEXT    NOT NULL,  -- 'text' | 'image'
+    model   TEXT    NOT NULL,
+    mtime   REAL    NOT NULL,  -- the file's mtime when embedded: a change means redo
+    vector  BLOB,              -- float32, unit length; NULL when the input was rejected
+    error   TEXT,
+    PRIMARY KEY (file_id, source)
+);
+CREATE TRIGGER IF NOT EXISTS files_ad_embeddings AFTER DELETE ON files BEGIN
+    DELETE FROM embeddings WHERE file_id = old.id;
+END;
 -- Separate trigger so databases created before scan_attempts existed get it too.
 CREATE TRIGGER IF NOT EXISTS files_ad_attempts AFTER DELETE ON files BEGIN
     DELETE FROM scan_attempts WHERE file_id = old.id;  -- ids get reused

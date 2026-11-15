@@ -26,7 +26,7 @@ const SCAN_POLL_MS = 5000;
 const SCAN_START_TIMEOUT_MS = 2 * 60 * 1000;
 
 const $ = (id) => document.getElementById(id);
-const state = { q: '', kind: '', offset: 0, requestSeq: 0, viewerSeq: 0, stopPlayer: null, stopModel: null, scanBusy: false, scanTimer: 0, scanSeq: 0, scanWaitingSince: null };
+const state = { q: '', kind: '', mode: 'text', offset: 0, requestSeq: 0, viewerSeq: 0, stopPlayer: null, stopModel: null, scanBusy: false, scanTimer: 0, scanSeq: 0, scanWaitingSince: null };
 const frameCache = new Map();
 // Only one card plays at a time; a re-rendered grid never fires mouseleave, so stop it explicitly.
 let stopHover = null;
@@ -189,11 +189,15 @@ async function load(reset) {
   const offset = reset ? 0 : state.offset;
   const params = new URLSearchParams({ q: state.q, limit: PAGE_SIZE, offset });
   if (state.kind) params.set('kind', state.kind);
+  if (state.mode === 'semantic') params.set('mode', 'semantic');
 
   let body;
   try {
     const resp = await fetch(`/api/search?${params}`);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    if (!resp.ok) {
+      const detail = await resp.json().then((b) => b.detail, () => null);
+      throw new Error(typeof detail === 'string' ? detail : `HTTP ${resp.status}`);
+    }
     body = await resp.json();
   } catch (err) {
     if (seq === state.requestSeq) $('summary').textContent = `搜索失败：${err.message}`;
@@ -208,7 +212,9 @@ async function load(reset) {
   }
   $('grid').append(...body.items.map(card));
   state.offset = offset + body.items.length;
-  $('summary').textContent = body.total ? `共 ${body.total} 个结果` : '没有找到匹配的素材';
+  const semantic = state.mode === 'semantic' && state.q;
+  $('summary').textContent = !body.total ? '没有找到匹配的素材'
+    : semantic ? `按描述排序，最相关的 ${body.total} 个` : `共 ${body.total} 个结果`;
   $('more').hidden = state.offset >= body.total;
 }
 
@@ -216,6 +222,7 @@ function syncUrl() {
   const params = new URLSearchParams();
   if (state.q) params.set('q', state.q);
   if (state.kind) params.set('kind', state.kind);
+  if (state.mode === 'semantic') params.set('mode', 'semantic');
   const query = params.toString();
   history.replaceState(null, '', query ? `?${query}` : location.pathname);
 }
@@ -528,6 +535,7 @@ function init() {
   const params = new URLSearchParams(location.search);
   $('q').value = params.get('q') ?? '';
   $('kind').value = params.get('kind') ?? '';
+  state.mode = params.get('mode') === 'semantic' ? 'semantic' : 'text';
 
   let timer;
   $('q').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(search, DEBOUNCE_MS); });

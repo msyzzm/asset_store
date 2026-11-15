@@ -164,3 +164,107 @@ def test_scan_request_fails_cleanly_when_data_dir_unwritable(client, monkeypatch
     monkeypatch.setattr(web, "request_scan", deny)
     resp = client.post("/api/scan", headers={"X-Requested-With": "fetch"})
     assert resp.status_code == 503
+
+
+
+# --- semantic search settings ------------------------------------------------------
+
+XRW = {"X-Requested-With": "fetch"}
+
+
+@pytest.fixture
+def embed_server():
+    from tests.fake_embed import FakeEmbedServer
+
+    with FakeEmbedServer() as server:
+        yield server
+
+
+def test_embedding_settings_start_off_and_hide_the_key(client, embed_server):
+    body = client.get("/api/settings/embedding").json()
+    assert body["enabled"] is False and body["has_key"] is False
+
+    update = {"enabled": True, "base_url": embed_server.base_url, "model": "m", "api_key": "sk-secret"}
+    assert client.put("/api/settings/embedding", json=update).status_code == 403  # no header
+    resp = client.put("/api/settings/embedding", json=update, headers=XRW)
+
+    assert resp.status_code == 200
+    assert resp.json()["has_key"] is True and "sk-secret" not in resp.text
+    assert "sk-secret" not in client.get("/api/settings/embedding").text
+
+
+def test_bad_embedding_settings_are_rejected_with_a_reason(client):
+    resp = client.put("/api/settings/embedding", json={"base_url": "ftp://x"}, headers=XRW)
+    assert resp.status_code == 422 and "http" in resp.json()["detail"]
+    resp = client.put("/api/settings/embedding", json=["not", "an", "object"], headers=XRW)
+    assert resp.status_code == 422
+
+
+def test_connection_test_button(client, embed_server):
+    update = {"enabled": True, "base_url": embed_server.base_url, "model": "m", "image_format": "input_object"}
+    client.put("/api/settings/embedding", json=update, headers=XRW)
+
+    assert client.post("/api/settings/embedding/test").status_code == 403
+    body = client.post("/api/settings/embedding/test", headers=XRW).json()
+    assert body["text"]["ok"] and body["image"]["ok"]
+
+
+def test_semantic_search_endpoint(client, settings, embed_server):
+    from assetindex.embed_stage import embed_pending
+    from assetindex.embedding import load_config
+
+    assert client.get("/api/search", params={"q": "剑", "mode": "semantic"}).status_code == 409  # not set up
+
+    update = {"enabled": True, "base_url": embed_server.base_url, "model": "m", "image_format": "input_object"}
+    client.put("/api/settings/embedding", json=update, headers=XRW)
+    from assetindex.db import connect
+
+    conn = connect(settings.db_path)
+    try:
+        embed_pending(conn, settings, load_config(settings.data_dir))
+    finally:
+        conn.close()
+
+    progress = client.get("/api/settings/embedding").json()["progress"]
+    assert progress == {"cards": 5, "text": 5, "image": 1, "image_cards": 1, "rejected": 0}
+
+    body = client.get("/api/search", params={"q": "剑", "mode": "semantic", "kind": "model"}).json()
+    assert [i["rel_path"] for i in body["items"]] == ["3D/Knight/knight_sword.fbx"]
+
+    embed_server.fail_status = 500
+    resp = client.get("/api/search", params={"q": "new words", "mode": "semantic"})
+    assert resp.status_code == 502 and "500" in resp.json()["detail"]
+
+
+
+def test_saving_settings_clears_rejections_so_they_are_retried(client, settings, embed_server):
+    from assetindex.db import connect
+
+    conn = connect(settings.db_path)
+    try:
+        file_id = conn.execute("SELECT id FROM files LIMIT 1").fetchone()[0]
+        with conn:
+            conn.execute(
+                "INSERT INTO embeddings (file_id, source, model, mtime, vector, error) VALUES (?, 'image', 'm', 0, NULL, 'x')",
+                (file_id,),
+            )
+        client.put("/api/settings/embedding", json={"image_format": "messages"}, headers=XRW)
+        assert conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
+def test_semantic_search_before_any_vectors_says_so(client, embed_server):
+    update = {"enabled": True, "base_url": embed_server.base_url, "model": "m"}
+    client.put("/api/settings/embedding", json=update, headers=XRW)
+    resp = client.get("/api/search", params={"q": "剑", "mode": "semantic"})
+    assert resp.status_code == 409 and "向量" in resp.json()["detail"]
+
+
+def test_only_one_connection_test_at_a_time(client, embed_server, monkeypatch):
+    from assetindex import web
+
+    update = {"enabled": True, "base_url": embed_server.base_url, "model": "m"}
+    client.put("/api/settings/embedding", json=update, headers=XRW)
+    monkeypatch.setattr(web, "PROBE_SLOTS", 0)  # pretend one is already running
+    assert client.post("/api/settings/embedding/test", headers=XRW).status_code == 429
