@@ -40,6 +40,7 @@ from assetindex.search import MAX_LIMIT, MAX_QUERY_LENGTH, parse_terms, search
 from assetindex.semantic import NoVectors, VectorIndex, semantic_search
 from assetindex.sequences import frames_of
 from assetindex.thumbs import (
+    EMBEDDED_PREVIEW_EXTS,
     entry_thumb_path,
     file_thumb_path,
     preview_image_bytes,
@@ -121,8 +122,8 @@ def _render_or_415(source: Path | io.BytesIO, target: Path, box: tuple[int, int]
 
 
 def _thumb_source(path: Path, ext: str, size: int) -> Path | io.BytesIO:
-    """Image to render for a file on disk: the file, or a .uasset's embedded thumbnail."""
-    if ext != "uasset":
+    """Image to render for a file on disk: the file, or the one embedded in it (.uasset, .eps)."""
+    if ext not in EMBEDDED_PREVIEW_EXTS:
         return path
     limit = source_limit(ext)
     if size > limit:
@@ -342,7 +343,7 @@ def create_app(settings: Settings) -> FastAPI:
             if not sheet.exists():
                 raise HTTPException(415, "no preview for this archive")
             return _webp(sheet)
-        if row["ext"] not in THUMBNAIL_EXTS and row["ext"] != "uasset":
+        if row["ext"] not in THUMBNAIL_EXTS and row["ext"] not in EMBEDDED_PREVIEW_EXTS:
             raise HTTPException(415, "no thumbnail for this file type")
         target = file_thumb_path(settings.thumb_dir, file_id, row["mtime"])
         if not target.exists():

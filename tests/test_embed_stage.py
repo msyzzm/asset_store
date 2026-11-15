@@ -132,6 +132,24 @@ def test_archive_text_includes_names_inside(scanned):
 
 
 
+def test_one_bad_card_does_not_block_the_rest(scanned, settings, server, monkeypatch):
+    from assetindex import embed_stage
+
+    real = embed_stage.card_text
+
+    def flaky(conn, row):
+        if row["rel_path"] == "readme.txt":
+            raise OverflowError("odd file")
+        return real(conn, row)
+
+    monkeypatch.setattr(embed_stage, "card_text", flaky)
+
+    stats = embed_pending(scanned, settings, _config(server))
+
+    assert stats.texts == 4 and stats.rejected == 1 and stats.error is None
+    assert "odd file" in _rows(scanned, "text")[("readme.txt", "text")]["error"]
+
+
 def test_wrong_settings_do_not_mark_everything_rejected(conn, settings, server, asset_root):
     # Every image refused = the image format is wrong, not every picture: stop, record nothing.
     for name in ("a", "b", "c"):

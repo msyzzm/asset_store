@@ -12,6 +12,7 @@ from typing import BinaryIO
 
 from PIL import Image
 
+from assetindex.eps import MAX_EPS_BYTES, find_preview
 from assetindex.kinds import THUMBNAIL_EXTS
 from assetindex.uasset import MAX_UASSET_BYTES, find_thumbnail
 
@@ -26,18 +27,28 @@ MAX_ARCHIVE_IMAGE_BYTES = 20 * 1024**2
 THUMB_DECODERS = ("PNG", "JPEG", "GIF", "WEBP", "BMP", "TGA", "PSD", "TIFF")
 
 
+# Files that aren't images but carry one: an .uasset's editor thumbnail, an .eps preview.
+EMBEDDED_PREVIEW_EXTS = frozenset({"uasset", "eps"})
+
+
 def source_limit(ext: str) -> int | None:
     """Most bytes to read for a preview of this file type, or None if it has no preview."""
     if ext in THUMBNAIL_EXTS:
         return MAX_ARCHIVE_IMAGE_BYTES
     if ext == "uasset":
         return MAX_UASSET_BYTES
+    if ext == "eps":
+        return MAX_EPS_BYTES
     return None
 
 
 def preview_image_bytes(ext: str, data: bytes) -> bytes | None:
-    """The encoded image to decode: the file itself, or the thumbnail embedded in a .uasset."""
-    return find_thumbnail(data) if ext == "uasset" else data
+    """The encoded image to decode: the file itself, or the one embedded in it."""
+    if ext == "uasset":
+        return find_thumbnail(data)
+    if ext == "eps":
+        return find_preview(data)
+    return data
 
 
 def file_thumb_path(thumb_dir: Path, file_id: int, mtime: float) -> Path:

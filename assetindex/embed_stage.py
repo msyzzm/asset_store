@@ -2,7 +2,7 @@
 
 One text vector per card (its path, plus names inside an archive) and, when the API
 takes images, one image vector per card that has a picture (image files, .uasset
-thumbnails, archive contact sheets). Hidden sequence frames are skipped: their card is
+thumbnails, .eps previews, archive contact sheets). Hidden sequence frames are skipped: their card is
 the head frame.
 
 Runs after the rest of the scan and never fails it: if the API is down or the settings
@@ -24,6 +24,7 @@ from assetindex.config import Settings
 from assetindex.embedding import EmbedClient, EmbedConfig, EmbedError
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.thumbs import (
+    EMBEDDED_PREVIEW_EXTS,
     file_thumb_path,
     open_image,
     preview_image_bytes,
@@ -79,7 +80,7 @@ def _has_image(row: sqlite3.Row) -> bool:
     ext = row["ext"]
     if ext in LISTABLE_ARCHIVE_EXTS:
         return row["preview_state"] == 1
-    return ext in THUMBNAIL_EXTS or ext == "uasset"
+    return ext in THUMBNAIL_EXTS or ext in EMBEDDED_PREVIEW_EXTS
 
 
 def _source_on_disk(settings: Settings, row: sqlite3.Row) -> Path:
@@ -98,14 +99,14 @@ def _picture(settings: Settings, row: sqlite3.Row) -> tuple[Path | io.BytesIO, t
     if cached.exists():
         return cached, IMAGE_BOX
     path = _source_on_disk(settings, row)
-    if row["ext"] != "uasset":
+    if row["ext"] not in EMBEDDED_PREVIEW_EXTS:
         return path, IMAGE_BOX
-    limit = source_limit("uasset")
+    limit = source_limit(row["ext"])
     with path.open("rb") as f:  # bounded: the file may have grown since the scan
         data = f.read(limit + 1)
-    encoded = preview_image_bytes("uasset", data) if len(data) <= limit else None
+    encoded = preview_image_bytes(row["ext"], data) if len(data) <= limit else None
     if encoded is None:
-        raise _Unusable("no embedded thumbnail")
+        raise _Unusable("no embedded preview")
     return io.BytesIO(encoded), IMAGE_BOX
 
 
@@ -192,8 +193,8 @@ def _run_source(conn, rows, source, config: EmbedConfig, prepare, embed) -> tupl
         for row in rows[start : start + config.batch_size]:
             try:
                 chunk.append((row, prepare(row)))
-            except (_Unusable, OSError) as err:  # e.g. file gone since the scan
-                unusable.append((row, None, str(err)))
+            except Exception as err:  # gone since the scan, undecodable...: never let one card
+                unusable.append((row, None, str(err) or type(err).__name__))  # block the rest
         try:
             results = _embed_chunk(chunk, embed) if chunk else []
         except EmbedError as err:
@@ -238,7 +239,7 @@ def progress(conn: sqlite3.Connection, model: str) -> dict:
     """How far embedding has got with this model, for the settings page."""
     visible = "(f.seq_frames IS NULL OR f.seq_frames > 0)"
     current = f"JOIN files f ON f.id = e.file_id AND e.mtime = f.mtime WHERE e.model = ? AND {visible}"
-    picture_exts = sorted(THUMBNAIL_EXTS | {"uasset"})
+    picture_exts = sorted(THUMBNAIL_EXTS | EMBEDDED_PREVIEW_EXTS)
     archive_exts = sorted(LISTABLE_ARCHIVE_EXTS)
 
     def count(sql: str, params=()) -> int:

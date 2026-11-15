@@ -23,6 +23,7 @@ from assetindex.archives import ArchiveError, read_unity_previews
 from assetindex.extract import ExtractError, ExtractTimeout, read_member
 from assetindex.sequences import sequence_of
 from assetindex.thumbs import (
+    EMBEDDED_PREVIEW_EXTS,
     archive_preview_dir,
     compose_sheet,
     open_image,
@@ -66,19 +67,20 @@ def _ext(path: str) -> str:
 
 def choose_candidates(entries: Iterable[tuple[int, str, int]], limit: int) -> list[tuple[int, str]]:
     """Pick images for a sheet: one per frame sequence, round-robin across folders.
-    Real images come first; .uasset thumbnails (often missing, costly to extract) after."""
+    Real images come first; embedded previews (.uasset, .eps: often missing, and the
+    whole file must be extracted to find one) after."""
     entries = list(entries)  # may be a generator; iterated twice below
-    images = [e for e in entries if _ext(e[1]) != "uasset"]
-    uassets = [e for e in entries if _ext(e[1]) == "uasset"] if len(images) < limit else []
+    images = [e for e in entries if _ext(e[1]) not in EMBEDDED_PREVIEW_EXTS]
+    embedded = [e for e in entries if _ext(e[1]) in EMBEDDED_PREVIEW_EXTS] if len(images) < limit else []
     picked = _round_robin(images, limit)
-    return picked + _round_robin(uassets, limit - len(picked))
+    return picked + _round_robin(embedded, limit - len(picked))
 
 
 def _round_robin(entries: Iterable[tuple[int, str, int]], limit: int) -> list[tuple[int, str]]:
     by_folder: dict[str, list[tuple[int, str]]] = {}
     seen: set[str] = set()
     for entry_id, path, size in sorted(entries, key=lambda e: e[1]):
-        max_size = source_limit(_ext(path))  # images and .uasset (embedded editor thumbnail)
+        max_size = source_limit(_ext(path))  # images, and files with an embedded preview
         if max_size is None or size > max_size or _is_junk(path):
             continue
         sequence = sequence_of(path, "image")
@@ -122,7 +124,7 @@ def _member_images(conn: sqlite3.Connection, file_id: int, archive: Path, tool: 
             ext = _ext(path)
             encoded = preview_image_bytes(ext, read_member(archive, path, source_limit(ext), tool))
             if encoded is None:
-                continue  # e.g. a .uasset saved without a thumbnail
+                continue  # e.g. a .uasset saved without a thumbnail, a plain .eps
             images.append(open_image(io.BytesIO(encoded), CELL_BOX))
         except ExtractTimeout as err:
             transient = True

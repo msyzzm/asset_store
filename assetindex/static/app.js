@@ -4,8 +4,9 @@ const PAGE_SIZE = 60;
 const DEBOUNCE_MS = 300;
 const BROWSER_IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']);
 const THUMB_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'tga', 'psd', 'tif', 'tiff']);
-// Files whose thumbnail the server can render: images, plus .uasset (embedded editor thumbnail).
-const PREVIEW_EXTS = new Set([...THUMB_EXTS, 'uasset']);
+// Files whose thumbnail the server can render: images, plus ones carrying an image
+// (.uasset editor thumbnail, .eps preview).
+const PREVIEW_EXTS = new Set([...THUMB_EXTS, 'uasset', 'eps']);
 const KIND_LABELS = {
   image: '图片', audio: '音频', video: '视频', model: '模型',
   archive: '压缩包', unreal: 'Unreal', other: '其他',
@@ -237,10 +238,17 @@ function search() {
   load(true);
 }
 
+function previewThumb(item) {
+  const img = el('img', { src: thumbUrl(item), alt: item.name });
+  // e.g. an .eps without an embedded preview: say so instead of showing a broken image.
+  img.addEventListener('error', () => img.replaceWith(el('p', { className: 'muted', text: '这个文件没有可显示的预览' })), { once: true });
+  return img;
+}
+
 function previewFor(item) {
   const raw = `/api/files/${item.id}/raw`;
   if (item.kind === 'image' && BROWSER_IMAGE_EXTS.has(item.ext)) return el('img', { src: raw, alt: item.name });
-  if (item.kind === 'image' && THUMB_EXTS.has(item.ext)) return el('img', { src: thumbUrl(item), alt: item.name });
+  if (item.kind === 'image' && PREVIEW_EXTS.has(item.ext)) return previewThumb(item);
   if (item.kind === 'audio') return el('audio', { src: raw, controls: '', preload: 'metadata' });
   if (item.kind === 'video') return el('video', { src: raw, controls: '', preload: 'metadata' });
   if (item.kind === 'archive') return archivePanel(item);
