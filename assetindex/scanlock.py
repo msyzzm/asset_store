@@ -57,8 +57,7 @@ def is_scan_running(data_dir: Path) -> bool:
     """True if some process holds the scan lock. Briefly takes the lock to find out,
     which is why scanners wait a moment for it."""
     try:
-        f = open(data_dir / LOCK_NAME, "rb")  # never create it: the web side only looks
+        with open(data_dir / LOCK_NAME, "rb") as f:  # never create it: the web side only looks
+            return not _try_lock(f)
     except FileNotFoundError:
         return False
-    with f:
-        return not _try_lock(f)

@@ -142,7 +142,6 @@ def test_scan_button_records_a_request_the_scanner_will_see(client, settings):
 def test_scan_status_reports_what_the_scanner_wrote(client, settings):
     from assetindex import scan_request
     from assetindex.scan_request import ScanStatus
-
     from assetindex.scanlock import scan_lock
 
     scan_request.write_status(settings.data_dir, ScanStatus(running=True, started=1700000000.0))
