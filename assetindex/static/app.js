@@ -21,9 +21,12 @@ const ENGINE_LABELS = { unreal: 'UE', unity: 'Unity' };
 const MODEL_EXTS = new Set(['fbx']);
 // Parsing runs on the main thread; bigger files would freeze the tab for many seconds.
 const MAX_MODEL_BYTES = 64 * 1024 * 1024;
+const SCAN_POLL_MS = 5000;
+// The scanner starts a requested scan within its 60 s minimum gap plus a poll.
+const SCAN_START_TIMEOUT_MS = 2 * 60 * 1000;
 
 const $ = (id) => document.getElementById(id);
-const state = { q: '', kind: '', offset: 0, requestSeq: 0, viewerSeq: 0, stopPlayer: null, stopModel: null };
+const state = { q: '', kind: '', offset: 0, requestSeq: 0, viewerSeq: 0, stopPlayer: null, stopModel: null, scanBusy: false, scanTimer: 0, scanSeq: 0, scanWaitingSince: null };
 const frameCache = new Map();
 // Only one card plays at a time; a re-rendered grid never fires mouseleave, so stop it explicitly.
 let stopHover = null;
@@ -456,6 +459,71 @@ async function loadStats() {
   }
 }
 
+function formatTime(epochSeconds) {
+  return new Date(epochSeconds * 1000).toLocaleString('zh-CN', { hour12: false });
+}
+
+function scanText(status) {
+  if (status.running) return `正在扫描（${formatTime(status.started)} 开始）…`;
+  if (status.requested) return '已请求扫描，扫描器一分钟内会开始…';
+  if (status.finished == null) {
+    return status.ok === false ? '上次扫描中途断了（扫描器被强制退出？看扫描日志）' : '';
+  }
+  const problem = status.ok === false ? '，有问题，看扫描日志' : '';
+  return `上次扫描：${formatTime(status.finished)} 完成${problem}`;
+}
+
+// Polls while a scan is pending or running; when it ends, reloads stats (and results,
+// unless the user has paged further down).
+async function refreshScan(status) {
+  clearTimeout(state.scanTimer);
+  const seq = ++state.scanSeq;
+  if (!status) {
+    try {
+      const resp = await fetch('/api/scan');
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      status = await resp.json();
+    } catch (err) {
+      if (seq !== state.scanSeq) return;
+      $('scan-status').textContent = `扫描状态未知：${err.message}`;
+      if (state.scanBusy) state.scanTimer = setTimeout(refreshScan, SCAN_POLL_MS);
+      return;
+    }
+    if (seq !== state.scanSeq) return; // a newer refresh (e.g. the button) superseded this one
+  }
+  const waiting = status.requested && !status.running;
+  state.scanWaitingSince = waiting ? (state.scanWaitingSince ?? Date.now()) : null;
+  if (waiting && Date.now() - state.scanWaitingSince > SCAN_START_TIMEOUT_MS) {
+    state.scanBusy = false;
+    $('scan').disabled = false;
+    $('scan-status').textContent = '扫描器没有响应：scanner 容器可能没在运行';
+    return;
+  }
+  const busy = status.requested || status.running;
+  if (state.scanBusy && !busy) {
+    loadStats();
+    if (state.offset <= PAGE_SIZE) search();
+  }
+  state.scanBusy = busy;
+  $('scan').disabled = busy;
+  $('scan-status').textContent = scanText(status);
+  if (busy) state.scanTimer = setTimeout(refreshScan, SCAN_POLL_MS);
+}
+
+async function requestScan() {
+  $('scan').disabled = true;
+  state.scanWaitingSince = null;
+  try {
+    // The header proves the request comes from this page (see api_scan_request).
+    const resp = await fetch('/api/scan', { method: 'POST', headers: { 'X-Requested-With': 'fetch' } });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    await refreshScan(await resp.json());
+  } catch (err) {
+    $('scan').disabled = false;
+    $('scan-status').textContent = `请求扫描失败：${err.message}`;
+  }
+}
+
 function init() {
   const params = new URLSearchParams(location.search);
   $('q').value = params.get('q') ?? '';
@@ -474,8 +542,11 @@ function init() {
     $('v-preview').replaceChildren();
   });
 
+  $('scan').addEventListener('click', requestScan);
+
   loadStats();
   search();
+  refreshScan();
 }
 
 init();

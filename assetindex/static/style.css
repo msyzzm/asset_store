@@ -293,6 +293,8 @@ body {
 }
 
 .btn.secondary { color: var(--text); background: none; border-color: var(--border); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.bar .btn { white-space: nowrap; }
 
 .muted { color: var(--muted); }
 

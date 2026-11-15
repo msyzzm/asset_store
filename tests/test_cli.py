@@ -73,18 +73,101 @@ def test_scan_every_repeats_until_stopped(monkeypatch, tmp_path, asset_root):
     from assetindex import cli
 
     _env(monkeypatch, tmp_path, asset_root)
-    runs, sleeps = [], []
+    runs, waits = [], []
     monkeypatch.setattr(cli, "_scan", lambda *a: runs.append(a) or 0)
 
-    def fake_sleep(seconds):
-        sleeps.append(seconds)
-        if len(sleeps) == 2:
+    def fake_wait(data_dir, seconds, **kwargs):
+        waits.append(seconds)
+        if len(waits) == 2:
             raise KeyboardInterrupt
+        return False
 
-    monkeypatch.setattr(cli.time, "sleep", fake_sleep)
+    monkeypatch.setattr(cli.scan_request, "wait_for_request", fake_wait)
 
     assert main(["scan", "--every", "60"]) == 0
-    assert len(runs) == 2 and sleeps == [60, 60]
+    assert len(runs) == 2 and waits == [60, 60]
+
+
+def test_scan_takes_a_pending_request_once_it_holds_the_lock(monkeypatch, tmp_path, asset_root):
+    from assetindex import scan_request
+
+    data_dir = _env(monkeypatch, tmp_path, asset_root)
+    scan_request.request_scan(data_dir)
+
+    assert main(["scan"]) == 0
+    assert not scan_request.is_requested(data_dir)
+
+
+def test_request_survives_when_another_scan_holds_the_lock(monkeypatch, tmp_path, asset_root):
+    from assetindex import cli, scan_request
+    from assetindex.scanlock import scan_lock
+
+    data_dir = _env(monkeypatch, tmp_path, asset_root)
+    monkeypatch.setattr(cli, "LOCK_WAIT_SECONDS", 0)
+    scan_request.request_scan(data_dir)
+
+    with scan_lock(data_dir):
+        assert main(["scan"]) == 3
+    assert scan_request.is_requested(data_dir)
+
+
+def test_scan_every_waits_at_least_the_minimum_gap(monkeypatch, tmp_path, asset_root):
+    from assetindex import cli
+
+    _env(monkeypatch, tmp_path, asset_root)
+    monkeypatch.setattr(cli, "_scan", lambda *a: 0)
+    seen = []
+
+    def stop(data_dir, seconds, **kwargs):
+        seen.append(kwargs)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.scan_request, "wait_for_request", stop)
+
+    assert main(["scan", "--every", "60"]) == 0
+    assert seen == [{"min_seconds": cli.MIN_SCAN_GAP_SECONDS}]
+
+
+def test_status_write_failure_does_not_fail_the_scan(monkeypatch, tmp_path, asset_root):
+    from assetindex import cli
+
+    _env(monkeypatch, tmp_path, asset_root)
+
+    def broken(*a):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(cli.scan_request, "write_status", broken)
+    assert main(["scan"]) == 0
+
+
+def test_interrupted_scan_is_recorded_as_not_ok(monkeypatch, tmp_path, asset_root):
+    import pytest
+
+    from assetindex import cli, scan_request
+
+    data_dir = _env(monkeypatch, tmp_path, asset_root)
+
+    def boom(*a):
+        raise RuntimeError("prune failed")
+
+    monkeypatch.setattr(cli, "prune_thumbs", boom)
+    with pytest.raises(RuntimeError):
+        main(["scan"])
+
+    status = scan_request.read_status(data_dir)
+    assert status.running is False and status.ok is False
+
+
+def test_scan_writes_status_for_the_web_ui(monkeypatch, tmp_path, asset_root):
+    from assetindex import scan_request
+
+    data_dir = _env(monkeypatch, tmp_path, asset_root)
+
+    assert main(["scan"]) == 0
+
+    status = scan_request.read_status(data_dir)
+    assert status.running is False and status.ok is True
+    assert status.started is not None and status.finished >= status.started
 
 
 def test_check_command_reports_failures_with_nonzero_exit(monkeypatch, tmp_path, capsys):
@@ -125,13 +208,14 @@ def test_scan_every_survives_a_failed_round(monkeypatch, tmp_path, asset_root):
             raise RuntimeError("database is locked")
         return 0
 
-    def stop_on_second_sleep(seconds, _count=[]):
+    def stop_on_second_wait(data_dir, seconds, _count=[], **kwargs):
         _count.append(seconds)
         if len(_count) == 2:
             raise KeyboardInterrupt
+        return False
 
     monkeypatch.setattr(cli, "_scan", flaky)
-    monkeypatch.setattr(cli.time, "sleep", stop_on_second_sleep)
+    monkeypatch.setattr(cli.scan_request, "wait_for_request", stop_on_second_wait)
 
     assert main(["scan", "--every", "60"]) == 0
     assert len(calls) == 2

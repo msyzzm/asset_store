@@ -151,7 +151,7 @@ docker stats --no-stream
 
 | 要做的事 | 命令 |
 |---|---|
-| 立刻扫一次 | `docker compose exec scanner python -m assetindex scan` |
+| 立刻扫一次 | 网页右上角点「扫描」，或 `docker compose exec scanner python -m assetindex scan` |
 | 重试坏包和没封面的包 | `docker compose exec scanner python -m assetindex scan --retry-errors` |
 | 看扫描日志 | `docker compose logs --tail 100 scanner` |
 | 升级 | 更新项目文件后 `docker compose up -d --build` |

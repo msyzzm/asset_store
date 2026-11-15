@@ -120,3 +120,48 @@ def test_model_viewer_modules_are_served_as_javascript(client, path):
 
     assert resp.status_code == 200
     assert "javascript" in resp.headers["content-type"]
+
+
+def test_scan_button_records_a_request_the_scanner_will_see(client, settings):
+    from assetindex import scan_request
+
+    assert client.get("/api/scan").json() == {
+        "requested": False, "running": False, "started": None, "finished": None, "ok": None,
+    }
+
+    assert client.post("/api/scan").status_code == 403  # plain cross-site POST
+    assert not scan_request.is_requested(settings.data_dir)
+
+    resp = client.post("/api/scan", headers={"X-Requested-With": "fetch"})
+
+    assert resp.status_code == 202
+    assert resp.json()["requested"] is True
+    assert scan_request.is_requested(settings.data_dir)
+
+
+def test_scan_status_reports_what_the_scanner_wrote(client, settings):
+    from assetindex import scan_request
+    from assetindex.scan_request import ScanStatus
+
+    from assetindex.scanlock import scan_lock
+
+    scan_request.write_status(settings.data_dir, ScanStatus(running=True, started=1700000000.0))
+
+    with scan_lock(settings.data_dir):
+        body = client.get("/api/scan").json()
+    assert body["running"] is True and body["started"] == 1700000000.0
+
+    # Lock free but status still says running: the scanner was killed mid-scan.
+    body = client.get("/api/scan").json()
+    assert body["running"] is False and body["ok"] is False
+
+
+def test_scan_request_fails_cleanly_when_data_dir_unwritable(client, monkeypatch):
+    from assetindex import web
+
+    def deny(_data_dir):
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr(web, "request_scan", deny)
+    resp = client.post("/api/scan", headers={"X-Requested-With": "fetch"})
+    assert resp.status_code == 503

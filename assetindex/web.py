@@ -7,10 +7,11 @@ import sqlite3
 import threading
 import time
 from collections.abc import Iterator
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi import Path as PathParam
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -20,6 +21,8 @@ from assetindex.config import Settings
 from assetindex.db import connect
 from assetindex.extract import ExtractError, find_bsdtar, read_member
 from assetindex.kinds import KINDS, LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
+from assetindex.scan_request import is_requested, read_status, request_scan
+from assetindex.scanlock import is_scan_running
 from assetindex.search import MAX_LIMIT, MAX_QUERY_LENGTH, parse_terms, search
 from assetindex.sequences import frames_of
 from assetindex.thumbs import (
@@ -150,6 +153,32 @@ def create_app(settings: Settings) -> FastAPI:
     def api_stats(conn: sqlite3.Connection = Depends(get_conn)) -> dict[str, int]:
         rows = conn.execute("SELECT kind, COUNT(*) AS n FROM files GROUP BY kind")
         return {r["kind"]: r["n"] for r in rows}
+
+    def scan_state() -> dict:
+        status = read_status(settings.data_dir)
+        if status.running and not is_scan_running(settings.data_dir):
+            # The kernel dropped the lock: the scanner died mid-scan (OOM, docker kill).
+            status = replace(status, running=False, ok=False)
+        return {"requested": is_requested(settings.data_dir), **asdict(status)}
+
+    @app.get("/api/scan")
+    def api_scan_status() -> dict:
+        return scan_state()
+
+    # No login anywhere, so anyone who can open the page can press this; it only wakes
+    # the scanner early (one pending request, one scan at a time, a minimum gap between
+    # scans). The custom header keeps other websites from pressing it through a visitor's
+    # browser: a cross-origin request carrying it needs a CORS preflight, which we never allow.
+    @app.post("/api/scan", status_code=202)
+    def api_scan_request(x_requested_with: Annotated[str | None, Header()] = None) -> dict:
+        if not x_requested_with:
+            raise HTTPException(403, "missing X-Requested-With header")
+        try:
+            request_scan(settings.data_dir)
+        except OSError as err:
+            log.error("cannot record scan request: %r", err)
+            raise HTTPException(503, "cannot record the scan request; check the data dir") from None
+        return scan_state()
 
     @app.get("/api/files/{file_id}")
     def api_file(file_id: FileId, conn: sqlite3.Connection = Depends(get_conn)) -> dict:

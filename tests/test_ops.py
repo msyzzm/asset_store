@@ -10,7 +10,7 @@ from assetindex.cache_prune import prune_thumbs
 from assetindex.check import run_checks
 from assetindex.config import Settings
 from assetindex.extract import find_bsdtar
-from assetindex.scanlock import ScanLocked, scan_lock
+from assetindex.scanlock import ScanLocked, is_scan_running, scan_lock
 from assetindex.scanner import scan_root
 from assetindex.thumbs import (
     entry_thumb_path,
@@ -37,6 +37,31 @@ def test_second_scan_is_refused_while_first_holds_lock(tmp_path):
         with pytest.raises(ScanLocked):
             with scan_lock(tmp_path):
                 pass
+
+
+def test_is_scan_running_follows_the_lock(tmp_path):
+    assert not is_scan_running(tmp_path)  # no lock file yet
+    with scan_lock(tmp_path):
+        assert is_scan_running(tmp_path)
+    assert not is_scan_running(tmp_path)
+
+
+def test_scan_lock_can_wait_out_a_brief_probe(tmp_path):
+    import threading
+
+    held = threading.Event()
+
+    def hold_briefly():
+        with scan_lock(tmp_path):
+            held.set()
+            time.sleep(0.3)
+
+    t = threading.Thread(target=hold_briefly)
+    t.start()
+    held.wait()
+    with scan_lock(tmp_path, wait_seconds=5):  # no ScanLocked
+        pass
+    t.join()
 
 
 def test_lock_is_released_after_scan(tmp_path):
