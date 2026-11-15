@@ -102,7 +102,7 @@ docker compose version
 ```bash
 cd /opt/assetindex
 cp .env.example .env
-nano .env               # 至少改 ASSET_BIND（LXC 的局域网 IP），并确认 ASSET_NAS_PATH 和 ASSET_ROOTS
+nano .env               # 确认 ASSET_NAS_PATH 和 ASSET_ROOTS；ASSET_BIND 默认 0.0.0.0（所有网卡）
 docker compose build
 docker compose run --rm web python -m assetindex check
 docker compose run --rm web touch /assets/x     # 应该失败：Read-only file system
