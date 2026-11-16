@@ -24,7 +24,7 @@ from pathlib import Path, PurePosixPath
 from assetindex import caption_job
 from assetindex.caption import CaptionClient, CaptionConfig
 from assetindex.caption_job import Scope
-from assetindex.classify import CATEGORY_PATHS, DUPLICATES, classify_unit, target_for
+from assetindex.classify import CATEGORY_PATHS, DUPLICATES, classify_unit, file_suffix, strip_junk_source, target_for
 from assetindex.config import Settings
 from assetindex.dupes import UnitFile, duplicate_units, file_duplicates, hash_pending, signature, unit_files
 from assetindex.embedding import EmbedError
@@ -211,14 +211,41 @@ def _has_units(conn: sqlite3.Connection, scope: Scope) -> bool:
     return conn.execute(f"SELECT 1 FROM organize_units WHERE {where} LIMIT 1", params).fetchone() is not None
 
 
+NOTE_EXTS = (".txt", ".ini", ".url", ".nfo", ".md", ".html", ".htm")
+NOTE_MAX_BYTES = 64 * 1024  # a password or "read me" note: not a pack to sort, it stays where it is
+
+
+def _is_note(row: sqlite3.Row) -> bool:
+    return not row["is_dir"] and row["size"] <= NOTE_MAX_BYTES and file_suffix(row["path"]).lower() in NOTE_EXTS
+
+
 def to_classify(conn: sqlite3.Connection, scope: Scope) -> list[sqlite3.Row]:
-    """Packs in scope that need the model: no proposal yet (or, with redo, an undecided one)."""
+    """Packs in scope that need the model: no proposal yet (or, with redo, an undecided
+    one). A lone small note (a password, a read-me) is not one."""
     where, params = _in_scope(scope)
     statuses = "('todo', 'proposed')" if scope.redo else "('todo')"
-    return conn.execute(
-        f"SELECT path, is_dir FROM organize_units WHERE {where} AND dup_of IS NULL AND status IN {statuses} ORDER BY path",
+    rows = conn.execute(
+        f"SELECT path, is_dir, size FROM organize_units WHERE {where} AND dup_of IS NULL AND status IN {statuses} ORDER BY path",
         params,
     ).fetchall()
+    return [r for r in rows if not _is_note(r)]
+
+
+def clean_proposed_names(conn: sqlite3.Connection, root: str) -> int:
+    """Names proposed before junk "sources" were dropped ("UE - x", "ansucai - x"): drop
+    them now, without asking the model again. Decided proposals are left as they are."""
+    rows = conn.execute(
+        "SELECT path, category, name, reason, model FROM organize_units"
+        " WHERE root = ? AND status = 'proposed' AND dup_of IS NULL AND name IS NOT NULL",
+        (root,),
+    ).fetchall()
+    fixed = 0
+    for r in rows:
+        name = strip_junk_source(r["name"])
+        if name != r["name"]:
+            save_proposal(conn, root, r["path"], r["category"], name, r["reason"] or "", r["model"] or "")
+            fixed += 1
+    return fixed
 
 
 # ---- the analysis job ----------------------------------------------------------------
@@ -248,6 +275,7 @@ def run_analysis(
         return replace(status, running=False, stopped=True, finished=time.time())
     units = current_units(conn, scope.root)
     groups = apply_duplicates(conn, scope.root, units)
+    clean_proposed_names(conn, scope.root)
     write_report(settings.data_dir, scope.root, groups, units)
 
     rows = to_classify(conn, scope)

@@ -196,6 +196,21 @@ def test_a_preview_in_a_preview_folder_is_the_archive_picture(library, settings,
     assert unit_members(library, "art", "2D/Frost.rar") == ["2D/Frost.rar"]
 
 
+@pytest.mark.parametrize(
+    "suggested, kept",
+    [
+        ("UE - Military Drone 军用无人机", "Military Drone 军用无人机"),
+        ("ansucai - Cute Hamsters 仓鼠", "Cute Hamsters 仓鼠"),
+        ("UE角色 - Landon 角色", "Landon 角色"),
+        ("虚幻4资源站 - TRANSPORT MECH", "TRANSPORT MECH"),
+        ("Brushify - Forest Pack", "Brushify - Forest Pack"),  # a real publisher stays
+        ("素与时素材 - 像素风黑猫", "素与时素材 - 像素风黑猫"),
+    ],
+)
+def test_names_drop_sources_that_name_no_author(suggested, kept):
+    assert clean_name(suggested, "x.7z", is_dir=False) == kept + ".7z"
+
+
 def test_unusable_answer_is_an_item_problem(library, settings, server):
     server.chat_reply = "我不知道"
     client = CaptionClient(CaptionConfig(base_url=server.base_url, model="m"))

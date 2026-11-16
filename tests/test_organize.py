@@ -185,6 +185,19 @@ def test_duplicate_marks_go_when_the_kept_copy_does(lib, server):
     assert row["dup_of"] is None and row["status"] == "todo" and row["target"] is None
 
 
+def test_old_names_lose_junk_sources_and_notes_are_not_sorted(lib, server):
+    conn, settings, root = lib
+    (root / "2D" / "解压密码.txt").write_text("1234", encoding="utf-8")
+    scan_root(conn, "lib", root)
+    run_analysis(conn, settings, Scope("lib"), _config(server))
+    assert _rows(conn)["2D/解压密码.txt"]["status"] == "todo"  # left where it is, not asked about
+
+    organize.save_proposal(conn, "lib", "2D/Ice Pack", "01_2D/VFX", "UE - 冰霜特效", "r", "m")
+    assert organize.clean_proposed_names(conn, "lib") == 1
+    row = _rows(conn)["2D/Ice Pack"]
+    assert row["name"] == "冰霜特效" and row["target"] == "01_2D/VFX/冰霜特效"
+
+
 def test_request_files(tmp_path):
     organize.request_job(tmp_path, Scope("lib", "2D"))
     assert organize.is_requested(tmp_path)

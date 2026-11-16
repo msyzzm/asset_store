@@ -38,7 +38,13 @@ CAPTION_TOKENS = 300  # extra room when the answer also describes the picture (C
 ITEM_PROBLEM = 422  # an answer we can't use counts against this unit, like a refused picture
 _BAD_NAME_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f\x7f]')
 _DIGITS = re.compile(r"\d+")
-_NUMBERED = re.compile(r"^[\W\d_]+$")  # "127327921", "(12)": says nothing about the content
+_NUMBERED = re.compile(r"^[\W\d_]+$")
+# "Sources" that name no author: engines, download sites, the library's own folders.
+_JUNK_SOURCE = re.compile(
+    r"^\s*(ue\s*[45]?|unreal(\s*engine)?\s*[45]?|unity(3d)?|ue\s*角色|虚幻\s*[45]?(引擎)?|虚幻\s*[45]?\s*资源站|"
+    r"ansucai(\.com)?|unsorted|素材|资源|未分类|待分类|_unsorted)\s*[-–—:：]\s*",
+    re.IGNORECASE,
+)  # "127327921", "(12)": says nothing about the content
 
 
 @dataclass(frozen=True)
@@ -219,8 +225,10 @@ def build_prompt(facts: str, with_caption: bool = False) -> str:
         "你在整理一个游戏美术素材库。下面是其中一个素材包的信息，附图是包里几张图拼成的预览（可能没有）。\n"
         "请判断它该放进哪个分类，并起一个看名字就知道里面是什么的名字。\n\n"
         f"分类只能从下面选一个，填左边的路径；实在看不出来填 {UNSORTED}：\n{menu}\n\n"
-        "名字：30 个字以内，中英文都可以，格式「来源 - 内容」。来源是作者、网站或原名里的包名，"
-        "看不出来就只写内容。原名里有意义的英文包名要保留。\n\n"
+        "名字：30 个字以内，中英文都可以。原名里有意义的英文包名要保留，后面加一段中文说明里面是什么，"
+        "比如「Modern Assassin - 现代女刺客角色」。"
+        "只有从包里的文件名或原名能确认作者或商店（比如 Brushify、Synty）时，才写成「作者 - 内容」；"
+        "不要写引擎名（UE、Unity）、下载网站名或文件夹名。\n\n"
         f"{caption}只输出一个 JSON，不要别的文字：{fields}\n\n"
         f"素材包信息：\n{facts}"
     )
@@ -273,12 +281,23 @@ def file_suffix(name: str) -> str:
     return PurePosixPath(name).suffix
 
 
+def strip_junk_source(name: str) -> str:
+    """Drop a "source - " that names no author: an engine, a download site, a folder
+    ("UE - Military Drone" -> "Military Drone"). The model writes them when it does not know."""
+    stripped = name
+    while True:
+        shorter = _JUNK_SOURCE.sub("", stripped, count=1)
+        if shorter == stripped or not shorter.strip():
+            return stripped
+        stripped = shorter
+
+
 def clean_name(name: str, original: str, is_dir: bool) -> str:
     """A safe folder or file name from the model's suggestion. Keeps the original
     extension (once), and the original name when that was only a number (to trace it back)."""
     suffix = "" if is_dir else file_suffix(original)
     stem = original[: len(original) - len(suffix)] if suffix else original
-    cleaned = " ".join(_BAD_NAME_CHARS.sub(" ", name).split()).strip(" .")
+    cleaned = " ".join(_BAD_NAME_CHARS.sub(" ", strip_junk_source(name)).split()).strip(" .")
     if suffix and cleaned.lower().endswith(suffix.lower()):
         cleaned = cleaned[: len(cleaned) - len(suffix)]
     cleaned = cleaned[:MAX_NAME_CHARS].strip(" .")
