@@ -67,7 +67,10 @@ def parse_scope(raw, roots) -> Scope:
         raise ValueError("没有这个根目录")
     if not isinstance(prefix, str) or not isinstance(redo, bool):
         raise ValueError("范围格式不对")
-    prefix = prefix.strip().replace("\\", "/").strip("/")
+    prefix = prefix.strip().replace("\\", "/")
+    if prefix.startswith(f"{root}:"):  # pasted as the cards show paths: "nas:/2D/pack.zip"
+        prefix = prefix[len(root) + 1 :]
+    prefix = prefix.strip("/")
     if len(prefix) > MAX_PREFIX_LENGTH or any(not c.isprintable() for c in prefix):
         raise ValueError("文件夹路径不对")
     return Scope(root=root, prefix=prefix, redo=redo)

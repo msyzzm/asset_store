@@ -115,6 +115,14 @@ def test_scope_limits_classification_to_a_folder(lib, server):
     assert final.done == 1 and rows["2D/Ice Pack"]["status"] == "todo" and rows["Audio/boom.wav"]["status"] == "proposed"
 
 
+def test_scope_without_any_pack_says_so_instead_of_finishing_quietly(lib, server):
+    conn, settings, _ = lib
+
+    final = run_analysis(conn, settings, Scope("lib", "No Such Folder"), _config(server))
+
+    assert final.total == 0 and "No Such Folder" in final.error
+
+
 def test_split_turns_a_folder_into_several_packs(lib):
     conn, _, _ = lib
     with conn:

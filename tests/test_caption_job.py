@@ -53,6 +53,8 @@ def test_scope_is_validated_and_normalised():
     roots = {"art": None}
     assert parse_scope({"root": "art", "prefix": "\\2D\\Icons/ "}, roots) == Scope("art", "2D/Icons", False)
     assert parse_scope({"root": "art", "redo": True}, roots) == Scope("art", "", True)
+    # Pasted as the cards show it ("art:/2D/x.zip"): the root part is dropped.
+    assert parse_scope({"root": "art", "prefix": "art:/2D/x.zip"}, roots) == Scope("art", "2D/x.zip", False)
     for bad in ({"root": "nope"}, {"root": "art", "prefix": "a\x00b"}, {"root": "art", "redo": "yes"}, [], {"root": "art", "x": 1}):
         with pytest.raises(ValueError):
             parse_scope(bad, roots)

@@ -200,6 +200,11 @@ def _in_scope(scope: Scope) -> tuple[str, list]:
     return "root = ? AND (path = ? OR substr(path, 1, ?) = ?)", [scope.root, scope.prefix, len(folder), folder]
 
 
+def _has_units(conn: sqlite3.Connection, scope: Scope) -> bool:
+    where, params = _in_scope(scope)
+    return conn.execute(f"SELECT 1 FROM organize_units WHERE {where} LIMIT 1", params).fetchone() is not None
+
+
 def to_classify(conn: sqlite3.Connection, scope: Scope) -> list[sqlite3.Row]:
     """Packs in scope that need the model: no proposal yet (or, with redo, an undecided one)."""
     where, params = _in_scope(scope)
@@ -240,6 +245,9 @@ def run_analysis(
     write_report(settings.data_dir, scope.root, groups, units)
 
     rows = to_classify(conn, scope)
+    if scope.prefix and not rows and not _has_units(conn, scope):
+        return replace(status, running=False, finished=time.time(),
+                       error=f"「{scope.prefix}」里没有找到素材包：检查路径（不用写 {scope.root}:/），或先扫描")
     status = replace(status, phase="classifying", total=len(rows), done=0)
     report(status)
     consecutive = 0
