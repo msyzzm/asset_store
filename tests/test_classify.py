@@ -34,6 +34,7 @@ def library(conn, settings, asset_root):
         path = asset_root / "2D" / "Fire Pack" / "fx" / f"flame_{i}.png"
         path.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (32, 32), color).save(path)
+    Image.new("RGB", (32, 32), (255, 0, 0)).save(asset_root / "2D" / "fire.png")  # a pack of one picture
     with zipfile.ZipFile(asset_root / "2D" / "127327921.zip", "w") as z:
         z.writestr("Swords/sword_01.png", b"x")
         z.writestr("Swords/sword_02.png", b"x")
@@ -129,6 +130,40 @@ def test_classify_unit_end_to_end(library, settings, server):
     assert archive.name == "Fake - 音效 (127327921).zip"
     body = server.requests[-1]["body"]
     assert body["reasoning_effort"] == "none" and "Swords/sword_#" in body["messages"][0]["content"][0]["text"]
+
+
+def _caption(conn, rel_path):
+    row = conn.execute(
+        "SELECT c.text, c.model FROM captions c JOIN files f ON f.id = c.file_id WHERE f.rel_path = ?", (rel_path,)
+    ).fetchone()
+    return tuple(row) if row else None
+
+
+def test_a_one_file_pack_gets_its_description_in_the_same_question(library, settings, server):
+    client = CaptionClient(CaptionConfig(base_url=server.base_url, model="m"))
+
+    proposal = classify_unit(client, library, settings, "art", "2D/fire.png", False)
+
+    assert proposal.category == "01_2D/VFX"
+    assert '"caption"' in server.requests[-1]["body"]["messages"][0]["content"][0]["text"]
+    assert _caption(library, "2D/fire.png") == ("一团红色的火焰\n火焰、红色", "m")
+    assert len(server.requests) == 1  # one question, not two
+
+
+def test_no_description_asked_for_folders_or_cards_that_have_one(library, settings, server):
+    client = CaptionClient(CaptionConfig(base_url=server.base_url, model="m"))
+    classify_unit(client, library, settings, "art", "2D/Fire Pack", True)
+    assert '"caption"' not in server.requests[-1]["body"]["messages"][0]["content"][0]["text"]
+
+    classify_unit(client, library, settings, "art", "2D/fire.png", False)
+    classify_unit(client, library, settings, "art", "2D/fire.png", False)  # described by the first call
+    assert '"caption"' not in server.requests[-1]["body"]["messages"][0]["content"][0]["text"]
+
+
+def test_description_in_the_answer_is_optional_and_cleaned(library):
+    answer = parse_answer('{"category": "01_2D/VFX", "name": "x", "reason": "r", "caption": " 火焰 <think>…</think>", "keywords": "红"}')
+    assert answer.caption == "火焰\n红"
+    assert parse_answer('{"category": "01_2D/VFX", "name": "x", "reason": "r"}').caption == ""
 
 
 def test_unusable_answer_is_an_item_problem(library, settings, server):

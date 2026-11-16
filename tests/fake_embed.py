@@ -121,6 +121,8 @@ class FakeEmbedServer:
                 else {"category": "01_2D/Textures", "name": "Fake - 蓝色贴图", "reason": "蓝色的图"} if url
                 else {"category": "03_Audio/SFX", "name": "Fake - 音效", "reason": "没有图"}
             )
+            if '"caption"' in prompt and url:  # also asked to describe the picture
+                answer = {**answer, "caption": "一团红色的火焰" if red else "一块蓝色的冰晶", "keywords": "火焰、红色"}
             content = "好的：" + json.dumps(answer, ensure_ascii=False)
         elif url is not None:
             content = "<think>看一下</think>一团红色的火焰特效\n火焰、红色、特效" if red else "一块蓝色的冰晶\n冰、蓝色"

@@ -126,7 +126,7 @@ def list_folders(conn: sqlite3.Connection, root: str, prefix: str) -> list[str]:
     return [folder + r["child"] for r in rows]
 
 
-def _save(conn: sqlite3.Connection, row: sqlite3.Row, model: str, text: str | None, error: str | None) -> None:
+def save_caption(conn: sqlite3.Connection, row: sqlite3.Row, model: str, text: str | None, error: str | None) -> None:
     with conn:
         conn.execute(
             """
@@ -171,7 +171,7 @@ def run_job(
         try:
             jpeg = card_jpeg(settings, row, CAPTION_BOX)
         except Exception as err:  # gone since the scan, undecodable: skip this card
-            _save(conn, row, config.model, None, str(err) or type(err).__name__)
+            save_caption(conn, row, config.model, None, str(err) or type(err).__name__)
             status = replace(status, failed=status.failed + 1)
             continue
         try:
@@ -180,14 +180,14 @@ def run_job(
             if not err.item_problem:  # down, timing out, wrong address or key: stop
                 status = replace(status, error=f"接口出错，已停止：{err}")
                 break
-            _save(conn, row, config.model, None, str(err))
+            save_caption(conn, row, config.model, None, str(err))
             status = replace(status, failed=status.failed + 1)
             consecutive += 1
             if consecutive >= MAX_CONSECUTIVE_FAILURES:
                 status = replace(status, error=f"连续 {consecutive} 张都失败，已停止，检查设置：{err}")
                 break
             continue
-        _save(conn, row, config.model, text, None)
+        save_caption(conn, row, config.model, text, None)
         consecutive = 0
         status = replace(status, done=status.done + 1)
         if status.done % EMBED_EVERY == 0:

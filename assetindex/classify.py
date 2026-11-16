@@ -17,7 +17,8 @@ from pathlib import PurePosixPath
 from PIL import Image
 
 from assetindex.archive_previews import choose_candidates
-from assetindex.caption import CaptionClient
+from assetindex.caption import CaptionClient, clean_caption
+from assetindex.caption_job import save_caption
 from assetindex.config import Settings
 from assetindex.embed_stage import BACKGROUND, JPEG_QUALITY, _has_image, card_jpeg
 from assetindex.embedding import EmbedError
@@ -58,6 +59,7 @@ SHEET_CELLS = 9
 CELL_BOX = (160, 160)
 PICTURE_BOX = (512, 512)
 ANSWER_TOKENS = 300
+CAPTION_TOKENS = 300  # extra room when the answer also describes the picture (Chinese: ~1.5 tokens a character)
 ITEM_PROBLEM = 422  # an answer we can't use counts against this unit, like a refused picture
 _BAD_NAME_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f\x7f]')
 _DIGITS = re.compile(r"\d+")
@@ -69,6 +71,7 @@ class Proposal:
     category: str
     name: str
     reason: str
+    caption: str = ""  # the picture described, when asked for (one-file packs without one)
 
 
 def under(path: str) -> tuple[str, str]:
@@ -195,15 +198,23 @@ def picture(conn: sqlite3.Connection, settings: Settings, root: str, path: str, 
     return _jpeg(sheet_image(images))
 
 
-def build_prompt(facts: str) -> str:
+def build_prompt(facts: str, with_caption: bool = False) -> str:
     menu = "\n".join(f"{path}  {desc}" for path, desc in CATEGORIES)
+    fields = '{"category": "分类路径", "name": "名字", "reason": "一句话理由"}'
+    caption = ""
+    if with_caption:  # the same answer then also fills the card's 看图描述
+        fields = fields[:-1] + ', "caption": "画面描述", "keywords": "关键词"}'
+        caption = (
+            "画面描述：用一句中文描述附图，包括是什么东西、角色或场景，画风，主要颜色。"
+            "关键词：5 到 10 个，用顿号分隔。\n\n"
+        )
     return (
         "你在整理一个游戏美术素材库。下面是其中一个素材包的信息，附图是包里几张图拼成的预览（可能没有）。\n"
         "请判断它该放进哪个分类，并起一个看名字就知道里面是什么的名字。\n\n"
         f"分类只能从下面选一个，填左边的路径；实在看不出来填 {UNSORTED}：\n{menu}\n\n"
         "名字：30 个字以内，中英文都可以，格式「来源 - 内容」。来源是作者、网站或原名里的包名，"
         "看不出来就只写内容。原名里有意义的英文包名要保留。\n\n"
-        '只输出一个 JSON，不要别的文字：{"category": "分类路径", "name": "名字", "reason": "一句话理由"}\n\n'
+        f"{caption}只输出一个 JSON，不要别的文字：{fields}\n\n"
         f"素材包信息：\n{facts}"
     )
 
@@ -227,7 +238,20 @@ def parse_answer(text: str) -> Proposal:
         category=category if category in CATEGORY_PATHS else UNSORTED,
         name=name,
         reason=" ".join(reason.split())[:200],
+        caption=_caption_of(data),
     )
+
+
+def _caption_of(data: dict) -> str:
+    """Description and keywords as the caption job stores them: two lines."""
+    text = data.get("caption")
+    if not isinstance(text, str) or not clean_caption(text):
+        return ""
+    keywords = data.get("keywords")
+    lines = [" ".join(clean_caption(text).split())]
+    if isinstance(keywords, str) and clean_caption(keywords):
+        lines.append(" ".join(clean_caption(keywords).split()))
+    return clean_caption("\n".join(lines))
 
 
 _COMPOUND_SUFFIXES = (".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst")
@@ -274,10 +298,30 @@ def classify_unit(
     client: CaptionClient, conn: sqlite3.Connection, settings: Settings, root: str, path: str, is_dir: bool
 ) -> Proposal:
     """Ask the model about one unit. Raises EmbedError: an unusable answer counts as an
-    item problem (this unit fails, the job goes on), API trouble as a stop."""
-    answer = client.ask(build_prompt(digest(conn, root, path, is_dir)), picture(conn, settings, root, path, is_dir), ANSWER_TOKENS)
+    item problem (this unit fails, the job goes on), API trouble as a stop.
+
+    A unit that is one card with a picture and no description yet (an archive, a lone
+    image) is described in the same question, saving the caption job a request."""
+    jpeg = picture(conn, settings, root, path, is_dir)
+    card = None if is_dir or jpeg is None else _undescribed_card(conn, root, path)
+    tokens = ANSWER_TOKENS + (CAPTION_TOKENS if card else 0)
+    answer = client.ask(build_prompt(digest(conn, root, path, is_dir), with_caption=card is not None), jpeg, tokens)
     try:
         proposal = parse_answer(answer)
     except ValueError as err:
         raise EmbedError(f"{err}：{answer[:100]}", ITEM_PROBLEM) from None
-    return Proposal(proposal.category, clean_name(proposal.name, path.rsplit("/", 1)[-1], is_dir), proposal.reason)
+    if card is not None and proposal.caption:
+        save_caption(conn, card, client.config.model, proposal.caption, None)
+    name = clean_name(proposal.name, path.rsplit("/", 1)[-1], is_dir)
+    return Proposal(proposal.category, name, proposal.reason, proposal.caption)
+
+
+def _undescribed_card(conn: sqlite3.Connection, root: str, path: str) -> sqlite3.Row | None:
+    """The file's card if it has no current description (same rule as the caption job)."""
+    return conn.execute(
+        """
+        SELECT f.id, f.mtime FROM files f LEFT JOIN captions c ON c.file_id = f.id
+        WHERE f.root = ? AND f.rel_path = ? AND NOT (c.text IS NOT NULL AND c.mtime = f.mtime)
+        """,
+        (root, path),
+    ).fetchone()
