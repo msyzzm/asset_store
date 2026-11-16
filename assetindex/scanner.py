@@ -4,11 +4,12 @@ import logging
 import os
 import sqlite3
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 from assetindex.kinds import kind_of
+from assetindex.scan_request import ScanStopped, never
 from assetindex.sequences import group_sequences, sequence_of
 
 log = logging.getLogger(__name__)
@@ -46,9 +47,10 @@ def is_utf8(text: str) -> bool:
     return True
 
 
-def _walk(root: Path, unreadable: list[str]) -> Iterator[FileEntry]:
+def _walk(root: Path, unreadable: list[str], should_stop: Callable[[], bool] = never) -> Iterator[FileEntry]:
     """Yield files under root. Paths that couldn't be read go into `unreadable`
-    as root-relative POSIX paths ("" means the root itself)."""
+    as root-relative POSIX paths ("" means the root itself). Checks `should_stop`
+    once per folder."""
 
     def rel_of(path: str) -> str:
         try:
@@ -62,6 +64,8 @@ def _walk(root: Path, unreadable: list[str]) -> Iterator[FileEntry]:
         unreadable.append(rel_of(err.filename or str(root)))
 
     for dirpath, dirnames, filenames in os.walk(root, onerror=on_error):
+        if should_stop():
+            raise ScanStopped(f"stopped while walking {root}")
         dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS]
         for filename in filenames:
             full = os.path.join(dirpath, filename)
@@ -121,7 +125,11 @@ def _delete_stale(
     return conn.execute(f"DELETE FROM files WHERE {' AND '.join(clauses)}", params).rowcount
 
 
-def scan_root(conn: sqlite3.Connection, root_name: str, root: Path) -> ScanStats:
+def scan_root(
+    conn: sqlite3.Connection, root_name: str, root: Path, should_stop: Callable[[], bool] = never
+) -> ScanStats:
+    """Raises ScanStopped if stopped mid-walk; nothing is deleted then, since files not
+    reached yet would look gone."""
     if not root.is_dir():
         raise FileNotFoundError(f"asset root {root_name!r} not found: {root}")
 
@@ -134,7 +142,7 @@ def scan_root(conn: sqlite3.Connection, root_name: str, root: Path) -> ScanStats
     batch: list[FileEntry] = []
     unreadable: list[str] = []
 
-    for entry in _walk(root, unreadable):
+    for entry in _walk(root, unreadable, should_stop):
         previous = known.get(entry.rel_path)
         if previous is None:
             added += 1

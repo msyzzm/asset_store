@@ -32,6 +32,17 @@ def _rows(conn, source=None):
     return {(r["rel_path"], r["source"]): r for r in rows}
 
 
+def test_stop_ends_embedding_between_batches(scanned, settings, server):
+    from assetindex.scan_request import ScanStopped
+
+    flags = iter([False] + [True] * 100)  # one batch, then stop
+
+    with pytest.raises(ScanStopped):
+        embed_pending(scanned, settings, _config(server, batch_size=1), should_stop=lambda: next(flags))
+
+    assert len(_rows(scanned)) == 1  # the finished batch is kept
+
+
 def test_every_card_gets_a_text_vector_once(scanned, settings, server):
     stats = embed_pending(scanned, settings, _config(server))
 

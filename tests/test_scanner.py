@@ -116,3 +116,20 @@ def test_scan_of_one_root_does_not_touch_other_root(conn, asset_root, tmp_path):
 
     roots = {r["root"] for r in conn.execute("SELECT root FROM files")}
     assert roots == {"art", "other"}
+
+
+def test_stopped_walk_keeps_the_files_it_did_not_reach(conn, asset_root):
+    import itertools
+
+    import pytest
+
+    from assetindex.scan_request import ScanStopped
+
+    scan_root(conn, "art", asset_root)
+    before = set(_rows(conn))
+    flags = itertools.chain([False], itertools.repeat(True))  # stop after the first folder
+
+    with pytest.raises(ScanStopped):
+        scan_root(conn, "art", asset_root, should_stop=lambda: next(flags))
+
+    assert set(_rows(conn)) == before  # not seen this time is not "deleted"

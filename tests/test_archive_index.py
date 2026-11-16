@@ -185,3 +185,14 @@ def test_retry_errors_relists_failed_archives(conn, pack_root):
     stats = index_archives(conn, "art", pack_root, retry_errors=True)
 
     assert (stats.failed, stats.unchanged) == (1, 2)
+
+
+def test_stop_comes_before_an_archive_so_it_is_not_counted_as_a_crash(conn, pack_root):
+    from assetindex.scan_request import ScanStopped
+
+    scan_root(conn, "art", pack_root)
+
+    with pytest.raises(ScanStopped):
+        index_archives(conn, "art", pack_root, should_stop=lambda: True)
+
+    assert _count(conn, "archives") == 0 and _count(conn, "scan_attempts") == 0

@@ -5,7 +5,8 @@
 
 const ORGANIZE_POLL_MS = 3000;
 const ORGANIZE_IDLE_POLL_MS = 15000;
-const organizeBar = { timer: 0, busy: false };
+// stopping: "停止" was pressed; the job finishes its current pack first, keep saying so.
+const organizeBar = { timer: 0, busy: false, stopping: false };
 
 function organizeText(data) {
   const job = data.job;
@@ -28,10 +29,12 @@ async function refreshOrganizeBar() {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     organizeBar.busy = data.job.running || data.job.requested;
+    if (!organizeBar.busy) organizeBar.stopping = false;
     const row = $('task-organize');
     row.classList.toggle('busy', organizeBar.busy);
     row.classList.toggle('failed', !organizeBar.busy && Boolean(data.job.error));
-    setText($('organize-task-text'), organizeText(data));
+    $('organize-task-stop').hidden = !organizeBar.busy || organizeBar.stopping;
+    setText($('organize-task-text'), organizeBar.stopping ? '正在停止：处理完手上这个包就停…' : organizeText(data));
   } catch (err) {
     setText($('organize-task-text'), `状态读取失败：${err.message}`);
   }
@@ -39,4 +42,18 @@ async function refreshOrganizeBar() {
   organizeBar.timer = setTimeout(refreshOrganizeBar, organizeBar.busy ? ORGANIZE_POLL_MS : ORGANIZE_IDLE_POLL_MS);
 }
 
+async function stopOrganize() {
+  $('organize-task-stop').hidden = true;
+  try {
+    const resp = await fetch('/api/organize/stop', { method: 'POST', headers: { 'X-Requested-With': 'fetch' } });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    organizeBar.stopping = true;
+    setText($('organize-task-text'), '正在停止：处理完手上这个包就停…');
+  } catch (err) {
+    $('organize-task-stop').hidden = false;
+    setText($('organize-task-text'), `没能停止：${err.message}`);
+  }
+}
+
+$('organize-task-stop').addEventListener('click', stopOrganize);
 refreshOrganizeBar();

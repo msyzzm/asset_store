@@ -12,7 +12,7 @@ import re
 import shutil
 import sqlite3
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,6 +21,7 @@ from PIL import Image
 from assetindex import attempts
 from assetindex.archives import ArchiveError, read_unity_previews
 from assetindex.extract import ExtractError, ExtractTimeout, read_member
+from assetindex.scan_request import ScanStopped, never
 from assetindex.sequences import sequence_of
 from assetindex.thumbs import (
     EMBEDDED_PREVIEW_EXTS,
@@ -202,7 +203,12 @@ def _render(
 
 
 def build_previews(
-    conn: sqlite3.Connection, root_name: str, root: Path, thumb_dir: Path, tool: str | None
+    conn: sqlite3.Connection,
+    root_name: str,
+    root: Path,
+    thumb_dir: Path,
+    tool: str | None,
+    should_stop: Callable[[], bool] = never,
 ) -> PreviewStats:
     rows = conn.execute(
         """
@@ -218,6 +224,8 @@ def build_previews(
     ).fetchall()
     built = empty = skipped = 0
     for row in rows:
+        if should_stop():  # before attempts.begin: a stop is not a crash
+            raise ScanStopped("stopped while building archive previews")
         is_unity = row["ext"] == "unitypackage"
         if not is_unity and tool is None:
             skipped += 1

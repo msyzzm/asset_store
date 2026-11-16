@@ -82,6 +82,49 @@ def test_failed_rebuild_is_reported(repos):
     assert status["state"] == "error" and "update.log" in status["error"]
 
 
+SLOW_COMPOSE = """
+echo "$1" >> ../data/compose.calls
+if [ "$1" = build ]; then sleep 30; fi
+"""
+
+
+def test_stop_interrupts_the_build_and_never_restarts(repos):
+    import time
+
+    (repos / "slow.sh").write_text(SLOW_COMPOSE, encoding="utf-8", newline="\n")
+    (repos / "data" / "update.deployed").write_text("old\n")
+    (repos / "data" / "update.request").write_text("update\n")
+    env = {"REPO_DIR": "repo", "DATA_DIR": "data", "COMPOSE": "bash ../slow.sh", "INSTALLED_SELF": "nowhere/x.sh"}
+    exports = " ".join(f"{k}='{v}'" for k, v in env.items())
+    proc = subprocess.Popen([BASH, "-c", f"export {exports}; bash updater.sh"], cwd=repos)
+    status_file = repos / "data" / "update.status"
+    try:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if status_file.exists() and '"step":"build"' in status_file.read_text(encoding="utf-8"):
+                break
+            time.sleep(0.2)
+        time.sleep(1)  # let the slow build start
+        started = time.monotonic()
+        (repos / "data" / "update.stop").touch()
+        proc.wait(timeout=20)
+    finally:
+        proc.kill()
+
+    assert time.monotonic() - started < 15  # did not sit out the 30 s build
+    status = json.loads(status_file.read_text(encoding="utf-8"))
+    assert status["state"] == "stopped" and status["deployed"] == "old"
+    assert (repos / "data" / "compose.calls").read_text().split() == ["build"]  # never "up"
+    assert not (repos / "data" / "update.stop").exists()
+
+
+def test_stale_stop_does_not_cancel_the_next_update(repos):
+    (repos / "data" / "update.stop").touch()
+    (repos / "data" / "update.request").write_text("update\n")
+
+    assert _run(repos)["state"] == "done"
+
+
 def test_unknown_requests_are_refused(repos):
     (repos / "data" / "update.request").write_text("rm -rf\n")
     assert _run(repos)["state"] == "error"

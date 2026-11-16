@@ -2,11 +2,13 @@
 
 import logging
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from assetindex import attempts
 from assetindex.archives import ARCHIVE_EXTS, ArchiveError, ArchiveListing, list_archive
+from assetindex.scan_request import ScanStopped, never
 
 log = logging.getLogger(__name__)
 
@@ -53,7 +55,11 @@ def _store(
 
 
 def index_archives(
-    conn: sqlite3.Connection, root_name: str, root: Path, retry_errors: bool = False
+    conn: sqlite3.Connection,
+    root_name: str,
+    root: Path,
+    retry_errors: bool = False,
+    should_stop: Callable[[], bool] = never,
 ) -> ArchiveStats:
     """List every new or changed archive under one root. Commits per archive, so an
     interrupted run resumes where it stopped. retry_errors relists archives recorded as
@@ -74,6 +80,8 @@ def index_archives(
         if not retry and (row["a_size"], row["a_mtime"]) == (row["size"], row["mtime"]):
             counts["unchanged"] += 1
             continue
+        if should_stop():  # before attempts.begin: a stop is not a crash
+            raise ScanStopped("stopped while listing archives")
         if not attempts.begin(conn, row["id"], STAGE):
             log.warning("archive %r killed the scanner %d times; marked bad", row["rel_path"], attempts.MAX_ATTEMPTS)
             with conn:

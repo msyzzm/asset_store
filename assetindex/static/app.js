@@ -483,11 +483,13 @@ function formatTime(epochSeconds) {
 }
 
 function scanText(status) {
+  if (status.running && status.stopping) return '正在停止：处理完手上这个文件夹或压缩包就停…';
   if (status.running) return `正在扫描（${formatTime(status.started)} 开始）…`;
   if (status.requested) return '已请求扫描，扫描器一分钟内会开始…';
   if (status.finished == null) {
     return status.ok === false ? '上次扫描中途断了（扫描器被强制退出？看扫描日志）' : '';
   }
+  if (status.stopped) return `上次扫描：${formatTime(status.finished)} 手动停止，已扫的保留，没扫完的下次接着扫`;
   const problem = status.ok === false ? '，有问题，看扫描日志' : '';
   return `上次扫描：${formatTime(status.finished)} 完成${problem}`;
 }
@@ -526,7 +528,8 @@ async function refreshScan(status) {
   }
   state.scanBusy = busy;
   $('scan').disabled = busy;
-  showScanTask(scanText(status) || '空闲', busy, status.ok === false && !busy);
+  $('scan-stop').hidden = !busy || Boolean(status.stopping);
+  showScanTask(scanText(status) || '空闲', busy, status.ok === false && !status.stopped && !busy);
   state.scanTimer = setTimeout(refreshScan, busy ? SCAN_POLL_MS : SCAN_IDLE_POLL_MS);
 }
 
@@ -552,6 +555,19 @@ async function requestScan() {
   }
 }
 
+async function stopScan() {
+  $('scan-stop').hidden = true;
+  try {
+    const resp = await fetch('/api/scan/stop', { method: 'POST', headers: { 'X-Requested-With': 'fetch' } });
+    // 409: it ended meanwhile; the refresh below shows how.
+    if (!resp.ok && resp.status !== 409) throw new Error(`HTTP ${resp.status}`);
+    await refreshScan(resp.ok ? await resp.json() : undefined);
+  } catch (err) {
+    $('scan-stop').hidden = false;
+    showScanTask(`没能停止：${err.message}`, true, true);
+  }
+}
+
 function init() {
   const params = new URLSearchParams(location.search);
   $('q').value = params.get('q') ?? '';
@@ -572,6 +588,7 @@ function init() {
   });
 
   $('scan').addEventListener('click', requestScan);
+  $('scan-stop').addEventListener('click', stopScan);
 
   loadStats();
   search();

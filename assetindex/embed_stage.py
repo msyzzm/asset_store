@@ -24,6 +24,7 @@ from PIL import Image
 from assetindex.config import Settings
 from assetindex.embedding import EmbedClient, EmbedConfig, EmbedError
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
+from assetindex.scan_request import ScanStopped, never
 from assetindex.thumbs import (
     EMBEDDED_PREVIEW_EXTS,
     file_thumb_path,
@@ -211,9 +212,13 @@ def _without_new_captions(conn: sqlite3.Connection, results: list, started: floa
     return [r for r in results if r[0]["id"] not in fresh]
 
 
-def _run_source(conn, rows, source, config: EmbedConfig, prepare, embed) -> tuple[_Tally, str | None]:
+def _run_source(
+    conn, rows, source, config: EmbedConfig, prepare, embed, should_stop: Callable[[], bool] = never
+) -> tuple[_Tally, str | None]:
     tally = _Tally()
     for start in range(0, len(rows), config.batch_size):
+        if should_stop():
+            raise ScanStopped("stopped while embedding")
         started = time.time()  # before card_text reads any caption
         chunk, unusable = [], []
         for row in rows[start : start + config.batch_size]:
@@ -242,6 +247,7 @@ def embed_pending(
     config: EmbedConfig,
     retry_errors: bool = False,
     client: EmbedClient | None = None,
+    should_stop: Callable[[], bool] = never,
 ) -> EmbedStats:
     if not config.active:
         return EmbedStats()
@@ -252,13 +258,13 @@ def embed_pending(
 
     texts, error = _run_source(
         conn, _pending(conn, settings, TEXT, config.model), TEXT, config,
-        lambda row: card_text(conn, row), client.embed_texts,
+        lambda row: card_text(conn, row), client.embed_texts, should_stop,
     )
     images = _Tally()
     if error is None and config.embeds_images:
         images, error = _run_source(
             conn, _pending(conn, settings, IMAGE, config.model), IMAGE, config,
-            lambda row: card_jpeg(settings, row), client.embed_images,
+            lambda row: card_jpeg(settings, row), client.embed_images, should_stop,
         )
     return EmbedStats(texts.done, images.done, texts.rejected + images.rejected, error)
 

@@ -124,6 +124,10 @@ def cmd_scan(args):
     return _json(args, "/api/scan", body={})
 
 
+def cmd_scan_stop(args):
+    return _json(args, "/api/scan/stop", body={})
+
+
 def cmd_caption(args):
     return _json(args, "/api/captions", body={"root": args.root, "prefix": args.prefix, "redo": args.redo})
 
@@ -169,6 +173,9 @@ def _parser() -> argparse.ArgumentParser:
 
     sub.add_parser("tasks", help="what the scanner and the captioner are doing").set_defaults(func=cmd_tasks)
     sub.add_parser("scan", help="ask for a scan now (picks up new files on the NAS)").set_defaults(func=cmd_scan)
+    sub.add_parser("scan-stop", help="stop the running scan (or drop one not started yet)").set_defaults(
+        func=cmd_scan_stop
+    )
 
     p = sub.add_parser("caption", help="start describing pictures in a folder (slow: seconds per picture)")
     p.add_argument("--root", required=True)

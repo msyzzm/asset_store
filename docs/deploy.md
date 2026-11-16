@@ -152,6 +152,7 @@ docker stats --no-stream
 | 要做的事 | 命令 |
 |---|---|
 | 立刻扫一次 | 网页右上角点「扫描」，或 `docker compose exec scanner python -m assetindex scan` |
+| 停止扫描 | 任务栏「扫描」一行点「停止」：处理完手上这个文件夹、压缩包或这批向量就停。已扫的保留，没扫完的下一轮定时扫描接着做 |
 | 重试坏包和没封面的包 | `docker compose exec scanner python -m assetindex scan --retry-errors` |
 | 看扫描日志 | `docker compose logs --tail 100 scanner` |
 | 升级 | 网页任务栏「更新」一行点「更新」（需先装一次更新服务，见下文）；或手动 `git pull && docker compose up -d --build` |
@@ -182,6 +183,7 @@ sudo deploy/updater/install.sh
 
 - 更新执行的是 `git pull --ff-only` 加 `docker compose up -d --build`。如果 LXC 里的仓库有本地改动或分叉，pull 会失败，页面上显示红点，鼠标悬停能看到报错。完整输出在数据卷里的 `update.log`。
 - 重建期间网页会断开一会儿，完成后页面自动刷新到新版本。正在跑的扫描或看图描述会被打断，重启后点一下就能接着做，已经完成的部分不会丢。
+- 拉代码和重建镜像期间可以点「停止」，服务继续跑原来的版本。进入「重启服务」这一步后就不能停了，免得网页起不来。停止功能从装上这个版本之后的下一次更新开始生效（主机上的更新脚本在每次更新成功后自动换成新的）。
 - 卸载：`sudo deploy/updater/install.sh --uninstall`。
 - 查看服务日志：`journalctl -u asset-updater -u asset-updater-check`。
 
@@ -283,6 +285,7 @@ sudo deploy/updater/install.sh
 - **这一步不会移动任何文件**，NAS 仍然是只读的。确认过的建议会在下一步统一执行，到时候再开写权限，并且可以撤销。
 - 分析由 `captioner` 容器执行，和看图描述共用同一个模型，同一时间只跑一个任务；两个都提交了，就排队。
 - 每个包要问一次模型，大约和描述一张图一样慢。可以先填一个文件夹，分批分析。
+- 整理页和主页任务栏都可以点「停止」，手上这个包问完就停，已经出的建议会保留。
 - 某个包里的文件变了（新增、删除、修改），它的建议会作废，下次分析时重新问。已经确认或拒绝的决定，在文件没变的情况下会一直保留。
 - 命令行：`docker compose exec captioner python -m assetindex organize --root nas --prefix 某个文件夹`。
 

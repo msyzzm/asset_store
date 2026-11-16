@@ -127,6 +127,7 @@ def test_scan_button_records_a_request_the_scanner_will_see(client, settings):
 
     assert client.get("/api/scan").json() == {
         "requested": False, "running": False, "started": None, "finished": None, "ok": None,
+        "stopped": False, "stopping": False,
     }
 
     assert client.post("/api/scan").status_code == 403  # plain cross-site POST
@@ -164,6 +165,25 @@ def test_scan_request_fails_cleanly_when_data_dir_unwritable(client, monkeypatch
     monkeypatch.setattr(web, "request_scan", deny)
     resp = client.post("/api/scan", headers={"X-Requested-With": "fetch"})
     assert resp.status_code == 503
+
+
+def test_scan_stop_button(client, settings):
+    from assetindex import scan_request
+    from assetindex.scan_request import ScanStatus
+    from assetindex.scanlock import scan_lock
+
+    headers = {"X-Requested-With": "fetch"}
+    assert client.post("/api/scan/stop", headers=headers).status_code == 409  # nothing to stop
+
+    scan_request.request_scan(settings.data_dir)
+    assert client.post("/api/scan/stop").status_code == 403  # plain cross-site POST
+    body = client.post("/api/scan/stop", headers=headers).json()
+    assert body["requested"] is False  # a scan not started yet is simply dropped
+
+    scan_request.write_status(settings.data_dir, ScanStatus(running=True, started=1.0))
+    with scan_lock(settings.data_dir):
+        body = client.post("/api/scan/stop", headers=headers).json()
+    assert body["running"] is True and body["stopping"] is True
 
 
 

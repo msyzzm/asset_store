@@ -47,6 +47,7 @@ python scripts/asset_store.py tasks
 - `scan`：马上重新扫描 NAS，新加的素材要扫描后才搜得到。服务器一分钟内开始，用 `tasks` 看进度。
 - `caption --root 根目录名 --prefix 文件夹`：让看图模型给这个文件夹里的图写描述。每张图要几秒，期间会占用用户那台机器上的模型，开始前要和用户确认范围。`--redo` 表示已有描述的也重做。
 - `caption-stop`：停止描述任务。
+- `scan-stop`：停止正在进行的扫描（还没开始的扫描请求会被撤销）。已扫的保留。
 - `tasks`：查看扫描和描述任务在做什么、上次的结果。
 
 ## 出错
@@ -81,5 +82,6 @@ GET 请求不需要认证。POST 请求要带请求头 `X-Requested-With: anythi
 | 扫描 | `POST /api/scan`，body 为 `{}` |
 | 描述图片 | `POST /api/captions`，body 为 `{"root":"nas","prefix":"文件夹","redo":false}` |
 | 停止描述 | `POST /api/captions/stop` |
+| 停止扫描 | `POST /api/scan/stop` |
 
 完整的接口文档在服务的 `/docs` 页面（FastAPI 自动生成）。

@@ -22,6 +22,25 @@ def test_status_round_trips(tmp_path):
     assert scan_request.read_status(tmp_path) == status
 
 
+def test_stop_drops_a_pending_request_and_can_be_cleared(tmp_path):
+    scan_request.request_scan(tmp_path)
+
+    scan_request.request_stop(tmp_path)
+
+    assert not scan_request.is_requested(tmp_path)
+    assert scan_request.stop_requested(tmp_path)
+    scan_request.clear_stop(tmp_path)
+    assert not scan_request.stop_requested(tmp_path)
+
+
+def test_stopped_status_round_trips(tmp_path):
+    status = ScanStatus(started=1.0, finished=2.0, ok=False, stopped=True)
+
+    scan_request.write_status(tmp_path, status)
+
+    assert scan_request.read_status(tmp_path) == status
+
+
 def test_missing_or_corrupt_status_reads_as_never_scanned(tmp_path):
     assert scan_request.read_status(tmp_path) == ScanStatus()
 

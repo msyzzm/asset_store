@@ -37,7 +37,8 @@ from assetindex.embedding import (
 from assetindex.extract import ExtractError, find_bsdtar, read_member
 from assetindex.kinds import KINDS, LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.organize_web import add_organize_routes
-from assetindex.scan_request import is_requested, read_status, request_scan
+from assetindex.scan_request import is_requested, read_status, request_scan, stop_requested
+from assetindex.scan_request import request_stop as request_scan_stop
 from assetindex.scanlock import is_scan_running
 from assetindex.search import MAX_LIMIT, MAX_QUERY_LENGTH, parse_terms, search
 from assetindex.semantic import NoVectors, VectorIndex, semantic_search
@@ -284,7 +285,11 @@ def create_app(settings: Settings) -> FastAPI:
         if status.running and not is_scan_running(settings.data_dir):
             # The kernel dropped the lock: the scanner died mid-scan (OOM, docker kill).
             status = replace(status, running=False, ok=False)
-        return {"requested": is_requested(settings.data_dir), **asdict(status)}
+        return {
+            "requested": is_requested(settings.data_dir),
+            **asdict(status),
+            "stopping": status.running and stop_requested(settings.data_dir),
+        }
 
     @app.get("/api/scan")
     def api_scan_status() -> dict:
@@ -299,6 +304,19 @@ def create_app(settings: Settings) -> FastAPI:
         except OSError as err:
             log.error("cannot record scan request: %r", err)
             raise HTTPException(503, "cannot record the scan request; check the data dir") from None
+        return scan_state()
+
+    # Takes effect between folders/archives/batches; a scan not started yet is dropped.
+    @app.post("/api/scan/stop", dependencies=[Depends(page_request)])
+    def api_scan_stop() -> dict:
+        state = scan_state()
+        if not (state["running"] or state["requested"]):
+            raise HTTPException(409, "没有正在进行的扫描")
+        try:
+            request_scan_stop(settings.data_dir)
+        except OSError as err:
+            log.error("cannot record scan stop: %r", err)
+            raise HTTPException(503, "没能发出停止请求，检查数据目录") from None
         return scan_state()
 
     def agent_search(conn: sqlite3.Connection, q: str, kind: str | None, limit: int, offset: int, mode: str):

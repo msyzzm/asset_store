@@ -15,7 +15,17 @@ from pathlib import Path
 
 REQUEST_NAME = "scan.request"
 STATUS_NAME = "scan.status"
+STOP_NAME = "scan.stop"  # created by the "停止" button, deleted when the scanner sees it
 POLL_SECONDS = 5  # how soon a waiting scanner notices a request
+
+
+class ScanStopped(Exception):
+    """Raised between items once a stop was asked for: what's done so far is kept."""
+
+
+def never() -> bool:
+    """Default `should_stop` for scan stages run outside a scan (tests, the captioner)."""
+    return False
 
 
 @dataclass(frozen=True)
@@ -24,6 +34,21 @@ class ScanStatus:
     started: float | None = None  # epoch seconds
     finished: float | None = None
     ok: bool | None = None  # False if any root was unreadable or the scan was interrupted
+    stopped: bool = False  # ended early by the "停止" button
+
+
+def request_stop(data_dir: Path) -> None:
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / REQUEST_NAME).unlink(missing_ok=True)  # one not started yet is dropped too
+    (data_dir / STOP_NAME).touch()
+
+
+def stop_requested(data_dir: Path) -> bool:
+    return (data_dir / STOP_NAME).exists()
+
+
+def clear_stop(data_dir: Path) -> None:
+    (data_dir / STOP_NAME).unlink(missing_ok=True)
 
 
 def request_scan(data_dir: Path) -> None:
@@ -96,4 +121,5 @@ def read_status(data_dir: Path) -> ScanStatus:
         started=_number_or_none(raw.get("started")),
         finished=_number_or_none(raw.get("finished")),
         ok=ok if isinstance(ok, bool) else None,
+        stopped=raw.get("stopped") is True,
     )

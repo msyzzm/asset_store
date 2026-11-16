@@ -81,6 +81,19 @@ def _build(conn, root, thumb_dir, tool=TOOL):
     return build_previews(conn, "art", root, thumb_dir, tool)
 
 
+def test_stop_comes_before_an_archive_so_previews_stay_pending(conn, preview_root, tmp_path):
+    from assetindex.scan_request import ScanStopped
+
+    scan_root(conn, "art", preview_root)
+    index_archives(conn, "art", preview_root)
+
+    with pytest.raises(ScanStopped):
+        build_previews(conn, "art", preview_root, tmp_path / "thumbs", TOOL, should_stop=lambda: True)
+
+    assert _state(conn, "icons.zip") is None
+    assert conn.execute("SELECT COUNT(*) FROM scan_attempts").fetchone()[0] == 0
+
+
 def test_choose_candidates_spreads_folders_and_skips_junk():
     entries = [
         (1, "A/a1.png", 10),

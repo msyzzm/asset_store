@@ -5,6 +5,7 @@ import logging
 import signal
 import sqlite3
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -19,7 +20,7 @@ from assetindex.db import connect
 from assetindex.embed_stage import embed_pending
 from assetindex.embedding import load_config
 from assetindex.extract import find_bsdtar
-from assetindex.scan_request import ScanStatus
+from assetindex.scan_request import ScanStatus, ScanStopped
 from assetindex.scanlock import ScanLocked, scan_lock
 from assetindex.scanner import scan_root
 
@@ -34,12 +35,18 @@ CAPTION_POLL_SECONDS = 3
 
 
 def _scan_one(
-    conn: sqlite3.Connection, settings: Settings, name: str, path: Path, tool: str | None, retry_errors: bool
+    conn: sqlite3.Connection,
+    settings: Settings,
+    name: str,
+    path: Path,
+    tool: str | None,
+    retry_errors: bool,
+    should_stop: Callable[[], bool] = scan_request.never,
 ) -> bool:
-    """Index one root; False if it couldn't be read at all."""
+    """Index one root; False if it couldn't be read at all. Raises ScanStopped."""
     started = time.monotonic()
     try:
-        stats = scan_root(conn, name, path)
+        stats = scan_root(conn, name, path, should_stop)
     except OSError as err:
         # e.g. NAS not mounted; keep going so other roots still get indexed.
         log.error("scan of %s (%s) failed: %s", name, path, err)
@@ -51,7 +58,7 @@ def _scan_one(
         " (stale entries kept: read errors or empty root)" if stats.deletion_skipped else "",
     )
     started = time.monotonic()
-    archived = index_archives(conn, name, path, retry_errors=retry_errors)
+    archived = index_archives(conn, name, path, retry_errors=retry_errors, should_stop=should_stop)
     log.info(
         "archives in %s listed in %.1fs: new/changed %d, bad %d, unreadable %d, unchanged %d",
         name, time.monotonic() - started,
@@ -65,7 +72,7 @@ def _scan_one(
                 (name,),
             )
     started = time.monotonic()
-    previews = build_previews(conn, name, path, settings.thumb_dir, tool)
+    previews = build_previews(conn, name, path, settings.thumb_dir, tool, should_stop=should_stop)
     log.info(
         "archive previews in %s built in %.1fs: sheets %d, nothing to show %d, pending %d",
         name, time.monotonic() - started, previews.built, previews.empty, previews.skipped,
@@ -84,38 +91,58 @@ def _scan(only_root: str | None, retry_errors: bool = False) -> int:
         log.warning("bsdtar not found: zip/rar/7z previews are skipped until it is installed")
     try:
         with scan_lock(settings.data_dir, wait_seconds=LOCK_WAIT_SECONDS):
+            data_dir = settings.data_dir
+            scan_request.clear_stop(data_dir)  # pressed while idle: not meant for this scan
             started = time.time()
-            _set_status(settings.data_dir, ScanStatus(running=True, started=started))
+            _set_status(data_dir, ScanStatus(running=True, started=started))
             # Only now: had the lock been busy, the request would stay for the next round.
-            scan_request.take_request(settings.data_dir)
-            ok = False  # stays False if the scan is interrupted
+            scan_request.take_request(data_dir)
+
+            def should_stop() -> bool:
+                return scan_request.stop_requested(data_dir)
+
+            ok = stopped = False  # ok stays False if the scan is interrupted
             conn = connect(settings.db_path)
             try:
                 if retry_errors:
                     attempts.clear(conn)
-                results = [_scan_one(conn, settings, name, path, tool, retry_errors) for name, path in roots.items()]
+                results = [
+                    _scan_one(conn, settings, name, path, tool, retry_errors, should_stop)
+                    for name, path in roots.items()
+                ]
                 pruned = prune_thumbs(conn, settings.thumb_dir, settings.thumb_cache_bytes)
                 log.info("thumbnail cache: removed %d files, %.1f MB", pruned.removed, pruned.freed_bytes / 1024**2)
-                _embed(conn, replace(settings, roots=roots), retry_errors)  # only the roots scanned
+                _embed(conn, replace(settings, roots=roots), retry_errors, should_stop)  # only the roots scanned
                 ok = all(results)
+            except ScanStopped as err:
+                stopped = True
+                log.info("scan stopped from the web UI (%s); the rest waits for the next round", err)
             finally:
                 conn.close()
-                _set_status(settings.data_dir, ScanStatus(started=started, finished=time.time(), ok=ok))
+                scan_request.clear_stop(data_dir)
+                _set_status(data_dir, ScanStatus(started=started, finished=time.time(), ok=ok, stopped=stopped))
     except ScanLocked as err:
         log.error("%s; not starting another", err)
         return 3
-    return 0 if ok else 1
+    return 0 if ok or stopped else 1
 
 
-def _embed(conn: sqlite3.Connection, settings: Settings, retry_errors: bool) -> None:
+def _embed(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    retry_errors: bool,
+    should_stop: Callable[[], bool] = scan_request.never,
+) -> None:
     """Semantic search vectors, if switched on in the web UI. An unreachable API only
-    postpones them to the next scan; it doesn't fail this one."""
+    postpones them to the next scan; it doesn't fail this one. Raises ScanStopped."""
     config = load_config(settings.data_dir)
     if not config.active:
         return
     started = time.monotonic()
     try:
-        stats = embed_pending(conn, settings, config, retry_errors=retry_errors)
+        stats = embed_pending(conn, settings, config, retry_errors=retry_errors, should_stop=should_stop)
+    except ScanStopped:
+        raise
     except Exception:  # e.g. "database is locked": vectors are extra, the scan itself worked
         log.exception("embedding failed, will try again next scan")
         return

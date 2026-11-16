@@ -265,3 +265,55 @@ def test_unexpected_embedding_failure_does_not_fail_the_scan(monkeypatch, tmp_pa
     monkeypatch.setattr(cli, "embed_pending", boom)
     assert main(["scan"]) == 0
     assert scan_request.read_status(data_dir).ok is True
+
+
+def test_stop_from_the_web_ui_ends_the_scan_and_skips_later_stages(monkeypatch, tmp_path, asset_root):
+    from assetindex import cli, scan_request
+
+    data_dir = _env(monkeypatch, tmp_path, asset_root)
+    real_index = cli.index_archives
+
+    def stop_while_listing(*a, **kw):
+        scan_request.request_stop(data_dir)  # pressed while the archives are listed
+        return real_index(*a, **kw)
+
+    def must_not_run(*a, **kw):
+        raise AssertionError("ran after the stop")
+
+    monkeypatch.setattr(cli, "index_archives", stop_while_listing)
+    monkeypatch.setattr(cli, "build_previews", must_not_run)
+    monkeypatch.setattr(cli, "prune_thumbs", must_not_run)
+
+    assert main(["scan"]) == 0
+
+    status = scan_request.read_status(data_dir)
+    assert status.running is False and status.stopped is True and status.ok is False
+    assert not scan_request.stop_requested(data_dir)  # used up: the next scan runs normally
+
+
+def test_stop_during_embedding_is_not_mistaken_for_an_embedding_failure(monkeypatch, tmp_path, asset_root):
+    from assetindex import cli, embedding, scan_request
+    from assetindex.embedding import EmbedConfig
+    from assetindex.scan_request import ScanStopped
+
+    data_dir = _env(monkeypatch, tmp_path, asset_root)
+    embedding.save_config(data_dir, EmbedConfig(enabled=True, base_url="http://127.0.0.1:9/v1", model="m"))
+
+    def stopped(*a, **kw):
+        raise ScanStopped("stopped while embedding")
+
+    monkeypatch.setattr(cli, "embed_pending", stopped)
+    assert main(["scan"]) == 0
+    assert scan_request.read_status(data_dir).stopped is True
+
+
+def test_stop_pressed_while_idle_does_not_cancel_the_next_scan(monkeypatch, tmp_path, asset_root):
+    from assetindex import scan_request
+
+    data_dir = _env(monkeypatch, tmp_path, asset_root)
+    scan_request.request_stop(data_dir)
+
+    assert main(["scan"]) == 0
+
+    status = scan_request.read_status(data_dir)
+    assert status.ok is True and status.stopped is False

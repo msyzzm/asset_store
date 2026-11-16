@@ -59,6 +59,32 @@ def test_web_endpoints(settings):
     assert client.get("/api/agent/tasks").json()["update"]["requested"] == "update"
 
 
+def test_stop_button(settings):
+    client = TestClient(create_app(settings))
+    assert client.post("/api/update/stop", headers=PAGE).status_code == 409  # nothing to stop
+
+    _status(settings.data_dir, state="idle", current="abc1234")
+    updater.request(settings.data_dir, "update")
+    assert client.post("/api/update/stop").status_code == 403
+    assert updater.update_state(settings.data_dir)["stoppable"] is True
+    body = client.post("/api/update/stop", headers=PAGE).json()
+    assert body["requested"] is None and body["stoppable"] is False  # not started yet: simply dropped
+
+    _status(settings.data_dir, state="running", step="build", current="abc1234")
+    body = client.post("/api/update/stop", headers=PAGE).json()
+    assert body["stopping"] is True and (settings.data_dir / updater.STOP_NAME).exists()
+
+    # Containers are being recreated: interrupting now could leave the site down.
+    (settings.data_dir / updater.STOP_NAME).unlink()
+    (settings.data_dir / updater.STOP_NAME).touch()  # pressed just as the restart began
+    _status(settings.data_dir, state="running", step="restart", current="abc1234")
+    state = updater.update_state(settings.data_dir)
+    assert state["stoppable"] is False and state["stopping"] is False
+    (settings.data_dir / updater.STOP_NAME).unlink()
+    assert client.post("/api/update/stop", headers=PAGE).status_code == 409
+    assert not (settings.data_dir / updater.STOP_NAME).exists()
+
+
 def test_request_nobody_picked_up_stops_blocking(tmp_path, monkeypatch):
     import os
     import time

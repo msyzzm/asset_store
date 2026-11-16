@@ -18,9 +18,13 @@ REQUEST="$DATA_DIR/update.request"
 STATUS="$DATA_DIR/update.status"
 LOG="$DATA_DIR/update.log"
 DEPLOYED="$DATA_DIR/update.deployed"  # the commit the running containers were built from
+STOP="$DATA_DIR/update.stop"  # the web UI's "停止": honoured until the containers are recreated
 FETCH_TIMEOUT=${FETCH_TIMEOUT:-300}
+STOP_GRACE=${STOP_GRACE:-20}  # seconds of SIGTERM before a stopped build is killed outright
 
-current="" latest="" deployed="" behind="null" pending="" checked="null" started="null" finished="null"
+current="" latest="" deployed="" behind="null" pending="" checked="null" started="null" finished="null" step=""
+build_pid=""         # process group of a running build, so the TERM trap can take it down too
+stopped_by_user=""   # set when update.stop actually ended the run: other failures stay errors
 
 git_() {
     # As the repo's owner: their git credentials (HOME: systemd sets none), and no
@@ -57,8 +61,8 @@ write_status() {  # state, error, log
         [ -n "$line" ] && items="${items:+$items,}$(json_str "$line")"
     done <<< "$pending"
     tmp="$STATUS.tmp.$$"
-    printf '{"state":%s,"current":%s,"latest":%s,"deployed":%s,"behind":%s,"pending":[%s],"checked":%s,"started":%s,"finished":%s,"error":%s,"log":%s}\n' \
-        "$(json_str "$state")" "$(json_or_null "$current")" "$(json_or_null "$latest")" "$(json_or_null "$deployed")" "$behind" "$items" \
+    printf '{"state":%s,"step":%s,"current":%s,"latest":%s,"deployed":%s,"behind":%s,"pending":[%s],"checked":%s,"started":%s,"finished":%s,"error":%s,"log":%s}\n' \
+        "$(json_str "$state")" "$(json_or_null "$step")" "$(json_or_null "$current")" "$(json_or_null "$latest")" "$(json_or_null "$deployed")" "$behind" "$items" \
         "$checked" "$started" "$finished" "$(json_or_null "$error")" "$(json_or_null "$log")" > "$tmp" \
         && chmod 644 "$tmp" && mv -f "$tmp" "$STATUS"
 }
@@ -70,6 +74,47 @@ read_versions() {  # after a fetch: where we are, where upstream is, what's in b
     pending=$(git_ log --format='%h %s' 'HEAD..@{u}' 2>/dev/null | head -n 50)
     deployed=$(head -c 64 "$DEPLOYED" 2>/dev/null | tr -dc '0-9A-Za-z')
     checked=$(date +%s)
+}
+
+stop_asked() {
+    [ -f "$STOP" ]
+}
+
+go_on() {  # between steps: false (and remembered) once the web UI asked to stop
+    if stop_asked; then
+        stopped_by_user=1
+        return 1
+    fi
+}
+
+set_step() {  # fetch | pull | build | restart: the page offers "停止" before restart only
+    step=$1
+    if [ "$step" = restart ]; then rm -f "$STOP"; fi  # too late now: don't show "stopping"
+    write_status running || true
+}
+
+in_repo_stoppable() {  # run "$@" in the repo, in its own process group: update.stop interrupts it
+    local waited=0 rc
+    set -m
+    (cd "$REPO_DIR" && exec "$@") &
+    build_pid=$!
+    set +m
+    while kill -0 "$build_pid" 2> /dev/null; do
+        if stop_asked; then
+            stopped_by_user=1
+            if [ "$waited" -lt "$STOP_GRACE" ]; then
+                kill -TERM -- "-$build_pid" 2> /dev/null
+            else
+                kill -KILL -- "-$build_pid" 2> /dev/null
+            fi
+            waited=$((waited + 1))
+        fi
+        sleep 1
+    done
+    wait "$build_pid"
+    rc=$?
+    build_pid=""
+    return "$rc"
 }
 
 do_check() {
@@ -88,19 +133,27 @@ do_update() {
     read_versions
     started=$(date +%s)
     finished="null"
+    step=fetch
     write_status running
     # Killed (systemd timeout, stop): say so instead of leaving "running" behind.
-    trap 'finished=$(date +%s); write_status error "更新被中断（超时或服务被停止），详情见 update.log" "$(tail -n 20 "$LOG")"; exit 1' TERM INT
+    trap 'if [ -n "$build_pid" ]; then kill -TERM -- "-$build_pid" 2> /dev/null; fi; finished=$(date +%s); write_status error "更新被中断（超时或服务被停止），详情见 update.log" "$(tail -n 20 "$LOG")"; exit 1' TERM INT
     {
         echo "== $(date '+%F %T') update from $current (built: ${deployed:-unknown})"
-        GIT_LIMIT=$FETCH_TIMEOUT git_ fetch --quiet && git_ pull --ff-only \
-            && (cd "$REPO_DIR" && $COMPOSE up -d --build --remove-orphans)
+        # A stop is checked between steps and interrupts the build; once the containers
+        # are being recreated it is too late (the site could be left down).
+        GIT_LIMIT=$FETCH_TIMEOUT git_ fetch --quiet && go_on \
+            && set_step pull && git_ pull --ff-only && go_on \
+            && set_step build && in_repo_stoppable $COMPOSE build && go_on \
+            && set_step restart && (cd "$REPO_DIR" && $COMPOSE up -d --remove-orphans)
     } > "$LOG" 2>&1
-    local ok=$?
+    local ok=$? last_step=$step
     trap - TERM INT
     read_versions
     finished=$(date +%s)
-    if [ "$ok" -eq 0 ]; then
+    step=""
+    if [ "$ok" -ne 0 ] && [ -n "$stopped_by_user" ] && [ "$last_step" != restart ]; then
+        write_status stopped "" "$(tail -n 20 "$LOG")"
+    elif [ "$ok" -eq 0 ]; then
         # Only a successful build moves this: a pull without a build leaves a rebuild pending.
         printf '%s\n' "$current" > "$DEPLOYED"
         deployed=$current
@@ -119,6 +172,7 @@ main() {
         exec 9> "$DATA_DIR/update.lock"
         flock 9
     fi
+    rm -f "$STOP"  # pressed while nothing ran: not meant for this run
     local action=""
     if [ -f "$REQUEST" ]; then
         action=$(tr -dc 'a-z' < "$REQUEST")
@@ -132,6 +186,7 @@ main() {
         "") ;;
         *) read_versions; write_status error "不认识的请求：$action" ;;
     esac
+    rm -f "$STOP"
 }
 
 main "$@"

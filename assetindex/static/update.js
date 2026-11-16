@@ -6,6 +6,7 @@
 
 const UPDATE_POLL_MS = 3000;
 const UPDATE_IDLE_POLL_MS = 60000;
+const UPDATE_STEP_TEXT = { fetch: '拉代码', pull: '拉代码', build: '重建镜像', restart: '重启服务，网页会断开一会儿' };
 const updateState = { timer: 0, seq: 0, busy: false, loadedVersion: null, sawUpdate: false };
 
 function shortTime(epochSeconds) {
@@ -14,11 +15,13 @@ function shortTime(epochSeconds) {
 
 function updateText(s) {
   if (!s.installed) return '没装更新服务（只需装一次，见 docs/deploy.md「网页一键更新」）';
-  if (s.state === 'running') return '正在更新：拉代码、重建镜像，网页会断开一会儿，完成后自动刷新…';
+  if (s.state === 'running' && s.stopping) return '正在停止更新…';
+  if (s.state === 'running') return `正在更新：${UPDATE_STEP_TEXT[s.step] ?? '拉代码、重建镜像'}，完成后自动刷新…`;
   if (s.state === 'checking' || s.requested === 'check') return '正在检查有没有新版本…';
   if (s.requested === 'update') return '已提交，马上开始更新…';
   const rebuild = s.needs_rebuild ? `；服务还在跑 ${s.deployed}，代码已是 ${s.current}，点更新重新构建` : '';
   if (s.state === 'error') return (s.error || '出错了') + rebuild;
+  if (s.state === 'stopped') return `更新已手动停止，服务还是原来的版本${s.needs_rebuild ? '；代码已拉下来，想用新版本再点更新' : ''}`;
   const version = runningVersion(s) ? `当前 ${runningVersion(s)}` : '';
   if (s.behind > 0) return `${version}，有 ${s.behind} 个新提交：${s.pending[0] ?? ''}`;
   if (s.needs_rebuild) return `代码已更新到 ${s.current}，但服务还在跑 ${s.deployed}（上次构建没成功？），点更新重新构建`;
@@ -40,7 +43,7 @@ function applyUpdateState(s) {
     location.reload();
     return;
   }
-  if (!s.requested && (s.state === 'done' || s.state === 'error')) updateState.sawUpdate = false;  // over
+  if (!s.requested && ['done', 'error', 'stopped'].includes(s.state)) updateState.sawUpdate = false;  // over
   const row = $('task-update');
   const actionable = s.behind > 0 || s.needs_rebuild;
   row.classList.toggle('busy', busy);
@@ -50,6 +53,7 @@ function applyUpdateState(s) {
   $('update-task-text').title = s.state === 'error' ? (s.log ?? '') : s.pending.join('\n');
   $('update-check').hidden = !s.installed || busy;
   $('update-run').hidden = !s.installed || busy || !actionable;
+  $('update-stop').hidden = !s.stoppable || Boolean(s.stopping);
   updateState.busy = busy;
 }
 
@@ -83,9 +87,22 @@ async function requestUpdate(action) {
   refreshUpdate();
 }
 
+async function stopUpdate() {
+  $('update-stop').hidden = true;
+  try {
+    const resp = await fetch('/api/update/stop', { method: 'POST', headers: PAGE_HEADERS });
+    if (!resp.ok) throw new Error(await errorText(resp));
+    applyUpdateState(await resp.json());
+  } catch (err) {
+    setText($('update-task-text'), `没能停止：${err.message}`);
+  }
+  refreshUpdate();
+}
+
 function initUpdate() {
   $('update-check').addEventListener('click', () => requestUpdate('check'));
   $('update-run').addEventListener('click', () => requestUpdate('update'));
+  $('update-stop').addEventListener('click', stopUpdate);
   refreshUpdate();
 }
 

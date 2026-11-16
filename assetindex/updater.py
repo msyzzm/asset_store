@@ -24,13 +24,15 @@ log = logging.getLogger(__name__)
 
 REQUEST_NAME = "update.request"
 STATUS_NAME = "update.status"
+STOP_NAME = "update.stop"  # the script polls it; honoured until the containers are recreated
+STOPPABLE_STEPS = ("fetch", "pull", "build")  # "restart": too late, the site could be left down
 ACTIONS = ("check", "update")
 STUCK_SECONDS = 50 * 60  # longer than the service's own 45 min limit: by now it has died
 STUCK_CHECK_SECONDS = 10 * 60  # a check is one git fetch (itself limited to 5 min)
 REQUEST_STALE_SECONDS = 2 * 60  # systemd picks a request up within a second when it's running
 MAX_PENDING = 50
 MAX_TEXT = 4000
-_STRINGS = ("state", "current", "latest", "deployed", "error", "log")
+_STRINGS = ("state", "step", "current", "latest", "deployed", "error", "log")
 _NUMBERS = ("checked", "started", "finished")
 
 
@@ -61,6 +63,10 @@ def update_state(data_dir: Path) -> dict:
     requested, stale = _requested(data_dir)
     state = {"installed": installed, "requested": requested, **_clean_status(raw)}
     # Built from an older commit than the checkout (e.g. pull worked, build failed): rebuild.
+    in_stoppable_step = state["state"] == "running" and state["step"] in STOPPABLE_STEPS
+    # The one place that decides whether "停止" is offered (the page just shows it).
+    state["stoppable"] = requested == "update" or in_stoppable_step
+    state["stopping"] = in_stoppable_step and (data_dir / STOP_NAME).exists()
     state["needs_rebuild"] = bool(state["deployed"] and state["current"] and state["deployed"] != state["current"])
     age = time.time() - state["started"] if state["started"] else 0
     if state["state"] == "running" and age > STUCK_SECONDS:
@@ -99,6 +105,14 @@ def request(data_dir: Path, action: str) -> None:
     tmp.replace(data_dir / REQUEST_NAME)  # the watcher fires on creation: never show it half-written
 
 
+def request_stop(data_dir: Path) -> None:
+    """Drop an update not started yet, or ask the running one to stop before the restart."""
+    if _requested(data_dir)[0] == "update":
+        (data_dir / REQUEST_NAME).unlink(missing_ok=True)
+        return
+    (data_dir / STOP_NAME).touch()
+
+
 class UpdateRequest(BaseModel):
     action: Literal["check", "update"]
 
@@ -120,4 +134,15 @@ def add_update_routes(app: FastAPI, data_dir: Path, page_request) -> None:
         except OSError as err:
             log.error("cannot write update request: %r", err)
             raise HTTPException(503, "没能提交请求，检查数据目录") from None
+        return update_state(data_dir)
+
+    @app.post("/api/update/stop", dependencies=[Depends(page_request)])
+    def api_update_stop() -> dict:
+        if not update_state(data_dir)["stoppable"]:
+            raise HTTPException(409, "没有能停止的更新（正在重启服务时不能停）")
+        try:
+            request_stop(data_dir)
+        except OSError as err:
+            log.error("cannot record update stop: %r", err)
+            raise HTTPException(503, "没能发出停止请求，检查数据目录") from None
         return update_state(data_dir)
