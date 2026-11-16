@@ -1,21 +1,27 @@
 """Split a root into units ("packs"): the things the organizer proposes to move.
 
-Invariant: a unit is exactly one file or one directory, units never nest, and every
-indexed file belongs to exactly one unit. Moving a unit is then a single rename, and a
-pack (a downloaded asset pack, a game's art dump) always stays together.
+Invariant: a unit is one directory, or one file together with its companions (the other
+volumes of a split archive, a same-name preview image or readme next to an archive).
+Units never nest, and every indexed file belongs to exactly one unit. Moving a unit is
+then a rename or two, and a pack (a downloaded asset pack, a game's art dump) always
+stays together.
 
-The default rule, from how asset libraries tend to look:
-- a file directly in the root is a unit;
-- a top-level folder named like a category or a store ("2D", "Audio", "itch") is a
-  container: each file and folder in it is a unit; any other top-level folder is a unit;
-- inside a container, a folder named like a collection ("合集", "系列", "Collection",
-  "OpenGameArt") is opened one more level.
-The user can split any unit into its children ("split" overrides) when the guess is wrong.
+A folder is "opened" (each file and folder in it is a unit of its own) when:
+- it is a top-level folder named like a category or a store ("2D", "Audio", "itch", "UE");
+- it is a folder inside one of those named like a collection ("合集", "系列", "Collection");
+- it holds MIN_PACKS or more differently named archives, directly or in its subfolders
+  (a split one counts once). Libraries sorted by hand look like that:
+  UE/道具/<pack>.rar + <pack>.png;
+- it holds an opened folder (then it cannot be one pack itself);
+- the user split it.
+The user can also join a folder back into one pack, which overrides the rules above.
 """
 
+import os
 import re
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections import defaultdict
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
 
 # Top-level folder names that group packs rather than being one.
 _CONTAINER = re.compile(
@@ -27,6 +33,18 @@ _CONTAINER = re.compile(
 )
 # Folder names that mark a collection of packs.
 _COLLECTION = re.compile(r"合集|合辑|系列|大全|打包|collection|bundle|series|humble|opengameart|\bpacks\b", re.IGNORECASE)
+ARCHIVE_EXTS = frozenset({"zip", "rar", "7z", "unitypackage"})
+# Volumes of a split archive: name.part2.rar, name.r00, name.z01, name.7z.001, name.zip.001
+_VOLUME = re.compile(r"^(?P<stem>.+?)(\.part\d+\.rar|\.r\d\d|\.z\d\d|\.(7z|zip)\.\d{3})$", re.IGNORECASE)
+_COPY_SUFFIX = re.compile(r"\s*[(（]\d+[)）]$")  # "Nature (1).png" previews "Nature.rar"
+_SEPARATORS = re.compile(r"[\s_\-.,()\[\]（）【】]+")
+_VERSION = re.compile(r"v?\d+(?:[._]\d+)*", re.IGNORECASE)
+_README = re.compile(r"^(read ?me|说明|解压|密码)", re.IGNORECASE)
+# What may go with an archive whose name it only starts like: previews and notes, not assets.
+NOTE_EXTS = frozenset({"png", "jpg", "jpeg", "webp", "gif", "bmp", "txt", "pdf", "url", "html", "htm", "md"})
+MIN_PACKS = 3  # two archives are often one pack (two engine versions, two parts)
+MIN_SHARED = 6  # names that all start alike are variants of one pack: Cabin_Unity, Cabin_Unreal
+MIN_PREFIX = 4  # "Megapack.jpg" previews "Megapack 4.26.rar"; "A.png" previews nothing by prefix
 
 
 @dataclass(frozen=True)
@@ -38,6 +56,24 @@ class Unit:
     collection_hint: bool = False  # looks like several packs: worth splitting
 
 
+@dataclass(frozen=True)
+class Layout:
+    """How a root splits into units."""
+
+    opened: frozenset[str] = frozenset()  # folders whose children are units
+    companions: Mapping[str, str] = field(default_factory=dict)  # file -> the file it goes with
+
+    def unit_of(self, rel_path: str) -> tuple[str, bool]:
+        """The unit a file belongs to: (unit path, is_dir)."""
+        parts = rel_path.split("/")
+        depth = 0
+        while depth < len(parts) - 1 and "/".join(parts[: depth + 1]) in self.opened:
+            depth += 1
+        if depth == len(parts) - 1:  # a file directly in an opened folder (or the root)
+            return self.companions.get(rel_path, rel_path), False
+        return "/".join(parts[: depth + 1]), True
+
+
 def _is_container(name: str) -> bool:
     return bool(_CONTAINER.match(name.strip()))
 
@@ -46,36 +82,132 @@ def _is_collection(name: str) -> bool:
     return bool(_COLLECTION.search(name))
 
 
-def unit_of(rel_path: str, opened: frozenset[str]) -> tuple[str, bool]:
-    """The unit a file belongs to: (unit path, is_dir). `opened` holds the folders whose
-    children are units (containers, collections, user splits)."""
-    parts = rel_path.split("/")
-    depth = 0
-    while depth < len(parts) - 1 and "/".join(parts[: depth + 1]) in opened:
-        depth += 1
-    if depth == len(parts) - 1:
-        return rel_path, False  # a file directly in an opened folder
-    return "/".join(parts[: depth + 1]), True
+def archive_stem(name: str) -> str | None:
+    """The pack name of an archive or archive volume, else None."""
+    volume = _VOLUME.match(name)
+    if volume:
+        return volume["stem"]
+    stem, dot, ext = name.rpartition(".")
+    return stem if dot and stem and ext.lower() in ARCHIVE_EXTS else None
 
 
-def opened_folders(paths: Iterable[str], splits: Iterable[str] = ()) -> frozenset[str]:
-    """Folders whose children are units: by the default rule, plus the user's splits."""
+def pair_companions(names: Iterable[str]) -> dict[str, str]:
+    """Within one folder: each file that goes with an archive -> that archive's name. The
+    other volumes go with the first one; a non-archive goes with the archive of the same
+    name, else the shortest one whose name starts like it (separators and case ignored)."""
+    names = list(names)
+    groups: dict[str, list[str]] = defaultdict(list)
+    for name in names:
+        stem = archive_stem(name)
+        if stem is not None:
+            groups[stem].append(name)
+    main = {stem: min(group, key=lambda n: (bool(_VOLUME.match(n)), n)) for stem, group in groups.items()}
+    pairs = {name: main[stem] for stem, group in groups.items() for name in group if name != main[stem]}
+    exact: dict[str, str] = {}
+    for stem in sorted(main):
+        exact.setdefault(_squash(stem), stem)
+    by_length = sorted(exact.items(), key=lambda s: (-len(s[0]), s[0]))  # longest first
+    for name in names:
+        if archive_stem(name) is not None:
+            continue
+        base, dot, ext = name.rpartition(".")
+        key = _squash(_COPY_SUFFIX.sub("", base if dot else name))
+        if not key:
+            continue
+        stem = exact.get(key)
+        if stem is None and dot and ext.lower() in NOTE_EXTS and len(key) >= MIN_PREFIX:
+            # "Megapack.jpg" for "Megapack 4.26.rar", "Warroom Environment.png" for "Warroom.rar"
+            stem = next(
+                (s for low, s in by_length if len(low) >= MIN_PREFIX and (low.startswith(key) or key.startswith(low))),
+                None,
+            )
+        if stem is not None:
+            pairs[name] = main[stem]
+    return pairs
+
+
+def _squash(name: str) -> str:
+    """Lower case without separators: "Hong_Kong Street" and "hong kong-street" match."""
+    return _SEPARATORS.sub("", name).lower()
+
+
+def _pack_name(stem: str) -> str | None:
+    """An archive's name with versions dropped, None for a readme or password note."""
+    if _README.match(stem.strip()):
+        return None
+    return _squash(_VERSION.sub("", stem)) or None
+
+
+def _tree(paths: list[str]) -> tuple[dict[str, list[str]], dict[str, set[str]]]:
+    """Direct file names and direct subfolders of every folder ("" = the root)."""
+    files: dict[str, list[str]] = defaultdict(list)
+    subdirs: dict[str, set[str]] = defaultdict(set)
+    for path in paths:
+        folder, _, name = path.rpartition("/")
+        files[folder].append(name)
+        while folder:
+            parent = folder.rpartition("/")[0]
+            if folder in subdirs[parent]:
+                break
+            subdirs[parent].add(folder)
+            folder = parent
+    return files, subdirs
+
+
+def _archive_names(folder: str, files: dict[str, list[str]]) -> set[str]:
+    stems = (archive_stem(name) for name in files.get(folder, ()))
+    return {name for stem in stems if stem is not None and (name := _pack_name(stem))}
+
+
+def _holds_packs(folder: str, files: dict[str, list[str]], subdirs: dict[str, set[str]]) -> bool:
+    """MIN_PACKS or more differently named archives, directly or one folder down. Names
+    that all start alike are one pack's variants (engine versions in subfolders included)."""
+    names = _archive_names(folder, files)
+    for sub in subdirs.get(folder, ()):
+        names |= _archive_names(sub, files)
+    if len(names) < MIN_PACKS:
+        return False
+    return len(os.path.commonprefix(list(names))) < MIN_SHARED
+
+
+def layout(paths: Iterable[str], splits: Iterable[str] = (), joins: Iterable[str] = ()) -> Layout:
+    """The units of one root, from its indexed paths, by the rules above plus the user's
+    splits (opened) and joins (kept as one pack)."""
     paths = list(paths)
-    top = {p.split("/", 1)[0] for p in paths if "/" in p}
-    opened = {t for t in top if _is_container(t)}
-    second = {"/".join(p.split("/")[:2]) for p in paths if p.count("/") >= 2 and p.split("/", 1)[0] in opened}
-    opened |= {s for s in second if _is_collection(s.rsplit("/", 1)[1])}
-    return frozenset(opened | set(splits))
+    files, subdirs = _tree(paths)
+    folders = {d for ds in subdirs.values() for d in ds}
+    joins = frozenset(joins)
+
+    def joined(folder: str) -> bool:
+        parts = folder.split("/")
+        return any("/".join(parts[:i]) in joins for i in range(1, len(parts) + 1))
+
+    top = {d for d in folders if "/" not in d and _is_container(d)}
+    collections = {d for d in folders if d.count("/") == 1 and d.split("/")[0] in top and _is_collection(d.split("/")[1])}
+    packed = {d for d in folders if _holds_packs(d, files, subdirs)}
+    # A joined folder's parent stays open, or the join would make the parent the pack.
+    parents = {j.rpartition("/")[0] for j in joins if "/" in j}
+    opened = {d for d in top | collections | packed if not joined(d)} | parents | set(splits)
+    for folder in list(opened):  # a folder holding an opened folder is not one pack
+        while "/" in folder:
+            folder = folder.rpartition("/")[0]
+            opened.add(folder)
+    companions = {}
+    for folder in opened | {""}:
+        prefix = folder + "/" if folder else ""
+        for name, main in pair_companions(files.get(folder, ())).items():
+            companions[prefix + name] = prefix + main
+    return Layout(frozenset(opened), companions)
 
 
-def compute_units(files: Iterable[tuple[str, int]], splits: Iterable[str] = ()) -> list[Unit]:
+
+def compute_units(files: Iterable[tuple[str, int]], splits: Iterable[str] = (), joins: Iterable[str] = ()) -> list[Unit]:
     """Units of one root from its indexed (rel_path, size) pairs, sorted by path."""
     files = list(files)
-    opened = opened_folders((p for p, _ in files), splits)
+    shape = layout((p for p, _ in files), splits, joins)
     counts: dict[tuple[str, bool], list[int]] = {}
     for path, size in files:
-        key = unit_of(path, opened)
-        acc = counts.setdefault(key, [0, 0])
+        acc = counts.setdefault(shape.unit_of(path), [0, 0])
         acc[0] += 1
         acc[1] += size
     return [

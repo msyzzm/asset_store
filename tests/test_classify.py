@@ -166,6 +166,20 @@ def test_description_in_the_answer_is_optional_and_cleaned(library):
     assert parse_answer('{"category": "01_2D/VFX", "name": "x", "reason": "r"}').caption == ""
 
 
+def test_an_archive_without_a_sheet_is_shown_by_its_preview(library, settings, server, asset_root):
+    (asset_root / "2D" / "Ice Bundle.rar").write_bytes(b"not really a rar")
+    Image.new("RGB", (32, 32), (0, 0, 255)).save(asset_root / "2D" / "Ice Bundle.png")
+    scan_root(library, "art", asset_root)
+    client = CaptionClient(CaptionConfig(base_url=server.base_url, model="m"))
+
+    assert "带 1 个同名的预览图" in digest(library, "art", "2D/Ice Bundle.rar", is_dir=False)
+    classify_unit(client, library, settings, "art", "2D/Ice Bundle.rar", False)
+
+    content = server.requests[-1]["body"]["messages"][0]["content"]
+    assert any(part.get("type") == "image_url" for part in content)  # the preview went along
+    assert _caption(library, "2D/Ice Bundle.png") == ("一块蓝色的冰晶\n火焰、红色", "m")  # described on its own card
+
+
 def test_unusable_answer_is_an_item_problem(library, settings, server):
     server.chat_reply = "我不知道"
     client = CaptionClient(CaptionConfig(base_url=server.base_url, model="m"))

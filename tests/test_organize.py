@@ -195,3 +195,39 @@ def test_request_files(tmp_path):
     assert organize.read_status(tmp_path).phase == "hashing"
     (tmp_path / organize.STATUS_NAME).write_text(json.dumps({"running": 1}), encoding="utf-8")
     assert organize.read_status(tmp_path).running is False
+
+
+def test_a_decided_folder_pack_is_not_taken_apart_by_the_rules(lib):
+    conn, _, root = lib
+    for name in ("Barrels", "Crates", "Lamps"):  # enough packs inside to be opened by default
+        (root / "2D" / "Ice Pack" / f"{name}.zip").write_bytes(name.encode())
+    scan_root(conn, "lib", root)
+    refresh_units(conn, "lib")
+    assert "2D/Ice Pack/Barrels.zip" in _rows(conn)
+
+    with conn:  # as before an update brought the rule: the folder was one pack, and accepted
+        conn.execute("DELETE FROM organize_units WHERE path LIKE '2D/Ice Pack/%'")
+        conn.execute(
+            "INSERT INTO organize_units (root, path, is_dir, files, size, signature, status, target, updated)"
+            " VALUES ('lib', '2D/Ice Pack', 1, 4, 1, 'old', 'accepted', '01_2D/UI/冰', 0)"
+        )
+    refresh_units(conn, "lib")
+
+    rows = _rows(conn)
+    assert "2D/Ice Pack" in rows and "2D/Ice Pack/Barrels.zip" not in rows
+
+
+def test_a_preview_appearing_next_to_an_archive_keeps_the_decision(lib):
+    conn, _, root = lib
+    (root / "2D" / "Swords.zip").write_bytes(b"swords")
+    scan_root(conn, "lib", root)
+    refresh_units(conn, "lib")
+    with conn:
+        conn.execute("UPDATE organize_units SET status = 'accepted', target = '01_2D/Props/Swords.zip' WHERE path = '2D/Swords.zip'")
+
+    _png(root / "2D" / "Swords.png", (9, 9, 9))
+    scan_root(conn, "lib", root)
+    refresh_units(conn, "lib")
+
+    row = _rows(conn)["2D/Swords.zip"]
+    assert row["status"] == "accepted" and row["files"] == 2

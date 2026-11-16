@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from assetindex.config import Settings
-from assetindex.units import opened_folders, unit_of
+from assetindex.units import Layout, layout
 
 HASH_MIN_BYTES = 256 * 1024
 SAMPLE_CHUNK = 16 * 1024  # x3 per file: one round trip each, even over NFS
@@ -117,18 +117,22 @@ def sample_candidates(conn: sqlite3.Connection, root: str) -> list[sqlite3.Row]:
     ).fetchall()
 
 
-def _twin_shaped_units(conn: sqlite3.Connection, root: str, opened: frozenset[str]) -> set[str]:
-    """Units another unit could be identical to: same kind, number of files and total size."""
+def _twin_shaped_units(conn: sqlite3.Connection, root: str, shape_of: Layout) -> set[str]:
+    """Units another unit could be identical to: same kind, number of files and total size
+    (a file unit by its main file: the same archive with another preview is still a copy)."""
     shapes: dict[tuple[str, bool], list[int]] = defaultdict(lambda: [0, 0])
     for rel_path, size in conn.execute("SELECT rel_path, size FROM files WHERE root = ?", (root,)):
-        shape = shapes[unit_of(rel_path, opened)]
+        unit, is_dir = shape_of.unit_of(rel_path)
+        if not is_dir and unit != rel_path:
+            continue  # a companion
+        shape = shapes[(unit, is_dir)]
         shape[0] += 1
         shape[1] += size
     counts = Counter((is_dir, n, total) for (_, is_dir), (n, total) in shapes.items())
     return {unit for (unit, is_dir), (n, total) in shapes.items() if counts[(is_dir, n, total)] > 1}
 
 
-def hash_candidates(conn: sqlite3.Connection, root: str, opened: frozenset[str]) -> list[sqlite3.Row]:
+def hash_candidates(conn: sqlite3.Connection, root: str, shape_of: Layout) -> list[sqlite3.Row]:
     """Files to read whole: their sample matches another file's, they belong to a unit
     that could have a twin, and they have no current hash."""
     rows = conn.execute(
@@ -147,8 +151,13 @@ def hash_candidates(conn: sqlite3.Connection, root: str, opened: frozenset[str])
     ).fetchall()
     if not rows:
         return []
-    twins = _twin_shaped_units(conn, root, opened)
-    return [r for r in rows if unit_of(r["rel_path"], opened)[0] in twins]
+    twins = _twin_shaped_units(conn, root, shape_of)
+    picked = []
+    for r in rows:
+        unit, is_dir = shape_of.unit_of(r["rel_path"])
+        if unit in twins and (is_dir or unit == r["rel_path"]):  # a companion is not compared
+            picked.append(r)
+    return picked
 
 
 def _read_files(
@@ -200,14 +209,14 @@ def hash_pending(
     conn: sqlite3.Connection,
     settings: Settings,
     root: str,
-    opened: frozenset[str] | None = None,
+    shape_of: Layout | None = None,
     should_stop: Callable[[], bool] = lambda: False,
     report: Callable[[str, int, int], None] = lambda stage, done, total: None,
 ) -> HashStats:
     """Sample the candidates of one root, then read whole the ones that could be part of
     identical packs. `report` gets the stage ("sampling" or "hashing") and the progress."""
-    if opened is None:
-        opened = opened_folders([r[0] for r in conn.execute("SELECT rel_path FROM files WHERE root = ?", (root,))])
+    if shape_of is None:
+        shape_of = layout([r[0] for r in conn.execute("SELECT rel_path FROM files WHERE root = ?", (root,))])
     base = settings.roots[root].resolve()
     sampled, failed, read, stopped = _read_files(
         conn, base, sample_candidates(conn, root), file_sample, "file_samples", should_stop,
@@ -216,14 +225,15 @@ def hash_pending(
     if stopped:
         return HashStats(sampled, 0, failed, read, stopped=True)
     hashed, failed_whole, read_whole, stopped = _read_files(
-        conn, base, hash_candidates(conn, root, opened), file_hash, "file_hashes", should_stop,
+        conn, base, hash_candidates(conn, root, shape_of), file_hash, "file_hashes", should_stop,
         lambda done, total: report("hashing", done, total),
     )
     return HashStats(sampled, hashed, failed + failed_whole, read + read_whole, stopped)
 
 
-def unit_files(conn: sqlite3.Connection, root: str, opened: frozenset[str]) -> dict[tuple[str, bool], list[UnitFile]]:
-    """Every file of a root, grouped by its unit, with its current hash and sample if any."""
+def unit_files(conn: sqlite3.Connection, root: str, shape_of: Layout) -> dict[tuple[str, bool], list[UnitFile]]:
+    """Every file of a root, grouped by its unit, with its current hash and sample if any.
+    In a file unit the main file has rel "" and a companion its own name."""
     rows = conn.execute(
         """
         SELECT f.rel_path, f.size, f.mtime, h.hash, s.sample FROM files f
@@ -235,10 +245,24 @@ def unit_files(conn: sqlite3.Connection, root: str, opened: frozenset[str]) -> d
     )
     units: dict[tuple[str, bool], list[UnitFile]] = defaultdict(list)
     for r in rows:
-        unit, is_dir = unit_of(r["rel_path"], opened)
-        rel = r["rel_path"][len(unit) + 1 :] if is_dir else ""
+        unit, is_dir = shape_of.unit_of(r["rel_path"])
+        rel = r["rel_path"][len(unit) + 1 :] if is_dir else _companion_name(unit, r["rel_path"])
         units[(unit, is_dir)].append(UnitFile(rel, r["size"], r["mtime"], r["hash"], r["sample"]))
     return units
+
+
+def _companion_name(unit: str, rel_path: str) -> str:
+    return "" if rel_path == unit else rel_path.rpartition("/")[2]
+
+
+def member_path(unit: str, is_dir: bool, rel: str) -> str:
+    """The path of a unit's file from its UnitFile.rel."""
+    if is_dir:
+        return f"{unit}/{rel}"
+    if not rel:
+        return unit
+    folder = unit.rpartition("/")[0]
+    return f"{folder}/{rel}" if folder else rel
 
 
 def signature(files: list[UnitFile]) -> str:
@@ -252,8 +276,8 @@ def signature(files: list[UnitFile]) -> str:
 def content_key(is_dir: bool, files: list[UnitFile]) -> tuple[str, bool] | None:
     """What two identical units share: (key, compared by full content throughout). A single
     file is only comparable by its content; a folder by its tree, and by content where known."""
-    if not is_dir:
-        f = files[0]  # a lone file has no name or tree to back up a sample: full hash only
+    if not is_dir:  # by its main file: an archive with another preview next to it is still a copy
+        f = next(f for f in files if not f.rel)  # no name or tree to back up a sample: full hash only
         return (f"f:{f.size}:{f.hash}", True) if f.hash else None
     digest = hashlib.sha1(usedforsecurity=False)
     for f in sorted(files, key=lambda f: f.rel):
@@ -296,12 +320,12 @@ def file_duplicates(units: dict[tuple[str, bool], list[UnitFile]], skip: set[str
     found identical as a whole). Report only, matched by sample (most were never read
     whole): the waste, and the worst groups."""
     by_sample: dict[str, list[tuple[str, str, int]]] = defaultdict(list)
-    for (unit, _), files in units.items():
+    for (unit, is_dir), files in units.items():
         if unit in skip:
             continue
         for f in files:
             if f.sample:
-                by_sample[f.sample].append((unit, f"{unit}/{f.rel}" if f.rel else unit, f.size))
+                by_sample[f.sample].append((unit, member_path(unit, is_dir, f.rel), f.size))
     groups, inner_groups, inner_wasted = [], 0, 0
     for members in by_sample.values():
         if len(members) < 2:

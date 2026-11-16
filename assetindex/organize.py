@@ -29,7 +29,7 @@ from assetindex.config import Settings
 from assetindex.dupes import UnitFile, duplicate_units, file_duplicates, hash_pending, signature, unit_files
 from assetindex.embedding import EmbedError
 from assetindex.scan_request import write_json_atomic
-from assetindex.units import opened_folders
+from assetindex.units import Layout, layout
 
 log = logging.getLogger(__name__)
 
@@ -67,13 +67,25 @@ def _splits(conn: sqlite3.Connection, root: str) -> list[str]:
     return [r[0] for r in conn.execute("SELECT path FROM unit_splits WHERE root = ?", (root,))]
 
 
-def _opened(conn: sqlite3.Connection, root: str) -> frozenset[str]:
+def _joins(conn: sqlite3.Connection, root: str) -> list[str]:
+    """Folders kept as one pack: joined by the user, or a folder pack already decided on
+    (a rule change must not take a confirmed pack apart)."""
+    return [
+        r[0] for r in conn.execute(
+            "SELECT path FROM unit_joins WHERE root = ?"
+            " UNION SELECT path FROM organize_units WHERE root = ? AND is_dir = 1 AND status IN ('accepted', 'rejected')",
+            (root, root),
+        )
+    ]
+
+
+def unit_layout(conn: sqlite3.Connection, root: str) -> Layout:
     paths = [r[0] for r in conn.execute("SELECT rel_path FROM files WHERE root = ?", (root,))]
-    return opened_folders(paths, _splits(conn, root))
+    return layout(paths, _splits(conn, root), _joins(conn, root))
 
 
 def current_units(conn: sqlite3.Connection, root: str) -> dict[tuple[str, bool], list[UnitFile]]:
-    return unit_files(conn, root, _opened(conn, root))
+    return unit_files(conn, root, unit_layout(conn, root))
 
 
 def refresh_units(conn: sqlite3.Connection, root: str) -> dict[tuple[str, bool], list[UnitFile]]:
@@ -84,7 +96,7 @@ def refresh_units(conn: sqlite3.Connection, root: str) -> dict[tuple[str, bool],
     now = time.time()
     with conn:
         for (path, is_dir), files in units.items():
-            sig = signature(files)
+            sig = _signature(is_dir, files)
             size = sum(f.size for f in files)
             if path not in known:
                 conn.execute(
@@ -101,12 +113,23 @@ def refresh_units(conn: sqlite3.Connection, root: str) -> dict[tuple[str, bool],
                     """,
                     (int(is_dir), len(files), size, sig, now, root, path),
                 )
-        gone = set(known) - {path for path, _ in units}
+            else:  # same pack; a file unit may have gained or lost a preview
+                conn.execute(
+                    "UPDATE organize_units SET files = ?, size = ? WHERE root = ? AND path = ? AND (files != ? OR size != ?)",
+                    (len(files), size, root, path, len(files), size),
+                )
+        gone =set(known) - {path for path, _ in units}
         conn.executemany("DELETE FROM organize_units WHERE root = ? AND path = ?", [(root, p) for p in gone])
         conn.executemany("DELETE FROM dup_keep WHERE root = ? AND path = ?", [(root, p) for p in gone])
-        changed = [p for (p, _), files in units.items() if p in known and known[p] != signature(files)]
+        changed = [p for (p, d), files in units.items() if p in known and known[p] != _signature(d, files)]
         _forget_twins(conn, root, [*gone, *changed], now)
     return units
+
+
+def _signature(is_dir: bool, files: list[UnitFile]) -> str:
+    """A file unit by its main file only: a preview added or renamed next to an archive
+    must not throw away the decision on it."""
+    return signature(files if is_dir else [f for f in files if not f.rel])
 
 
 def _forget_twins(conn: sqlite3.Connection, root: str, keepers: list[str], now: float) -> None:
@@ -235,7 +258,7 @@ def run_analysis(
     status = replace(status, phase="sampling")
     report(status)
     hashed = hash_pending(
-        conn, settings, scope.root, _opened(conn, scope.root), should_stop,
+        conn, settings, scope.root, unit_layout(conn, scope.root), should_stop,
         lambda stage, done, total: report(replace(status, phase=stage, done=done, total=total)),
     )
     if hashed.stopped:

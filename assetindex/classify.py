@@ -24,6 +24,7 @@ from assetindex.embed_stage import BACKGROUND, JPEG_QUALITY, _has_image, card_jp
 from assetindex.embedding import EmbedError
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.thumbs import file_thumb_path, open_image, sheet_image, sheet_path
+from assetindex.units import pair_companions
 
 # The library layout (after the Unity Asset Store's categories). Engine is not a folder:
 # a Unity character pack is a character pack; the engine shows as a badge.
@@ -80,17 +81,39 @@ def under(path: str) -> tuple[str, str]:
     return path + "/", path + "0"
 
 
+def unit_members(conn: sqlite3.Connection, root: str, path: str) -> list[str]:
+    """A file unit's files: the file, then its companions (other volumes, a same-name
+    preview), paired as assetindex.units pairs them."""
+    folder, _, name = path.rpartition("/")
+    if folder:
+        low, high = under(folder)
+        rows = conn.execute(
+            "SELECT rel_path FROM files WHERE root = ? AND rel_path >= ? AND rel_path < ?"
+            " AND instr(substr(rel_path, ?), '/') = 0",
+            (root, low, high, len(low) + 1),
+        )
+    else:
+        rows = conn.execute("SELECT rel_path FROM files WHERE root = ? AND instr(rel_path, '/') = 0", (root,))
+    prefix = folder + "/" if folder else ""
+    names = [r[0][len(prefix) :] for r in rows]
+    return [path, *sorted(prefix + n for n, main in pair_companions(names).items() if main == name)]
+
+
 def _unit_rows(conn: sqlite3.Connection, root: str, path: str, is_dir: bool) -> list[sqlite3.Row]:
-    where = "f.root = ? AND f.rel_path >= ? AND f.rel_path < ?" if is_dir else "f.root = ? AND f.rel_path = ? AND 1 = ?"
-    params = (root, *under(path)) if is_dir else (root, path, 1)
+    """The unit's files; for a file unit the file itself first."""
+    if is_dir:
+        where, params = "f.rel_path >= ? AND f.rel_path < ?", under(path)
+    else:
+        params = tuple(unit_members(conn, root, path))
+        where = f"f.rel_path IN ({','.join('?' * len(params))})"
     return conn.execute(
         f"""
         SELECT f.id, f.root, f.rel_path, f.ext, f.size, f.mtime, f.seq_frames, a.preview_state,
                a.engine, a.engine_version
         FROM files f LEFT JOIN archives a ON a.file_id = f.id
-        WHERE {where} ORDER BY f.rel_path
+        WHERE f.root = ? AND {where} ORDER BY f.rel_path != ?, f.rel_path
         """,
-        params,
+        (root, *params, path),
     ).fetchall()
 
 
@@ -140,7 +163,7 @@ def digest(conn: sqlite3.Connection, root: str, path: str, is_dir: bool) -> str:
         ]
     lines = [
         f"路径：{path}",
-        f"类型：{'文件夹' if is_dir else '单个文件'}，{len(rows)} 个文件，共 {_readable_size(sum(r['size'] for r in rows))}",
+        f"类型：{_kind_text(is_dir, len(rows))}，共 {_readable_size(sum(r['size'] for r in rows))}",
         "文件类型：" + "、".join(f"{ext} {n}" for ext, n in exts.most_common(8)),
     ]
     if engines:
@@ -150,6 +173,12 @@ def digest(conn: sqlite3.Connection, root: str, path: str, is_dir: bool) -> str:
     for caption in captions:
         lines.append("一张图的描述：" + " ".join(caption.split()))
     return "\n".join(lines)
+
+
+def _kind_text(is_dir: bool, files: int) -> str:
+    if is_dir:
+        return f"文件夹，{files} 个文件"
+    return "单个文件" if files == 1 else f"单个文件，带 {files - 1} 个同名的预览图或分卷"
 
 
 def _jpeg(image: Image.Image) -> bytes:
@@ -166,12 +195,7 @@ def picture(conn: sqlite3.Connection, settings: Settings, root: str, path: str, 
     """One picture of the unit, or None if it has none we can show."""
     rows = _unit_rows(conn, root, path, is_dir)
     if not is_dir:
-        if not rows or not _has_image(rows[0]):
-            return None
-        try:
-            return card_jpeg(settings, rows[0], PICTURE_BOX)
-        except Exception:  # unreadable or undecodable: classify from the text alone
-            return None
+        return _file_picture(settings, rows)[0]
     by_id = {r["id"]: r for r in rows}
     visible = [r for r in rows if r["ext"] in THUMBNAIL_EXTS and (r["seq_frames"] is None or r["seq_frames"] > 0)]
     picks = choose_candidates(((r["id"], r["rel_path"], r["size"]) for r in visible), SHEET_CELLS + 3)
@@ -196,6 +220,19 @@ def picture(conn: sqlite3.Connection, settings: Settings, root: str, path: str, 
                     return None
         return None
     return _jpeg(sheet_image(images))
+
+
+def _file_picture(settings: Settings, rows: list[sqlite3.Row]) -> tuple[bytes | None, sqlite3.Row | None]:
+    """A file unit's picture and the card it comes from: the file's own (an archive's
+    sheet, an image), else a preview next to it (an archive of .uasset files has no sheet)."""
+    for row in rows:
+        if not _has_image(row):
+            continue
+        try:
+            return card_jpeg(settings, row, PICTURE_BOX), row
+        except Exception:  # unreadable or undecodable: try the next, else text alone
+            continue
+    return None, None
 
 
 def build_prompt(facts: str, with_caption: bool = False) -> str:
@@ -300,10 +337,13 @@ def classify_unit(
     """Ask the model about one unit. Raises EmbedError: an unusable answer counts as an
     item problem (this unit fails, the job goes on), API trouble as a stop.
 
-    A unit that is one card with a picture and no description yet (an archive, a lone
-    image) is described in the same question, saving the caption job a request."""
-    jpeg = picture(conn, settings, root, path, is_dir)
-    card = None if is_dir or jpeg is None else _undescribed_card(conn, root, path)
+    A file unit (an archive, a lone image) whose picture's card has no description yet
+    gets it in the same question, saving the caption job a request."""
+    if is_dir:
+        jpeg, card = picture(conn, settings, root, path, is_dir), None
+    else:
+        jpeg, shown = _file_picture(settings, _unit_rows(conn, root, path, is_dir))
+        card = _undescribed_card(conn, root, shown["rel_path"]) if shown else None
     tokens = ANSWER_TOKENS + (CAPTION_TOKENS if card else 0)
     answer = client.ask(build_prompt(digest(conn, root, path, is_dir), with_caption=card is not None), jpeg, tokens)
     try:

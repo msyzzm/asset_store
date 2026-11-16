@@ -158,6 +158,12 @@ CREATE TABLE IF NOT EXISTS unit_splits (
     path TEXT NOT NULL,
     PRIMARY KEY (root, path)
 );
+-- Folders the user (or a decision on them) keeps as one pack, whatever the default rule says.
+CREATE TABLE IF NOT EXISTS unit_joins (
+    root TEXT NOT NULL,
+    path TEXT NOT NULL,
+    PRIMARY KEY (root, path)
+);
 -- Copies the user chose to keep when identical packs are found (else the default pick).
 CREATE TABLE IF NOT EXISTS dup_keep (
     root TEXT NOT NULL,

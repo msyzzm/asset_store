@@ -116,6 +116,32 @@ def test_split_and_unsplit(env):
     assert "2D/Ice Pack" in _units(client)
 
 
+def test_join_keeps_a_folder_as_one_pack(env):
+    client, settings = env
+    _analyze(client, settings)
+    client.post("/api/organize/split", headers=PAGE, json={"root": "lib", "path": "2D/Ice Pack"})
+
+    assert client.post("/api/organize/join", headers=PAGE, json={"root": "lib", "path": "2D"}).status_code == 409
+    assert client.post("/api/organize/join", headers=PAGE, json={"root": "lib", "path": "2D/Nope"}).status_code == 404
+    assert client.post("/api/organize/join", headers=PAGE, json={"root": "lib", "path": "2D/Ice Pack"}).status_code == 200
+
+    units = _units(client)
+    assert "2D/Ice Pack" in units and "2D/Ice Pack/a" not in units
+    assert client.get("/api/organize/splits", params={"root": "lib"}).json() == {"splits": []}
+    client.post("/api/organize/split", headers=PAGE, json={"root": "lib", "path": "2D/Ice Pack"})
+    assert "2D/Ice Pack/a" in _units(client)  # a split takes the join back
+
+
+def test_join_refuses_to_drop_decisions(env):
+    client, settings = env
+    _analyze(client, settings)
+    client.post("/api/organize/split", headers=PAGE, json={"root": "lib", "path": "2D/Ice Pack"})
+    client.post("/api/organize/units/target", headers=PAGE,
+                json={"root": "lib", "path": "2D/Ice Pack/a", "target": "01_2D/UI/冰"})
+
+    assert client.post("/api/organize/join", headers=PAGE, json={"root": "lib", "path": "2D/Ice Pack"}).status_code == 409
+
+
 def test_start_needs_the_model_and_one_job_at_a_time(env):
     client, settings = env
     (settings.data_dir / "caption.json").unlink()

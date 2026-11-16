@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from assetindex import caption_job, organize
 from assetindex.caption import load_config
-from assetindex.classify import CATEGORIES, DUPLICATES, UNSORTED, file_suffix, under
+from assetindex.classify import CATEGORIES, DUPLICATES, UNSORTED, file_suffix, under, unit_members
 from assetindex.config import Settings
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.scanlock import is_scan_running
@@ -83,17 +83,21 @@ def check_target(target: str) -> tuple[str, str]:
 
 def _thumb_id(conn: sqlite3.Connection, root: str, path: str, is_dir: bool) -> int | None:
     """A file whose thumbnail stands for the unit."""
-    if not is_dir:
-        row = conn.execute(
-            "SELECT f.id, f.ext, a.preview_state FROM files f LEFT JOIN archives a ON a.file_id = f.id"
-            " WHERE f.root = ? AND f.rel_path = ?",
-            (root, path),
-        ).fetchone()
-        if row is None:
-            return None
-        if row["ext"] in LISTABLE_ARCHIVE_EXTS:
-            return row["id"] if row["preview_state"] == 1 else None
-        return row["id"] if row["ext"] in THUMBNAIL_EXTS or row["ext"] in EMBEDDED_PREVIEW_EXTS else None
+    if not is_dir:  # the file's own picture, else a preview next to it
+        for member in unit_members(conn, root, path):
+            row = conn.execute(
+                "SELECT f.id, f.ext, a.preview_state FROM files f LEFT JOIN archives a ON a.file_id = f.id"
+                " WHERE f.root = ? AND f.rel_path = ?",
+                (root, member),
+            ).fetchone()
+            if row is None:
+                continue
+            if row["ext"] in LISTABLE_ARCHIVE_EXTS:
+                if row["preview_state"] == 1:
+                    return row["id"]
+            elif row["ext"] in THUMBNAIL_EXTS or row["ext"] in EMBEDDED_PREVIEW_EXTS:
+                return row["id"]
+        return None
     exts = sorted(THUMBNAIL_EXTS)
     row = conn.execute(
         f"SELECT id FROM files WHERE root = ? AND rel_path >= ? AND rel_path < ? AND ext IN ({','.join('?' * len(exts))})"
@@ -235,7 +239,32 @@ def add_organize_routes(app: FastAPI, settings: Settings, get_conn: Callable, pa
         if not unit_or_404(conn, body.root, body.path)["is_dir"]:
             raise HTTPException(409, "单个文件不能再拆")
         with conn:
+            conn.execute("DELETE FROM unit_joins WHERE root = ? AND path = ?", (body.root, body.path))
             conn.execute("INSERT OR IGNORE INTO unit_splits (root, path) VALUES (?, ?)", (body.root, body.path))
+        return {"units": len(organize.refresh_units(conn, body.root))}
+
+    @app.post("/api/organize/join", dependencies=guarded)
+    def api_join(body: Annotated[UnitRef, Body()], conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+        """Keep a folder as one pack: undoes the default rule and any split inside it."""
+        root_or_422(body.root)
+        if "/" not in body.path:
+            raise HTTPException(409, "顶层文件夹不能合并成一个包")
+        low, high = under(body.path)
+        if conn.execute(
+            "SELECT 1 FROM files WHERE root = ? AND rel_path >= ? AND rel_path < ? LIMIT 1", (body.root, low, high)
+        ).fetchone() is None:
+            raise HTTPException(404, "没有这个文件夹")
+        if conn.execute(
+            "SELECT 1 FROM organize_units WHERE root = ? AND path >= ? AND path < ? AND status IN ('accepted', 'rejected') LIMIT 1",
+            (body.root, low, high),
+        ).fetchone():
+            raise HTTPException(409, "里面有已经确认或拒绝的包，先撤回那些决定")
+        with conn:
+            conn.execute(
+                "DELETE FROM unit_splits WHERE root = ? AND (path = ? OR (path >= ? AND path < ?))",
+                (body.root, body.path, low, high),
+            )
+            conn.execute("INSERT OR IGNORE INTO unit_joins (root, path) VALUES (?, ?)", (body.root, body.path))
         return {"units": len(organize.refresh_units(conn, body.root))}
 
     @app.post("/api/organize/unsplit", dependencies=guarded)

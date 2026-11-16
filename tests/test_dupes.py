@@ -6,7 +6,7 @@ from assetindex import dupes
 from assetindex.config import Settings
 from assetindex.dupes import duplicate_units, file_duplicates, hash_pending, signature, unit_files
 from assetindex.scanner import scan_root
-from assetindex.units import opened_folders
+from assetindex.units import layout
 
 
 @pytest.fixture(autouse=True)
@@ -39,7 +39,7 @@ def library(tmp_path, conn):
 
 def _units(conn):
     paths = [r[0] for r in conn.execute("SELECT rel_path FROM files")]
-    return unit_files(conn, "lib", opened_folders(paths))
+    return unit_files(conn, "lib", layout(paths))
 
 
 def _hashed_paths(conn):
@@ -165,3 +165,21 @@ def test_signature_changes_with_any_file(library):
     files = _units(conn)[("2D/Knight Pack", True)]
     touched = [dupes.UnitFile(f.rel, f.size, f.mtime + 1, None) if f.rel == "readme.txt" else f for f in files]
     assert signature(touched) != signature(files)
+
+
+def test_an_archive_with_its_preview_is_compared_by_the_archive(tmp_path, conn):
+    root = tmp_path / "lib"
+    for n, folder in enumerate(("UE/A", "UE/B")):
+        _put(root, f"{folder}/Castle.rar", b"C" * 500)
+        _put(root, f"{folder}/Castle.png", bytes([n]) * 200)  # each copy has its own preview
+        _put(root, f"{folder}/Forest.rar", b"F" * (400 + n))
+        _put(root, f"{folder}/Desert.rar", b"D" * (300 + n))
+    settings = Settings(roots={"lib": root}, data_dir=tmp_path / "data")
+    scan_root(conn, "lib", root)
+
+    hash_pending(conn, settings, "lib")
+    units = _units(conn)
+    groups = duplicate_units(units)
+
+    assert [(g.keep, g.others) for g in groups] == [("UE/A/Castle.rar", ("UE/B/Castle.rar",))]
+    assert {f.rel for f in units[("UE/A/Castle.rar", False)]} == {"", "Castle.png"}
