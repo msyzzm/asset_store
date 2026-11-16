@@ -30,6 +30,28 @@
       <p id="o-status" class="org-status" aria-live="polite"></p>
     </section>
 
+    <section class="org-move" aria-labelledby="m-title">
+      <h2 id="m-title">执行整理</h2>
+      <p id="m-mount" class="hint"></p>
+      <div class="org-move-actions">
+        <button id="m-plan" class="btn secondary" type="button">查看移动计划</button>
+        <button id="m-start" class="btn" type="button" disabled>开始移动</button>
+        <button id="m-recover" class="btn secondary" type="button" hidden>收尾上次中断的移动</button>
+        <button id="m-stop" class="btn secondary" type="button" hidden>停止</button>
+      </div>
+      <progress id="m-bar" class="org-bar" max="1" value="0" hidden></progress>
+      <p id="m-status" class="org-status" aria-live="polite"></p>
+      <ul id="m-job-problems" class="org-move-list"></ul>
+      <div id="m-plan-view" hidden>
+        <p id="m-plan-summary"></p>
+        <details id="m-plan-problems-box" hidden><summary>先不动的包</summary><ul id="m-plan-problems" class="org-move-list"></ul></details>
+        <details id="m-plan-sample-box" hidden><summary>要移动的包（前 200 个）</summary><ul id="m-plan-sample" class="org-move-list"></ul></details>
+      </div>
+      <h3>移动记录</h3>
+      <p id="m-history-empty" class="hint">还没有移动过。</p>
+      <ul id="m-history" class="org-move-list"></ul>
+    </section>
+
     <details class="org-cats">
       <summary>目录方案（建议会放到这些文件夹下）</summary>
       <ul id="o-cats"></ul>
@@ -48,5 +70,6 @@
     <button id="o-more" class="more" type="button" hidden>加载更多</button>
   </main>
   <script src="organize.js"></script>
+  <script src="organize-move.js"></script>
 </body>
 </html>

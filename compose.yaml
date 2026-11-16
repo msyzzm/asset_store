@@ -1,5 +1,5 @@
 # Copy .env.example to .env and edit it, then: docker compose up -d --build
-# Both services share one image and one data volume. The scanner writes the index; the
+# All services share one image and one data volume. The scanner writes the index; the
 # web process reads it and writes on-demand thumbnails.
 
 x-app: &app
@@ -49,6 +49,19 @@ services:
     healthcheck:
       disable: true
     mem_limit: ${CAPTIONER_MEM_LIMIT:-1g}
+
+  # Idle until "开始移动" on the organize page: carries out confirmed proposals. The only
+  # service that may write the NAS, and only with ASSET_MOVER_ACCESS=rw in .env; read-only
+  # otherwise, so the move plan can be looked at but nothing moves.
+  mover:
+    <<: *app
+    command: ["python", "-m", "assetindex", "move", "--watch"]
+    healthcheck:
+      disable: true
+    mem_limit: ${MOVER_MEM_LIMIT:-768m}
+    volumes:
+      - ${ASSET_NAS_PATH:?set ASSET_NAS_PATH in .env}:/assets:${ASSET_MOVER_ACCESS:-ro}
+      - asset-data:/data
 
 volumes:
   asset-data:

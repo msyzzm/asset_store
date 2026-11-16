@@ -1,0 +1,200 @@
+"""Move jobs, on request from the web UI: carry out the confirmed proposals, undo a run,
+or settle a run a crash cut short.
+
+They run in the "mover" service, the only one that may get the NAS mounted writable
+(ASSET_MOVER_ACCESS=rw in .env); everything else mounts it read-only. As for scans,
+the web server and the mover share only the data dir: move.request (JSON), move.stop,
+move.status (JSON). A job holds the scan lock and the model lock: no scan or analysis
+changes the index while files move.
+"""
+
+import json
+import logging
+import os
+import re
+import sqlite3
+import time
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field, replace
+from datetime import datetime
+from pathlib import Path
+
+from assetindex import organize, organize_apply
+from assetindex.config import Settings
+from assetindex.organize_move import build_plan
+from assetindex.scan_request import write_json_atomic
+
+log = logging.getLogger(__name__)
+
+REQUEST_NAME = "move.request"
+STOP_NAME = "move.stop"
+STATUS_NAME = "move.status"
+ACTIONS = ("apply", "undo", "recover")
+MAX_PROBLEMS = 200  # shown on the page; the journal has every detail
+_JOURNAL_NAME = re.compile(r"^[0-9]{8}-[0-9]{6}\.jsonl$")
+
+
+@dataclass(frozen=True)
+class MoveStatus:
+    running: bool = False
+    action: str | None = None
+    root: str | None = None
+    journal: str | None = None  # file name in data/moves
+    total: int = 0
+    done: int = 0
+    moved: int = 0  # packs moved, or put back for an undo
+    problems: list[dict] = field(default_factory=list)  # {"path", "reason"}
+    started: float | None = None
+    finished: float | None = None
+    error: str | None = None
+    stopped: bool = False
+    writable: bool | None = None  # the NAS as the mover sees it; None: not known yet
+
+
+def writable(path: Path) -> bool:
+    """Whether the mount at `path` is writable, without writing anything."""
+    try:
+        return not os.statvfs(path).f_flag & os.ST_RDONLY
+    except (AttributeError, OSError):  # no statvfs (Windows): ask the OS instead
+        return os.access(path, os.W_OK)
+
+
+MOUNT_NAME = "move.mount"
+
+
+def write_mount(data_dir: Path, roots: dict[str, bool]) -> None:
+    """What the mover sees at startup: which roots it may write. The web page shows it
+    before anyone presses "move" (ASSET_MOVER_ACCESS=rw in .env)."""
+    write_json_atomic(data_dir / MOUNT_NAME, {"roots": roots, "at": time.time()})
+
+
+def read_mount(data_dir: Path) -> dict[str, bool] | None:
+    """None: no mover has started (not deployed)."""
+    try:
+        raw = json.loads((data_dir / MOUNT_NAME).read_text(encoding="utf-8"))
+        roots = raw.get("roots") if isinstance(raw, dict) else None
+        return {k: v for k, v in roots.items() if isinstance(v, bool)} if isinstance(roots, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def request(data_dir: Path, raw: dict) -> None:
+    (data_dir / STOP_NAME).unlink(missing_ok=True)
+    write_json_atomic(data_dir / REQUEST_NAME, raw)
+
+
+def take(data_dir: Path) -> dict | None:
+    path = data_dir / REQUEST_NAME
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        raw = None
+    path.unlink(missing_ok=True)
+    (data_dir / STOP_NAME).unlink(missing_ok=True)
+    return raw if isinstance(raw, dict) else None
+
+
+def is_requested(data_dir: Path) -> bool:
+    return (data_dir / REQUEST_NAME).exists()
+
+
+def request_stop(data_dir: Path) -> None:
+    (data_dir / REQUEST_NAME).unlink(missing_ok=True)
+    (data_dir / STOP_NAME).touch()
+
+
+def stop_requested(data_dir: Path) -> bool:
+    return (data_dir / STOP_NAME).exists()
+
+
+def write_status(data_dir: Path, status: MoveStatus) -> None:
+    write_json_atomic(data_dir / STATUS_NAME, asdict(status))
+
+
+def read_status(data_dir: Path) -> MoveStatus:
+    try:
+        raw = json.loads((data_dir / STATUS_NAME).read_text(encoding="utf-8"))
+        if isinstance(raw, dict) and isinstance(raw.get("running"), bool):
+            return MoveStatus(**raw)
+    except (OSError, ValueError, TypeError):
+        pass
+    return MoveStatus()
+
+
+def parse(raw, settings: Settings) -> tuple[str, str, str | None]:
+    """(action, root, journal name) from a request, validated."""
+    if not isinstance(raw, dict) or set(raw) - {"action", "root", "journal"}:
+        raise ValueError("请求格式不对")
+    action, root, journal = raw.get("action"), raw.get("root"), raw.get("journal")
+    if action not in ACTIONS:
+        raise ValueError("不认识的操作")
+    if not isinstance(root, str) or root not in settings.roots:
+        raise ValueError("没有这个根目录")
+    if action == "undo":
+        if not isinstance(journal, str) or not _JOURNAL_NAME.match(journal):
+            raise ValueError("要撤销哪一次？")
+        if not (settings.data_dir / organize_apply.JOURNAL_DIR / journal).is_file():
+            raise ValueError("没有这次移动的记录")
+    elif journal is not None:
+        raise ValueError("请求格式不对")
+    return action, root, journal
+
+
+def history(data_dir: Path) -> list[dict]:
+    """Past runs, newest first: what each moved and whether it can still be undone."""
+    return [{"journal": j.name, **organize_apply.summary(j)} for j in reversed(organize_apply.journals(data_dir))]
+
+
+def _problems(items) -> list[dict]:
+    return [{"path": p.path, "reason": p.reason} for p in items][:MAX_PROBLEMS]
+
+
+def run(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    raw,
+    should_stop: Callable[[], bool] = lambda: False,
+    report: Callable[[MoveStatus], None] = lambda status: None,
+    move: Callable[[str, str, bool], None] = organize_apply.move_no_replace,
+    now: Callable[[], float] = time.time,
+) -> MoveStatus:
+    """One job; the caller holds the locks."""
+    try:
+        action, root, journal_name = parse(raw, settings)
+    except ValueError as err:
+        return MoveStatus(error=str(err), finished=now())
+    base = settings.roots[root].resolve()
+    status = MoveStatus(running=True, action=action, root=root, started=now(), writable=writable(base))
+    report(status)
+    left = []  # first, whatever a crash left open, in every run
+    for journal in organize_apply.unsettled(settings.data_dir):
+        journal_root = organize_apply.journal_root(journal) or root
+        left += organize_apply.recover(conn, settings.roots[journal_root].resolve(), journal_root, journal, move=move)
+    if left:
+        return replace(status, running=False, finished=now(), problems=_problems(left),
+                       error="上次移动中断，还有没能收尾的包，先处理这些（见移动记录）")
+    if action == "recover":
+        organize.refresh_units(conn, root)
+        return replace(status, running=False, finished=now())
+    journals = settings.data_dir / organize_apply.JOURNAL_DIR
+    if action == "undo":
+        journal = journals / journal_name
+        status = replace(status, journal=journal_name)
+        result = organize_apply.undo(conn, base, root, journal, move=move)
+    else:
+        plan = build_plan(conn, root)
+        journal = journals / f"{datetime.fromtimestamp(now()).strftime('%Y%m%d-%H%M%S')}.jsonl"
+        status = replace(status, total=len(plan.moves), journal=journal.name, problems=_problems(plan.problems))
+        report(status)
+        result = organize_apply.apply_plan(
+            conn, base, root, plan, journal, should_stop,
+            lambda done, total: report(replace(status, done=done, total=total)), move=move,
+        )
+    organize.refresh_units(conn, root)
+    return replace(
+        status, running=False, finished=now(), moved=result.moved, done=status.total,
+        problems=(status.problems + _problems(result.problems))[:MAX_PROBLEMS],
+        error=result.error, stopped=result.stopped,
+    )

@@ -35,6 +35,19 @@
 .org-bar { width: 100%; height: 8px; margin-top: 10px; accent-color: var(--accent); }
 .org-status { min-height: 1.4em; margin: 8px 0 0; overflow-wrap: anywhere; }
 
+/* Carrying out the confirmed proposals: a section of its own, the only one that moves files. */
+.org-move { margin-top: 16px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--select); border-radius: var(--radius); }
+.org-move h2 { margin: 0 0 4px; font-size: 16px; }
+.org-move h3 { margin: 16px 0 4px; font-size: 14px; }
+.org-move .hint { margin: 4px 0; color: var(--muted); font-size: 13px; }
+.org-move-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.org-move-list { margin: 6px 0 0; padding-left: 18px; font-size: 13px; max-height: 40vh; overflow: auto; }
+.org-move-list li { margin: 2px 0; overflow-wrap: anywhere; }
+.org-move-list .link-btn { margin-left: 8px; }
+.org-move-path { color: var(--muted); }
+.org-move details { margin-top: 8px; }
+.org-move summary { cursor: pointer; }
+
 .org-cats { margin-top: 12px; color: var(--muted); }
 .org-cats summary { cursor: pointer; }
 .org-cats ul { columns: 2 280px; margin: 8px 0 0; padding-left: 18px; }

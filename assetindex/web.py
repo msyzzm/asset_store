@@ -36,6 +36,7 @@ from assetindex.embedding import (
 )
 from assetindex.extract import ExtractError, find_bsdtar, read_member
 from assetindex.kinds import KINDS, LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
+from assetindex.move_web import add_move_routes
 from assetindex.organize_web import add_organize_routes
 from assetindex.scan_request import is_requested, read_status, request_scan, stop_requested, timing
 from assetindex.scan_request import request_stop as request_scan_stop
@@ -347,6 +348,7 @@ def create_app(settings: Settings) -> FastAPI:
     add_agent_routes(app, settings, get_conn, resolve, agent_search, scan_state)
     add_update_routes(app, settings.data_dir, page_request)
     add_organize_routes(app, settings, get_conn, page_request)
+    add_move_routes(app, settings, get_conn, page_request)
 
     @app.get("/api/files/{file_id}")
     def api_file(file_id: FileId, conn: sqlite3.Connection = Depends(get_conn)) -> dict:

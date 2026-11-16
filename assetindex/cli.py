@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
-from assetindex import attempts, caption_job, organize, organize_apply, scan_request
+from assetindex import attempts, caption_job, move_job, organize, organize_apply, scan_request
 from assetindex.archive_index import index_archives
 from assetindex.archive_previews import build_previews
 from assetindex.cache_prune import prune_thumbs
@@ -168,8 +168,8 @@ def _settle_moves(conn: sqlite3.Connection, settings: Settings) -> list[str]:
     left = []
     for journal in organize_apply.unsettled(settings.data_dir):
         root = organize_apply.journal_root(journal)
-        if root not in settings.roots:
-            left.append(f"{journal.name}: 根目录 {root!r} 不在设置里")
+        if root not in settings.roots:  # a root taken out of the settings must not block every scan
+            log.warning("move journal %s is for root %r, no longer configured: left as it is", journal.name, root)
             continue
         problems = organize_apply.recover(conn, settings.roots[root].resolve(), root, journal, move=None)
         left += [f"{journal.name}: {p.path}: {p.reason}" for p in problems]
@@ -332,6 +332,62 @@ def _caption_watch() -> int:
         return 0
 
 
+def _move_watch() -> int:
+    """The mover service: waits for move jobs from the web UI."""
+    settings = load_settings()
+    move_job.write_mount(settings.data_dir, {name: move_job.writable(path) for name, path in settings.roots.items()})
+    log.info("mover waiting for move jobs from the web UI")
+    try:
+        while True:
+            try:
+                _move_once(settings)
+            except Exception:
+                log.exception("move job failed")
+            time.sleep(CAPTION_POLL_SECONDS)
+    except KeyboardInterrupt:
+        return 0
+
+
+def _move_once(settings: Settings) -> bool:
+    """Run the requested move job, if any; True if one ran. It waits (the request
+    stays) while a scan or a model job holds its lock: neither may see files move."""
+    data_dir = settings.data_dir
+    if not move_job.is_requested(data_dir):
+        return False
+    try:
+        with scan_lock(data_dir, wait_seconds=LOCK_WAIT_SECONDS), \
+                scan_lock(data_dir, wait_seconds=LOCK_WAIT_SECONDS, name=organize.LOCK_NAME):
+            raw = move_job.take(data_dir)
+            if raw is None:
+                return False
+            _run_move(settings, raw)
+    except ScanLocked:
+        return False
+    return True
+
+
+def _run_move(settings: Settings, raw) -> None:
+    data_dir = settings.data_dir
+
+    def report(status: move_job.MoveStatus) -> None:
+        try:
+            move_job.write_status(data_dir, status)
+        except OSError as err:
+            log.warning("cannot write move status: %r", err)
+
+    log.info("move job %r", raw)
+    conn = connect(settings.db_path)
+    try:
+        final = move_job.run(conn, settings, raw, should_stop=lambda: move_job.stop_requested(data_dir), report=report)
+    except Exception as err:
+        log.exception("move job failed")
+        final = move_job.MoveStatus(error=f"出错中断：{err!r}（中途的包下次会先收尾）", finished=time.time())
+    finally:
+        conn.close()
+    report(final)
+    log.info("move job done: moved %d, %d problems, error %r", final.moved, len(final.problems), final.error)
+
+
 def _run_organize(settings: Settings, raw) -> None:
     """One organize analysis (units, hashes, duplicates, proposals), holding the model lock."""
     data_dir = settings.data_dir
@@ -454,6 +510,8 @@ def main(argv: list[str] | None = None) -> int:
     tidy.add_argument("--root", required=True)
     tidy.add_argument("--prefix", default="", help="only propose for packs in this folder")
     tidy.add_argument("--redo", action="store_true", help="also packs that already have an undecided proposal")
+    mover = sub.add_parser("move", help="carry out confirmed proposals on request from the web UI (needs the NAS writable)")
+    mover.add_argument("--watch", action="store_true", required=True, help="wait for move jobs started from the web UI")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -474,4 +532,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "organize":
         _exit_on_sigterm()
         return _organize_now(args.root, args.prefix, args.redo)
+    if args.cmd == "move":
+        _exit_on_sigterm()  # mid-move: the journal leaves the pack open, settled on the next job or scan
+        return _move_watch()
     return _serve(args.host, args.port)

@@ -21,6 +21,7 @@ The caller holds the scan lock and the model lock, so nothing else writes the in
 
 import errno
 import json
+import logging
 import os
 import sqlite3
 import sys
@@ -34,8 +35,12 @@ from assetindex.organize_move import MovePlan, Problem, Rename, left_folders
 from assetindex.sequences import group_sequences, sequence_of
 
 FATAL_ERRNOS = {errno.EXDEV, errno.EROFS, errno.EACCES, errno.EPERM, errno.ENOSPC}
-NO_HARD_LINKS = {errno.EPERM, errno.EMLINK, errno.ENOSYS, getattr(errno, "EOPNOTSUPP", -1), getattr(errno, "ENOTSUP", -1)}
+# A link failing with these says something about the files; any other errno (EPERM,
+# EOPNOTSUPP, EINVAL... on shares without hard links) means: use a checked rename.
+LINK_DEFINITE = {errno.EEXIST, errno.ENOENT, errno.EXDEV, errno.ENOSPC, errno.EROFS, getattr(errno, "EDQUOT", -1)}
 JOURNAL_DIR = "moves"
+log = logging.getLogger(__name__)
+_links = {"work": True}  # set once a link fails as unsupported: the mount has no hard links
 
 
 @dataclass(frozen=True)
@@ -89,16 +94,35 @@ def move_no_replace(src: str, dst: str, is_dir: bool) -> None:
             _rmdir_quietly(dst)
             raise
         return
+    if _links["work"]:
+        try:
+            os.link(src, dst)  # fails if the name exists
+        except OSError as err:
+            if err.errno == errno.EEXIST and _same(src, dst):
+                pass  # a retried NFS link: it did happen
+            elif err.errno in LINK_DEFINITE:
+                raise
+            else:
+                log.info("no hard links on this mount (%s): checked renames from now on", err)
+                _links["work"] = False
+        if _links["work"]:
+            try:
+                os.unlink(src)
+            except OSError:
+                if os.path.lexists(src) and _same(src, dst):
+                    os.unlink(dst)  # back to one name, at the old place
+                raise
+            return
+    if os.path.lexists(dst):
+        raise FileExistsError(errno.EEXIST, "已经有了", dst)
+    os.rename(src, dst)
+
+
+def _same(a, b) -> bool:
     try:
-        os.link(src, dst)  # fails if the name exists
-    except OSError as err:
-        if err.errno not in NO_HARD_LINKS:
-            raise
-        if os.path.lexists(dst):
-            raise FileExistsError(errno.EEXIST, "已经有了", dst) from None
-        os.rename(src, dst)
-        return
-    os.unlink(src)
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
 
 
 def _rmdir_quietly(path: str) -> None:
@@ -109,7 +133,7 @@ def _rmdir_quietly(path: str) -> None:
 
 
 def _remove_empty_parents(base: Path, rel: str) -> None:
-    """After a pack left a folder the run created: remove it if empty, up the tree."""
+    """After a pack left a folder: remove it if empty, up the tree (not the root)."""
     folder = (base / rel).parent
     while folder != base and base in folder.parents:
         try:
@@ -117,6 +141,15 @@ def _remove_empty_parents(base: Path, rel: str) -> None:
         except OSError:
             return
         folder = folder.parent
+
+
+def _missing_parents(base: Path, rel: str) -> list[Path]:
+    """The folders a move into `rel` will create, deepest first."""
+    missing, folder = [], (base / rel).parent
+    while folder != base and base in folder.parents and not os.path.lexists(folder):
+        missing.append(folder)
+        folder = folder.parent
+    return missing
 
 
 # ---- journal ------------------------------------------------------------------------
@@ -185,6 +218,23 @@ def journals(data_dir: Path) -> list[Path]:
     return sorted(folder.glob("*.jsonl")) if folder.is_dir() else []
 
 
+def summary(journal: Path) -> dict:
+    """One run, for the history list: when, how many packs moved, how many are still
+    moved (undo would put them back), and whether a pack is left half done."""
+    records = _records(journal)
+    txns, ends = _txns(records)
+    moves = [t for t in txns.values() if t.kind == "move" and ends.get(t.id) == "commit"]
+    undone = {t.undoes for t in txns.values() if t.kind == "undo" and ends.get(t.id) == "commit"}
+    start = next((r for r in records if r.get("op") == "start"), {})
+    return {
+        "root": start.get("root"),
+        "started": start.get("at"),
+        "moved": len(moves),
+        "still_moved": sum(1 for t in moves if t.id not in undone),
+        "open": sum(1 for t in txns.values() if ends.get(t.id) in (None, "stuck")),
+    }
+
+
 def journal_root(journal: Path) -> str | None:
     """The root a journal's run moved packs in."""
     return next((r.get("root") for r in _records(journal) if r.get("op") == "start"), None)
@@ -202,6 +252,8 @@ def rekey(conn: sqlite3.Connection, root: str, txn: _Txn) -> None:
     """Point the index at the new paths: files (and their sequence keys), the unit's
     organize row (with its target and status) and anything naming it. Rows a stale
     entry left at the new paths go first, so nothing collides."""
+    if _rekeyed(conn, root, txn.steps[0]):
+        return  # a crash between the index update and its journal line: already done
     with conn:
         moved_ids = []
         conn.execute("DELETE FROM organize_units WHERE root = ? AND path = ? AND path != ?", (root, txn.new_unit, txn.unit))
@@ -228,14 +280,26 @@ def rekey(conn: sqlite3.Connection, root: str, txn: _Txn) -> None:
                 conn.execute("UPDATE files SET rel_path = ?, name = ?, seq_key = ?, seq_index = ? WHERE id = ?",
                              (new_path, new_path.rpartition("/")[2], seq_key, seq_index, row["id"]))
                 moved_ids.append(row["id"])
-        if txn.kind == "move":  # the folders packs left stay folders of packs
+        if txn.kind == "move":  # the folder the pack left stays a folder of packs
             conn.executemany("INSERT OR IGNORE INTO unit_splits (root, path) VALUES (?, ?)",
-                             [(root, folder) for folder in left_folders(list(txn.steps))])
+                             [(root, folder) for folder in left_folders([txn.steps[0]])])
+            if txn.steps[0].is_dir:  # and a moved folder pack stays one pack where it lands
+                conn.execute("INSERT OR IGNORE INTO unit_joins (root, path) VALUES (?, ?)", (root, txn.steps[0].dst))
         conn.executemany("DELETE FROM embeddings WHERE source = 'text' AND file_id = ?", [(i,) for i in moved_ids])
         conn.execute("UPDATE organize_units SET path = ?, target = ?, status = ? WHERE root = ? AND path = ?",
                      (txn.new_unit, txn.target, txn.status, root, txn.unit))
         conn.execute("UPDATE organize_units SET dup_of = ? WHERE root = ? AND dup_of = ?", (txn.new_unit, root, txn.unit))
         conn.execute("UPDATE dup_keep SET path = ? WHERE root = ? AND path = ?", (txn.new_unit, root, txn.unit))
+
+
+def _rekeyed(conn: sqlite3.Connection, root: str, step: Rename) -> bool:
+    """The index already has `step` at its new path and nothing at the old one."""
+    def has(path: str) -> bool:
+        if step.is_dir:
+            return conn.execute("SELECT 1 FROM files WHERE root = ? AND rel_path >= ? AND rel_path < ? LIMIT 1",
+                                (root, *under(path))).fetchone() is not None
+        return conn.execute("SELECT 1 FROM files WHERE root = ? AND rel_path = ?", (root, path)).fetchone() is not None
+    return not has(step.src) and has(step.dst)
 
 
 # ---- transactions -------------------------------------------------------------------
@@ -245,9 +309,37 @@ def _moved(base: Path, step: Rename) -> bool:
     return not os.path.lexists(base / step.src) and os.path.lexists(base / step.dst)
 
 
-def _turn_back(base: Path, done: list[Rename], move) -> list[str]:
+def _where(base: Path, step: Rename) -> str:
+    """Where a step's file is, by evidence: "moved", "at_src", "claimed" (still at its
+    old place, with a leftover at the new one: a hard link or our empty folder, which
+    only needs removing) or "unknown" (neither place, or both with different files:
+    the NAS may not be mounted, so nothing is decided on it)."""
+    src, dst = base / step.src, base / step.dst
+    at_src, at_dst = os.path.lexists(src), os.path.lexists(dst)
+    if at_dst and not at_src:
+        return "moved"
+    if at_src and not at_dst:
+        return "at_src"
+    if at_src and at_dst:
+        if step.is_dir and dst.is_dir() and not any(dst.iterdir()):
+            return "claimed"
+        if not step.is_dir and _same(src, dst):
+            return "claimed"
+    return "unknown"
+
+
+def _unclaim(base: Path, step: Rename) -> None:
+    dst = base / step.dst
+    if step.is_dir:
+        dst.rmdir()
+    else:
+        dst.unlink()
+
+
+def _turn_back(base: Path, done: list[Rename], move, created: list[Path] = ()) -> list[str]:
     """Undo the renames done, newest first; what could not be turned back. Only checks
-    that the old name is free (a case-insensitive check would trip on a sibling)."""
+    that the old name is free (a case-insensitive check would trip on a sibling). Then
+    removes the folders the move created, if empty."""
     failed = []
     for step in reversed(done):
         if not _moved(base, step):
@@ -256,17 +348,20 @@ def _turn_back(base: Path, done: list[Rename], move) -> list[str]:
             if os.path.lexists(base / step.src):
                 raise FileExistsError(errno.EEXIST, "原位置被占了", step.src)
             move(str(base / step.dst), str(base / step.src), step.is_dir)
-            _remove_empty_parents(base, step.dst)
         except OSError as err:
             if not _moved(base, step):  # it did go back (NFS can report a retried rename as failed)
                 continue
             failed.append(f"{step.dst}: {err.strerror or err}")
+    if not failed:
+        for folder in created:
+            _rmdir_quietly(str(folder))
     return failed
 
 
-def _end_failed(journal: _Journal, base: Path, txn: _Txn, done: list[Rename], move, why: str) -> None:
+def _end_failed(journal: _Journal, base: Path, txn: _Txn, done: list[Rename], move, why: str,
+                created: list[Path] = ()) -> None:
     """Turn back what a failed transaction did; record how it ended."""
-    failed = _turn_back(base, done, move)
+    failed = _turn_back(base, done, move, created)
     if failed:
         journal.write(op="stuck", txn=txn.id, detail=failed)
         raise Fatal(f"「{txn.unit}」没能还原，已停止，见移动记录：{'；'.join(failed)}（原因：{why}）")
@@ -278,31 +373,42 @@ def _run(conn: sqlite3.Connection, base: Path, root: str, journal: _Journal, txn
     journal.write(op="begin", txn=txn.id, kind=txn.kind, unit=txn.unit, new_unit=txn.new_unit, target=txn.target,
                   status=txn.status, undoes=txn.undoes, steps=[[s.src, s.dst, s.is_dir] for s in txn.steps])
     done: list[Rename] = []
+    created: list[Path] = []
     for i, step in enumerate(txn.steps):
+        source, target = base / step.src, base / step.dst
+        # Moving in: no name like it may exist. Putting back: only the exact name (its
+        # case-only sibling may be on its way back too).
+        if not os.path.lexists(source):
+            _fail(journal, base, txn, done, move, created, FileNotFoundError(errno.ENOENT, "不见了", step.src))
+        if _taken(target) if txn.kind == "move" else os.path.lexists(target):
+            _fail(journal, base, txn, done, move, created, FileExistsError(errno.EEXIST, "已经有了", step.dst))
         try:
-            source, target = base / step.src, base / step.dst
-            if not os.path.lexists(source):
-                raise FileNotFoundError(errno.ENOENT, "不见了", step.src)
-            # Moving in: no name like it may exist. Putting back: only the exact name
-            # (its case-only sibling may be on its way back too).
-            if _taken(target) if txn.kind == "move" else os.path.lexists(target):
-                raise FileExistsError(errno.EEXIST, "已经有了", step.dst)
+            created += _missing_parents(base, step.dst)
             target.parent.mkdir(parents=True, exist_ok=True)
             move(str(source), str(target), step.is_dir)
         except OSError as err:
             if not _moved(base, step):  # a retried NFS rename may report failure after all
-                _end_failed(journal, base, txn, done, move, f"{step.src}: {err.strerror or err}")
-                if err.errno in FATAL_ERRNOS:
-                    raise Fatal(f"移动出错，已停止：{os.strerror(err.errno)}：{step.src}") from err
-                raise
+                _fail(journal, base, txn, done, move, created, err)
+        except Exception as err:  # anything else: the same turn back, then stop
+            _end_failed(journal, base, txn, done, move, f"{step.src}: {err!r}", created)
+            raise Fatal(f"移动出错，已停止：{err!r}") from err
         done.append(step)
         journal.write(op="did", txn=txn.id, step=i)
     try:
         rekey(conn, root, txn)
     except Exception as err:  # the index refused (locked, ...): put the files back, stop
-        _end_failed(journal, base, txn, done, move, f"索引没能更新：{err!r}")
+        _end_failed(journal, base, txn, done, move, f"索引没能更新：{err!r}", created)
         raise Fatal(f"索引没能更新，已把「{txn.unit}」放回原处并停止：{err!r}") from err
     journal.write(op="commit", txn=txn.id)
+
+
+def _fail(journal: _Journal, base: Path, txn: _Txn, done: list[Rename], move, created, err: OSError) -> None:
+    """End a pack that failed with `err`: turn it back, then raise (Fatal if the errno
+    says the run cannot go on)."""
+    _end_failed(journal, base, txn, done, move, f"{err.filename}: {err.strerror or err}", created)
+    if err.errno in FATAL_ERRNOS:
+        raise Fatal(f"移动出错，已停止：{os.strerror(err.errno)}：{err.filename}") from err
+    raise err
 
 
 def _next_id(journal_path: Path) -> int:
@@ -348,13 +454,17 @@ def apply_plan(
 
 
 def _finish(conn: sqlite3.Connection, root: str, journal: _Journal, changed: int) -> None:
-    if changed:
-        group_sequences(conn, root)  # moved frames: sequence heads and counts
+    try:
+        if changed:
+            group_sequences(conn, root)  # moved frames: sequence heads and counts; the next scan redoes it
+    except Exception:
+        log.exception("regrouping sequences after the moves failed")
     try:
         journal.write(op="end", at=time.time())
     except Fatal:
         pass
-    journal.close()
+    finally:
+        journal.close()
 
 
 def undo(
@@ -388,6 +498,8 @@ def undo(
             except OSError as err:
                 problems.append(Problem(done.unit, f"撤销失败：{err.strerror or err}"))
                 continue
+            for step in back:
+                _remove_empty_parents(base, step.src)  # the category folders the move made, if empty now
             restored += 1
         return ApplyResult(restored, tuple(problems))
     except Fatal as err:
@@ -407,10 +519,23 @@ def recover(
     abort; some: turn them back (needs `move`; without it, read-only, they stay open).
     Returns what is still open."""
     left = []
+    if not base.is_dir():  # the NAS is not mounted: decide nothing
+        return [Problem(t.unit, "看不到根目录（NAS 没挂上？），这个包先不处理") for t in open_transactions(journal_path)]
     journal = _Journal(journal_path)
     try:
         for txn in open_transactions(journal_path):
-            done = [s for s in txn.steps if _moved(base, s)]
+            where = [_where(base, s) for s in txn.steps]
+            if "unknown" in where:
+                left.append(Problem(txn.unit, "找不到这个包的文件（NAS 没挂上，或被别人动过），先不处理"))
+                continue
+            if "claimed" in where:  # a link or an empty folder left at the new place
+                if move is None:
+                    left.append(Problem(txn.unit, "移动到一半中断了：在整理页点「恢复」放回原处"))
+                    continue
+                for step, state in zip(txn.steps, where, strict=True):
+                    if state == "claimed":
+                        _unclaim(base, step)
+            done = [s for s, state in zip(txn.steps, where, strict=True) if state == "moved"]
             if len(done) == len(txn.steps):
                 try:
                     rekey(conn, root, txn)

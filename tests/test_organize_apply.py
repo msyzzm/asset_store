@@ -265,3 +265,109 @@ def test_packs_left_in_a_folder_stay_packs_of_their_own(lib):
 
     paths = {r[0] for r in conn.execute("SELECT path FROM organize_units")}
     assert {"UE/道具/Sword.rar", "UE/道具/Shield.rar"} <= paths and "UE/道具" not in paths
+
+
+def test_moving_one_pack_keeps_the_preview_folder_pairing_for_the_others(lib):
+    conn, root, put, journal = lib
+    put("P/A.zip", "P/Bb.zip", "P/Ccc.zip", "P/JPEG/A.jpg", "P/JPEG/Bb.jpg")
+    _accept(conn, "P/A.zip", "01_2D/UI/A.zip")
+
+    result = apply_plan(conn, root, "lib", build_plan(conn, "lib"), journal, move=linux_rename)
+    refresh_units(conn, "lib")
+
+    assert result.moved == 1 and (root / "01_2D/UI/A.jpg").exists()
+    files = {r[0]: r[1] for r in conn.execute("SELECT path, files FROM organize_units")}
+    assert files["P/Bb.zip"] == 2 and "P/JPEG/Bb.jpg" not in files  # its preview still goes with it
+
+
+def test_the_index_update_is_not_done_twice(lib, monkeypatch):
+    conn, root, put, journal = lib
+    put(*HAND_SORTED)
+    _accept(conn, "UE/道具/Sword.rar", "02_3D/Props/Sword.rar")
+    plan = build_plan(conn, "lib")
+    real = organize_apply.rekey
+
+    def dies_after_the_index(conn_, root_, txn):
+        real(conn_, root_, txn)
+        raise KeyboardInterrupt  # before "commit" reaches the journal
+
+    monkeypatch.setattr(organize_apply, "rekey", dies_after_the_index)
+    with pytest.raises(KeyboardInterrupt):
+        apply_plan(conn, root, "lib", plan, journal, move=linux_rename)
+    monkeypatch.undo()
+
+    assert recover(conn, root, "lib", journal, move=None) == []
+    row = conn.execute("SELECT status, target FROM organize_units WHERE path = '02_3D/Props/Sword.rar'").fetchone()
+    assert tuple(row) == ("accepted", "02_3D/Props/Sword.rar")  # the decision survived the second pass
+
+
+def test_recover_decides_nothing_when_the_files_cannot_be_seen(lib, monkeypatch, tmp_path):
+    conn, root, put, journal = lib
+    put(*HAND_SORTED)
+    _accept(conn, "UE/道具/Sword.rar", "02_3D/Props/Sword.rar")
+    plan = build_plan(conn, "lib")
+
+    def power_cut(*args):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(organize_apply, "rekey", power_cut)
+    with pytest.raises(KeyboardInterrupt):
+        apply_plan(conn, root, "lib", plan, journal, move=linux_rename)
+    monkeypatch.undo()
+
+    unmounted = tmp_path / "empty mount point"
+    unmounted.mkdir()
+    assert len(recover(conn, unmounted, "lib", journal, move=None)) == 1  # neither place visible
+    assert len(recover(conn, tmp_path / "gone", "lib", journal, move=None)) == 1  # no root at all
+    assert open_transactions(journal) != []  # still open: the scan keeps waiting
+
+
+def test_a_hard_link_left_by_a_crash_is_removed_and_the_pack_stays(lib):
+    conn, root, put, journal = lib
+    put(*HAND_SORTED)
+    _accept(conn, "UE/道具/Sword.rar", "02_3D/Props/Sword.rar")
+    plan = build_plan(conn, "lib")
+    (root / "02_3D/Props").mkdir(parents=True)
+    os.link(root / "UE/道具/Sword.rar", root / "02_3D/Props/Sword.rar")  # crashed between link and unlink
+    step = plan.moves[0].renames[0]
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    journal.write_text(json.dumps({"op": "start", "root": "lib"}) + "\n" + json.dumps(
+        {"op": "begin", "txn": 1, "kind": "move", "unit": step.src, "new_unit": step.dst, "target": step.dst,
+         "status": "accepted", "steps": [[step.src, step.dst, False]]}) + "\n", encoding="utf-8")
+
+    assert len(recover(conn, root, "lib", journal, move=None)) == 1  # read-only: cannot remove the link
+    assert recover(conn, root, "lib", journal, move=linux_rename) == []
+
+    assert not (root / "02_3D/Props/Sword.rar").exists() and (root / "UE/道具/Sword.rar").exists()
+    assert open_transactions(journal) == []
+
+
+def test_move_no_replace_on_linux_links_then_unlinks_and_never_replaces(tmp_path, monkeypatch):
+    monkeypatch.setattr(organize_apply.sys, "platform", "linux")
+    monkeypatch.setitem(organize_apply._links, "work", True)
+    src, dst, other = tmp_path / "a.zip", tmp_path / "b.zip", tmp_path / "c.zip"
+    src.write_bytes(b"a")
+    other.write_bytes(b"c")
+
+    organize_apply.move_no_replace(str(src), str(dst), False)
+    assert not src.exists() and dst.read_bytes() == b"a"
+
+    with pytest.raises(FileExistsError):
+        organize_apply.move_no_replace(str(dst), str(other), False)
+    assert other.read_bytes() == b"c" and dst.exists()
+
+
+def test_move_no_replace_falls_back_to_a_checked_rename_without_hard_links(tmp_path, monkeypatch):
+    monkeypatch.setattr(organize_apply.sys, "platform", "linux")
+    monkeypatch.setitem(organize_apply._links, "work", True)
+
+    def no_links(src, dst):
+        raise OSError(errno.EPERM, "Operation not permitted")
+
+    monkeypatch.setattr(organize_apply.os, "link", no_links)
+    src, dst = tmp_path / "a.zip", tmp_path / "b.zip"
+    src.write_bytes(b"a")
+
+    organize_apply.move_no_replace(str(src), str(dst), False)
+
+    assert dst.read_bytes() == b"a" and organize_apply._links["work"] is False

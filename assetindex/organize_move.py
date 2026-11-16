@@ -165,8 +165,10 @@ def _without_clashes(candidates: list[UnitMove], paths: list[str], problems: lis
 
 
 def left_folders(renames: list[Rename]) -> list[str]:
-    """Folders packs move out of. They stay opened (recorded as splits): the packs left
-    there must not merge into one because their neighbours went elsewhere."""
+    """Folders packs move out of, from each pack's first rename (its main file or
+    folder: a preview folder it takes companions from is not one). They stay opened
+    (recorded as splits): the packs left there must not merge into one because their
+    neighbours went elsewhere."""
     return sorted({r.src.rpartition("/")[0] for r in renames} - {""})
 
 
@@ -190,7 +192,7 @@ def _misparsed(
     # A moved folder pack stays one pack, as the decision on it keeps it now; a folder
     # packs left stays a folder of packs, as the executor records (see left_folders).
     after_joins = [_relocate(j, {}, dirs) for j in joins] + list(dirs.values())
-    after_splits = [_relocate(s, {}, dirs) for s in splits] + left_folders([r for m in moves for r in m.renames])
+    after_splits = [_relocate(s, {}, dirs) for s in splits] + left_folders([m.renames[0] for m in moves])
     after = layout([_relocate(p, files, dirs) for p in paths], after_splits, after_joins, SCHEME_FOLDERS)
     bad: dict[str, str] = {}
     for path in paths:
