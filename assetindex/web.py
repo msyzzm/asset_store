@@ -41,6 +41,7 @@ from assetindex.scanlock import is_scan_running
 from assetindex.search import MAX_LIMIT, MAX_QUERY_LENGTH, parse_terms, search
 from assetindex.semantic import NoVectors, VectorIndex, semantic_search
 from assetindex.sequences import frames_of
+from assetindex.updater import add_update_routes
 from assetindex.thumbs import (
     EMBEDDED_PREVIEW_EXTS,
     entry_thumb_path,
@@ -314,6 +315,7 @@ def create_app(settings: Settings) -> FastAPI:
         return search(conn, q, kind=kind, limit=limit, offset=offset), "text", note
 
     add_agent_routes(app, settings, get_conn, resolve, agent_search, scan_state)
+    add_update_routes(app, settings.data_dir, page_request)
 
     @app.get("/api/files/{file_id}")
     def api_file(file_id: FileId, conn: sqlite3.Connection = Depends(get_conn)) -> dict:

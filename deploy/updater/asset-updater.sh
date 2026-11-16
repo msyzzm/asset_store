@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# Pull and rebuild the asset library when the web UI asks (the "更新" button).
+#
+# Runs on the Docker host as root, started by systemd (see install.sh):
+#   asset-updater.path         when $DATA_DIR/update.request appears -> this script
+#   asset-updater-check.timer  hourly -> this script --check (is there anything new?)
+# The web container only writes update.request ("check" or "update") and reads
+# update.status, which this script writes. Output of the last update: update.log.
+set -uo pipefail
+
+: "${REPO_DIR:?set REPO_DIR (see /etc/asset-updater.env)}"
+: "${DATA_DIR:?set DATA_DIR (see /etc/asset-updater.env)}"
+GIT_USER=${GIT_USER:-root}
+COMPOSE=${COMPOSE:-docker compose}
+INSTALLED_SELF=${INSTALLED_SELF:-/usr/local/lib/asset-updater/asset-updater.sh}
+
+REQUEST="$DATA_DIR/update.request"
+STATUS="$DATA_DIR/update.status"
+LOG="$DATA_DIR/update.log"
+DEPLOYED="$DATA_DIR/update.deployed"  # the commit the running containers were built from
+FETCH_TIMEOUT=${FETCH_TIMEOUT:-300}
+
+current="" latest="" deployed="" behind="null" pending="" checked="null" started="null" finished="null"
+
+git_() {
+    # As the repo's owner: their git credentials (HOME: systemd sets none), and no
+    # "dubious ownership" refusal. GIT_LIMIT=seconds bounds a network call.
+    local limit=()
+    if [ -n "${GIT_LIMIT:-}" ] && command -v timeout > /dev/null; then limit=(timeout "$GIT_LIMIT"); fi
+    if [ "$GIT_USER" = root ] || [ "$(id -un)" = "$GIT_USER" ]; then
+        "${limit[@]}" git -C "$REPO_DIR" -c safe.directory="$REPO_DIR" "$@"
+    else
+        local home
+        home=$(getent passwd "$GIT_USER" | cut -d: -f6)
+        "${limit[@]}" runuser -u "$GIT_USER" -- env HOME="$home" git -C "$REPO_DIR" "$@"
+    fi
+}
+
+json_str() {
+    local s
+    s=$(printf '%s' "$1" | tr -d '\000-\010\013\014\016-\037')
+    s=${s//\\/\\\\}
+    s=${s//\"/\\\"}
+    s=${s//$'\t'/ }
+    s=${s//$'\r'/}
+    s=${s//$'\n'/\\n}
+    printf '"%s"' "$s"
+}
+
+json_or_null() {
+    if [ -n "$1" ]; then json_str "$1"; else printf 'null'; fi
+}
+
+write_status() {  # state, error, log
+    local state=$1 error=${2:-} log=${3:-} items="" line tmp
+    while IFS= read -r line; do
+        [ -n "$line" ] && items="${items:+$items,}$(json_str "$line")"
+    done <<< "$pending"
+    tmp="$STATUS.tmp.$$"
+    printf '{"state":%s,"current":%s,"latest":%s,"deployed":%s,"behind":%s,"pending":[%s],"checked":%s,"started":%s,"finished":%s,"error":%s,"log":%s}\n' \
+        "$(json_str "$state")" "$(json_or_null "$current")" "$(json_or_null "$latest")" "$(json_or_null "$deployed")" "$behind" "$items" \
+        "$checked" "$started" "$finished" "$(json_or_null "$error")" "$(json_or_null "$log")" > "$tmp" \
+        && chmod 644 "$tmp" && mv -f "$tmp" "$STATUS"
+}
+
+read_versions() {  # after a fetch: where we are, where upstream is, what's in between
+    current=$(git_ rev-parse --short HEAD 2>/dev/null)
+    latest=$(git_ rev-parse --short '@{u}' 2>/dev/null)
+    behind=$(git_ rev-list --count 'HEAD..@{u}' 2>/dev/null || echo null)
+    pending=$(git_ log --format='%h %s' 'HEAD..@{u}' 2>/dev/null | head -n 50)
+    deployed=$(head -c 64 "$DEPLOYED" 2>/dev/null | tr -dc '0-9A-Za-z')
+    checked=$(date +%s)
+}
+
+do_check() {
+    read_versions
+    started=$(date +%s)  # lets the page notice a check that hangs
+    write_status checking
+    if GIT_LIMIT=$FETCH_TIMEOUT git_ fetch --quiet > "$LOG.check" 2>&1; then
+        read_versions
+        write_status idle
+    else
+        write_status error "检查更新失败：git fetch 出错（网络或凭据）" "$(tail -n 20 "$LOG.check")"
+    fi
+}
+
+do_update() {
+    read_versions
+    started=$(date +%s)
+    finished="null"
+    write_status running
+    # Killed (systemd timeout, stop): say so instead of leaving "running" behind.
+    trap 'finished=$(date +%s); write_status error "更新被中断（超时或服务被停止），详情见 update.log" "$(tail -n 20 "$LOG")"; exit 1' TERM INT
+    {
+        echo "== $(date '+%F %T') update from $current (built: ${deployed:-unknown})"
+        GIT_LIMIT=$FETCH_TIMEOUT git_ fetch --quiet && git_ pull --ff-only \
+            && (cd "$REPO_DIR" && $COMPOSE up -d --build --remove-orphans)
+    } > "$LOG" 2>&1
+    local ok=$?
+    trap - TERM INT
+    read_versions
+    finished=$(date +%s)
+    if [ "$ok" -eq 0 ]; then
+        # Only a successful build moves this: a pull without a build leaves a rebuild pending.
+        printf '%s\n' "$current" > "$DEPLOYED"
+        deployed=$current
+        # The script in the repo may have changed: next runs use the new one.
+        if [ -w "$(dirname "$INSTALLED_SELF")" ]; then
+            install -m 755 "$REPO_DIR/deploy/updater/asset-updater.sh" "$INSTALLED_SELF" 2>/dev/null
+        fi
+        write_status done "" "$(tail -n 20 "$LOG")"
+    else
+        write_status error "更新失败（git pull 或 docker compose 出错），详情见数据卷里的 update.log" "$(tail -n 20 "$LOG")"
+    fi
+}
+
+main() {
+    if command -v flock > /dev/null; then  # one run at a time (timer and button together)
+        exec 9> "$DATA_DIR/update.lock"
+        flock 9
+    fi
+    local action=""
+    if [ -f "$REQUEST" ]; then
+        action=$(tr -dc 'a-z' < "$REQUEST")
+        rm -f "$REQUEST"
+    elif [ "${1:-}" = "--check" ]; then
+        action=check
+    fi
+    case "$action" in
+        update) do_update ;;
+        check) do_check ;;
+        "") ;;
+        *) read_versions; write_status error "不认识的请求：$action" ;;
+    esac
+}
+
+main "$@"

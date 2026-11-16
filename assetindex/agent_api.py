@@ -25,6 +25,7 @@ from assetindex.extract import ExtractError, find_bsdtar, read_member
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.search import MAX_QUERY_LENGTH, fetch_items, parse_terms
 from assetindex.thumbs import EMBEDDED_PREVIEW_EXTS
+from assetindex.updater import update_state
 
 MAX_AGENT_LIMIT = 50  # results per page: enough to choose from, small enough for a context window
 DETAIL_ENTRIES = 200
@@ -171,4 +172,4 @@ def add_agent_routes(
 
     @app.get("/api/agent/tasks")
     def agent_tasks() -> dict:
-        return {"scan": scan_state(), "caption": caption_state(settings.data_dir)}
+        return {"scan": scan_state(), "caption": caption_state(settings.data_dir), "update": update_state(settings.data_dir)}

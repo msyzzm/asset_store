@@ -154,12 +154,36 @@ docker stats --no-stream
 | 立刻扫一次 | 网页右上角点「扫描」，或 `docker compose exec scanner python -m assetindex scan` |
 | 重试坏包和没封面的包 | `docker compose exec scanner python -m assetindex scan --retry-errors` |
 | 看扫描日志 | `docker compose logs --tail 100 scanner` |
-| 升级 | 更新项目文件后 `docker compose up -d --build` |
+| 升级 | 网页任务栏「更新」一行点「更新」（需先装一次更新服务，见下文）；或手动 `git pull && docker compose up -d --build` |
 | 重建索引 | `docker compose down && docker volume rm assetindex_asset-data && docker compose up -d` |
 
 - 定时扫描正在跑时，手动扫描会直接退出（退出码 3，日志里有 "another scan is running"），等它跑完再试。
 - 某个包连续两次把扫描进程撑爆内存，会被标记为坏包并跳过，日志里能看到 "killed the scanner"。调高 `SCANNER_MEM_LIMIT` 后，用 `--retry-errors` 重试。
 - 索引数据卷可以随时删掉重建，只是要重新跑一遍首次扫描。NAS 上的东西不受任何影响。
+
+## 网页一键更新
+
+页面任务栏里的「更新」一行会显示当前版本和 GitHub 上的新提交，点「更新」就会自动拉代码、重建并重启容器，不用再 ssh 上去。
+
+真正执行更新的是 LXC 主机上一个很小的 systemd 服务，容器本身拿不到 Docker 的控制权。这个服务只需在 LXC 里装一次，前提是容器已经在运行：
+
+```bash
+cd /opt/asset_store            # 你 clone 仓库的位置
+sudo deploy/updater/install.sh
+```
+
+它会做这些事：
+
+- 从正在运行的 web 容器上找出数据卷在主机上的路径；
+- 安装 `asset-updater.path`（网页一提交请求就执行更新）和 `asset-updater-check.timer`（每小时 `git fetch` 一次，看有没有新版本）；
+- 以仓库所有者的身份执行 git 命令，用的是你平时 `git pull` 时的凭据；`docker compose` 以 root 身份执行。
+
+说明：
+
+- 更新执行的是 `git pull --ff-only` 加 `docker compose up -d --build`。如果 LXC 里的仓库有本地改动或分叉，pull 会失败，页面上显示红点，鼠标悬停能看到报错。完整输出在数据卷里的 `update.log`。
+- 重建期间网页会断开一会儿，完成后页面自动刷新到新版本。正在跑的扫描或看图描述会被打断，重启后点一下就能接着做，已经完成的部分不会丢。
+- 卸载：`sudo deploy/updater/install.sh --uninstall`。
+- 查看服务日志：`journalctl -u asset-updater -u asset-updater-check`。
 
 ## 语义搜索（可选）
 

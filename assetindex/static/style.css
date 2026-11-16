@@ -338,6 +338,8 @@ body {
 .task-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--border); }
 .task.busy .task-dot { background: var(--accent); animation: task-pulse 1.2s ease-in-out infinite; }
 .task.failed .task-dot { background: var(--danger); }
+.task.attention { color: var(--text); }  /* something to act on: a new version */
+.task.attention .task-dot { background: var(--accent); }
 .task-name { flex: none; font-weight: 600; }
 .task-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-bar { flex: none; width: 120px; height: 6px; accent-color: var(--accent); }
