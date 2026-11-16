@@ -18,6 +18,7 @@ from fastapi import Path as PathParam
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from assetindex.agent_api import add_agent_routes
 from assetindex.archive_queries import list_entries
 from assetindex.caption_web import add_caption_routes
 from assetindex.config import Settings
@@ -297,6 +298,22 @@ def create_app(settings: Settings) -> FastAPI:
             log.error("cannot record scan request: %r", err)
             raise HTTPException(503, "cannot record the scan request; check the data dir") from None
         return scan_state()
+
+    def agent_search(conn: sqlite3.Connection, q: str, kind: str | None, limit: int, offset: int, mode: str):
+        """Search for agents: "auto" tries semantic search and falls back to keywords."""
+        if kind and kind not in KINDS:
+            raise HTTPException(422, f"unknown kind {kind!r}; one of {', '.join(KINDS)}")
+        note = None
+        if mode != "text" and parse_terms(q):
+            try:
+                return semantic(conn, q, kind, limit, offset), "semantic", None
+            except HTTPException as err:
+                if mode == "semantic":
+                    raise
+                note = f"语义搜索不可用（{err.detail}），已改用关键词搜索"
+        return search(conn, q, kind=kind, limit=limit, offset=offset), "text", note
+
+    add_agent_routes(app, settings, get_conn, resolve, agent_search, scan_state)
 
     @app.get("/api/files/{file_id}")
     def api_file(file_id: FileId, conn: sqlite3.Connection = Depends(get_conn)) -> dict:

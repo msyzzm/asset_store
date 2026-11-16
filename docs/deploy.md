@@ -223,6 +223,18 @@ docker stats --no-stream
 - **命令行直接跑**：`docker compose exec captioner python -m assetindex caption --root nas --prefix 某个文件夹`。
 - **key 的存放**：与语义搜索相同，保存在 `caption.json` 里（权限 600），改了接口地址必须重新填 key。
 
+## 给 AI agent 用
+
+`/api/agent/*` 是一组给 agent 用的接口，返回内容精简，每条结果都带下载链接，还能从 zip/rar/7z 里单独取出一个文件。仓库的 `skills/asset-store/` 是配套的 skill：`SKILL.md` 加一个只用 Python 标准库的命令行脚本。
+
+在 Claude Code 里使用：
+
+1. 把 `skills/asset-store` 整个文件夹复制到 `~/.claude/skills/`（所有项目都能用），或者复制到某个项目的 `.claude/skills/`。
+2. 设置环境变量 `ASSET_STORE_URL=http://<LXC 的 IP>:8000`。
+3. 之后直接说"去素材库找一个火焰爆炸的序列帧放到 Assets/VFX"，agent 会自己搜索、查看缩略图、下载。
+
+别的 agent 可以直接调用 HTTP 接口，接口清单在 `SKILL.md` 末尾，完整文档在服务的 `/docs` 页面。
+
 ## 安全
 
 网页**没有登录**，任何能访问端口的人都能浏览和下载全部素材。

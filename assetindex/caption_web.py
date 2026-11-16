@@ -23,6 +23,15 @@ log = logging.getLogger(__name__)
 MAX_PREFIX_QUERY = caption_job.MAX_PREFIX_LENGTH
 
 
+def caption_state(data_dir) -> dict:
+    """The describe-pictures job as the UI shows it: requested, running, last result."""
+    status = caption_job.read_status(data_dir)
+    if status.running and not is_scan_running(data_dir, caption_job.LOCK_NAME):
+        # The captioner died mid-job (restart, OOM); nothing will finish it.
+        status = replace(status, running=False, error=status.error or "中途断了（captioner 被停止或重启），可以重新开始")
+    return {"requested": caption_job.is_requested(data_dir), **asdict(status)}
+
+
 def add_caption_routes(
     app: FastAPI,
     settings: Settings,
@@ -43,11 +52,7 @@ def add_caption_routes(
             raise HTTPException(422, str(err)) from None
 
     def job_state() -> dict:
-        status = caption_job.read_status(data_dir)
-        if status.running and not is_scan_running(data_dir, caption_job.LOCK_NAME):
-            # The captioner died mid-job (restart, OOM); nothing will finish it.
-            status = replace(status, running=False, error=status.error or "中途断了（captioner 被停止或重启），可以重新开始")
-        return {"requested": caption_job.is_requested(data_dir), **asdict(status)}
+        return caption_state(data_dir)
 
     @app.get("/api/settings/caption")
     def api_caption_settings() -> dict:
