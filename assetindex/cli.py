@@ -44,15 +44,19 @@ class _Progress:
         self.started = started
         self.root: str | None = None  # None for the steps that cover every root
         self._phase: str | None = None
+        self._phase_started: float | None = None
         self._last = 0.0
 
     def __call__(self, phase: str, done: int, total: int | None) -> None:
         now = time.monotonic()
         if phase == self._phase and now - self._last < PROGRESS_SECONDS:
             return
+        if phase != self._phase:
+            self._phase_started = time.time()
         self._phase, self._last = phase, now
         _set_status(self.data_dir, ScanStatus(
             running=True, started=self.started, root=self.root, phase=phase, done=done, total=total,
+            phase_started=self._phase_started,
         ))
 
 

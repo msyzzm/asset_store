@@ -497,9 +497,23 @@ function scanProgressText(status) {
   return status.phase === 'walk' ? `${where}${phase}，已看到 ${done} 个` : `${where}${phase}`;
 }
 
+// "1 小时 5 分", "12 分钟", "不到 1 分钟"
+function duration(seconds) {
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 1) return '不到 1 分钟';
+  if (minutes < 60) return `${minutes} 分钟`;
+  return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
+}
+
+function scanTimeText(status) {
+  if (status.elapsed == null) return '';
+  const left = status.eta == null ? '' : ` · 这一步还要约 ${duration(status.eta)}`;
+  return ` · 已用 ${duration(status.elapsed)}${left}`;
+}
+
 function scanText(status) {
   if (status.running && status.stopping) return '正在停止：处理完手上这个文件夹或压缩包就停…';
-  if (status.running) return `正在扫描 ${scanProgressText(status)}…`;
+  if (status.running) return `正在扫描 ${scanProgressText(status)}${scanTimeText(status)}`;
   if (status.requested) return '已请求扫描，扫描器一分钟内会开始…';
   if (status.finished == null) {
     return status.ok === false ? '上次扫描中途断了（扫描器被强制退出？看扫描日志）' : '';

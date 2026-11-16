@@ -127,7 +127,8 @@ def test_scan_button_records_a_request_the_scanner_will_see(client, settings):
 
     assert client.get("/api/scan").json() == {
         "requested": False, "running": False, "started": None, "finished": None, "ok": None,
-        "stopped": False, "root": None, "phase": None, "done": 0, "total": None, "stopping": False,
+        "stopped": False, "root": None, "phase": None, "done": 0, "total": None, "phase_started": None,
+        "stopping": False, "elapsed": None, "eta": None,
     }
 
     assert client.post("/api/scan").status_code == 403  # plain cross-site POST

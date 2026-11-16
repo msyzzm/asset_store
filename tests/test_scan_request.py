@@ -97,3 +97,16 @@ def test_progress_round_trips(tmp_path):
     scan_request.write_status(tmp_path, status)
 
     assert scan_request.read_status(tmp_path) == status
+
+
+def test_timing_extrapolates_the_step_from_its_pace():
+    status = ScanStatus(running=True, started=1000.0, phase="previews", done=100, total=400, phase_started=1100.0)
+    assert scan_request.timing(status, 1300.0) == {"elapsed": 300, "eta": 600}  # 200 s for 100, 300 left
+
+
+def test_timing_says_nothing_it_cannot_know():
+    young = ScanStatus(running=True, started=1000.0, phase="previews", done=1, total=400, phase_started=1000.0)
+    assert scan_request.timing(young, 1005.0) == {"elapsed": 5, "eta": None}  # too early to tell
+    walking = ScanStatus(running=True, started=1000.0, phase="walk", done=50, total=None, phase_started=1000.0)
+    assert scan_request.timing(walking, 1100.0) == {"elapsed": 100, "eta": None}
+    assert scan_request.timing(ScanStatus(), 1100.0) == {"elapsed": None, "eta": None}

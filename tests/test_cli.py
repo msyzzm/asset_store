@@ -360,4 +360,5 @@ def test_scan_status_shows_which_step_it_is_on(monkeypatch, tmp_path, asset_root
     running = [s for s in statuses if s.running]
     assert {s.phase for s in running} >= {"walk", "archives", "previews"}
     assert all(s.root == "art" for s in running if s.phase in ("walk", "archives", "previews"))
+    assert all(s.phase_started is not None and s.phase_started >= s.started for s in running if s.phase)
     assert statuses[-1].running is False and statuses[-1].phase is None

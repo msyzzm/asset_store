@@ -45,6 +45,23 @@ class ScanStatus:
     phase: str | None = None
     done: int = 0
     total: int | None = None
+    phase_started: float | None = None  # epoch seconds: when this step began, for the estimate
+
+
+MIN_ETA_SECONDS = 10  # a step this young has too few samples to extrapolate from
+
+
+def timing(status: ScanStatus, now: float) -> dict:
+    """Seconds the running scan has taken, and an estimate of what is left of its step
+    (from the step's pace so far; None while it can't be told, e.g. walking)."""
+    if not status.running or status.started is None:
+        return {"elapsed": None, "eta": None}
+    eta = None
+    if status.total and status.phase_started is not None and 0 < status.done <= status.total:
+        spent = now - status.phase_started
+        if spent >= MIN_ETA_SECONDS:
+            eta = round(spent / status.done * (status.total - status.done))
+    return {"elapsed": round(max(0.0, now - status.started)), "eta": eta}
 
 
 def request_stop(data_dir: Path) -> None:
@@ -136,6 +153,7 @@ def read_status(data_dir: Path) -> ScanStatus:
         phase=_text_or_none(raw.get("phase")),
         done=_count(raw.get("done")) or 0,
         total=_count(raw.get("total")),
+        phase_started=_number_or_none(raw.get("phase_started")),
     )
 
 

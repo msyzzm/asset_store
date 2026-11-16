@@ -37,7 +37,7 @@ from assetindex.embedding import (
 from assetindex.extract import ExtractError, find_bsdtar, read_member
 from assetindex.kinds import KINDS, LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.organize_web import add_organize_routes
-from assetindex.scan_request import is_requested, read_status, request_scan, stop_requested
+from assetindex.scan_request import is_requested, read_status, request_scan, stop_requested, timing
 from assetindex.scan_request import request_stop as request_scan_stop
 from assetindex.scanlock import is_scan_running
 from assetindex.search import MAX_LIMIT, MAX_QUERY_LENGTH, parse_terms, search
@@ -299,6 +299,7 @@ def create_app(settings: Settings) -> FastAPI:
             "requested": is_requested(settings.data_dir),
             **asdict(status),
             "stopping": status.running and stop_requested(settings.data_dir),
+            **timing(status, time.time()),
         }
 
     @app.get("/api/scan")
