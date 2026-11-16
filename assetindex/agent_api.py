@@ -20,6 +20,7 @@ from fastapi.responses import Response
 
 from assetindex.archive_queries import list_entries
 from assetindex.caption_web import caption_state
+from assetindex.organize_web import organize_state
 from assetindex.config import Settings
 from assetindex.extract import ExtractError, find_bsdtar, read_member
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
@@ -172,4 +173,9 @@ def add_agent_routes(
 
     @app.get("/api/agent/tasks")
     def agent_tasks() -> dict:
-        return {"scan": scan_state(), "caption": caption_state(settings.data_dir), "update": update_state(settings.data_dir)}
+        return {
+            "scan": scan_state(),
+            "caption": caption_state(settings.data_dir),
+            "organize": organize_state(settings.data_dir),
+            "update": update_state(settings.data_dir),
+        }

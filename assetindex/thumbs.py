@@ -132,6 +132,11 @@ def _grid(count: int) -> int:
 
 def compose_sheet(images: Sequence[Image.Image], target: Path) -> None:
     """Contact sheet: 1, 2x2 or 3x3 cells, each image centred in its cell."""
+    save_webp(sheet_image(images), target)
+
+
+def sheet_image(images: Sequence[Image.Image]) -> Image.Image:
+    """The contact sheet itself (RGBA), without saving it."""
     if not images:
         raise ValueError("no images for sheet")
     cols = _grid(len(images))
@@ -149,4 +154,4 @@ def compose_sheet(images: Sequence[Image.Image], target: Path) -> None:
         x = col * cell + (cell - fitted.width) // 2
         y = row * cell + (cell - fitted.height) // 2
         sheet.paste(fitted, (x, y), fitted if fitted.mode == "RGBA" else None)
-    save_webp(sheet, target)
+    return sheet

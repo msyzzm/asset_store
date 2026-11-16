@@ -130,6 +130,48 @@ END;
 CREATE TRIGGER IF NOT EXISTS files_ad_attempts AFTER DELETE ON files BEGIN
     DELETE FROM scan_attempts WHERE file_id = old.id;  -- ids get reused
 END;
+-- Organizing (see assetindex/organize.py). Content hashes, only for files whose size
+-- another file shares: the rest can't have a duplicate.
+CREATE TABLE IF NOT EXISTS file_hashes (
+    file_id INTEGER PRIMARY KEY,
+    size    INTEGER NOT NULL,
+    mtime   REAL    NOT NULL,  -- the file's when hashed: a change means hash again
+    hash    TEXT    NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS files_ad_hashes AFTER DELETE ON files BEGIN
+    DELETE FROM file_hashes WHERE file_id = old.id;
+END;
+-- Folders the user opened: their children are units (packs) of their own.
+CREATE TABLE IF NOT EXISTS unit_splits (
+    root TEXT NOT NULL,
+    path TEXT NOT NULL,
+    PRIMARY KEY (root, path)
+);
+-- Copies the user chose to keep when identical packs are found (else the default pick).
+CREATE TABLE IF NOT EXISTS dup_keep (
+    root TEXT NOT NULL,
+    path TEXT NOT NULL,
+    PRIMARY KEY (root, path)
+);
+-- One row per unit: where the organizer proposes to put it, and what the user decided.
+CREATE TABLE IF NOT EXISTS organize_units (
+    root      TEXT    NOT NULL,
+    path      TEXT    NOT NULL,
+    is_dir    INTEGER NOT NULL,
+    files     INTEGER NOT NULL,
+    size      INTEGER NOT NULL,
+    signature TEXT    NOT NULL,  -- of its files (paths, sizes, mtimes): a change makes the proposal stale
+    dup_of    TEXT,              -- path of the identical unit that is kept
+    category  TEXT,
+    name      TEXT,
+    target    TEXT,              -- proposed path under the root
+    reason    TEXT,
+    status    TEXT    NOT NULL DEFAULT 'todo',  -- todo | proposed | accepted | rejected
+    model     TEXT,
+    error     TEXT,
+    updated   REAL,
+    PRIMARY KEY (root, path)
+);
 """
 
 # Columns added after the first release; old databases get them via ALTER TABLE.

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>素材整理</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="organize.css">
+</head>
+<body>
+  <header class="bar">
+    <h1><a class="home" href="/">素材库</a> / 整理</h1>
+  </header>
+  <main class="organize">
+    <p class="org-notice">这一步只生成整理建议：找出重复的包，给每个包建议一个分类和名字。<strong>不会移动任何文件</strong>，确认过的建议在下一步才会执行。</p>
+
+    <section class="org-summary" id="o-summary" aria-live="polite"></section>
+
+    <section class="org-run">
+      <form id="o-form" class="org-form">
+        <label>根目录 <select name="root"></select></label>
+        <label class="grow">只分析这个文件夹（留空 = 全部）<input name="prefix" autocomplete="off" placeholder="例如 2DPixel"></label>
+        <label class="check"><input name="redo" type="checkbox"> 没确认的建议也重新问一遍</label>
+        <button id="o-start" class="btn" type="submit">开始分析</button>
+        <button id="o-stop" class="btn secondary" type="button" hidden>停止</button>
+      </form>
+      <progress id="o-bar" class="org-bar" max="1" value="0" hidden></progress>
+      <p id="o-status" class="org-status" aria-live="polite"></p>
+    </section>
+
+    <details class="org-cats">
+      <summary>目录方案（建议会放到这些文件夹下）</summary>
+      <ul id="o-cats"></ul>
+    </details>
+
+    <nav class="org-tabs" id="o-tabs" aria-label="筛选"></nav>
+    <div class="org-tools">
+      <select id="o-category" aria-label="分类"><option value="">全部分类</option></select>
+      <input id="o-q" type="search" placeholder="按路径或目标筛选" autocomplete="off">
+      <label class="check"><input id="o-all" type="checkbox"> 全选本页</label>
+      <button id="o-accept" class="btn" type="button">确认选中</button>
+      <button id="o-reject" class="btn secondary" type="button">拒绝选中</button>
+    </div>
+    <p id="o-count" class="hint"></p>
+    <ul id="o-list" class="org-list"></ul>
+    <button id="o-more" class="more" type="button" hidden>加载更多</button>
+  </main>
+  <script src="organize.js"></script>
+</body>
+</html>

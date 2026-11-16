@@ -105,17 +105,16 @@ class CaptionClient:
         self.config = config
         self.timeout = timeout
 
-    def describe(self, jpeg: bytes) -> str:
-        url = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
+    def ask(self, prompt: str, jpeg: bytes | None, max_tokens: int = MAX_ANSWER_TOKENS) -> str:
+        """One question, with a picture if given; the answer without any reasoning text."""
+        content = [{"type": "text", "text": prompt}]
+        if jpeg is not None:
+            url = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
+            content.append({"type": "image_url", "image_url": {"url": url}})
         body = {
             "model": self.config.model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": PROMPT}, {"type": "image_url", "image_url": {"url": url}}],
-                }
-            ],
-            "max_tokens": MAX_ANSWER_TOKENS,
+            "messages": [{"role": "user", "content": content}],
+            "max_tokens": max_tokens,
             "temperature": 0.2,
             "stream": False,
             # Thinking first would take far longer per picture (and could use up max_tokens).
@@ -123,7 +122,11 @@ class CaptionClient:
             "chat_template_kwargs": {"enable_thinking": False},
         }
         parsed = post_json(self.config.base_url + "/chat/completions", self.config.api_key, body, self.timeout)
-        caption = clean_caption(_answer_text(parsed))
+        answer = _THINKING.sub("", _answer_text(parsed))
+        return answer.split("<think>", 1)[0].strip()  # cut off while still thinking: nothing yet
+
+    def describe(self, jpeg: bytes) -> str:
+        caption = clean_caption(self.ask(PROMPT, jpeg))
         if not caption:
             raise EmbedError("模型没有返回描述", EMPTY_ANSWER_STATUS)
         return caption

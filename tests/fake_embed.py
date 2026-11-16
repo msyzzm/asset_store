@@ -109,13 +109,23 @@ class FakeEmbedServer:
     def chat(self, body: dict) -> tuple[int, dict]:
         """A vision chat model that "sees" colour: red pictures are fire, others are ice."""
         time.sleep(self.chat_delay)
+        parts = body["messages"][0]["content"]
+        prompt = "".join(p.get("text", "") for p in parts if p.get("type") == "text")
+        url = next((p["image_url"]["url"] for p in parts if p.get("type") == "image_url"), None)
+        red = url is not None and image_vector(url)[1] > 0.5
         if self.chat_reply is not None:
             content = self.chat_reply
-        else:
-            parts = body["messages"][0]["content"]
-            url = next(p["image_url"]["url"] for p in parts if p.get("type") == "image_url")
-            red = image_vector(url)[1] > 0.5
+        elif '"category"' in prompt:  # the organizer asking where a pack belongs
+            answer = (
+                {"category": "01_2D/VFX", "name": "Fake - 火焰特效", "reason": "图里是红色火焰"} if red
+                else {"category": "01_2D/Textures", "name": "Fake - 蓝色贴图", "reason": "蓝色的图"} if url
+                else {"category": "03_Audio/SFX", "name": "Fake - 音效", "reason": "没有图"}
+            )
+            content = "好的：" + json.dumps(answer, ensure_ascii=False)
+        elif url is not None:
             content = "<think>看一下</think>一团红色的火焰特效\n火焰、红色、特效" if red else "一块蓝色的冰晶\n冰、蓝色"
+        else:
+            content = "没有图"
         message = {"role": "assistant", "content": content}
         return 200, {"object": "chat.completion", "choices": [{"index": 0, "message": message}]}
 

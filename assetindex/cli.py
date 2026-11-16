@@ -8,7 +8,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
-from assetindex import attempts, caption_job, scan_request
+from assetindex import attempts, caption_job, organize, scan_request
 from assetindex.archive_index import index_archives
 from assetindex.archive_previews import build_previews
 from assetindex.cache_prune import prune_thumbs
@@ -229,9 +229,77 @@ def _caption_watch() -> int:
                 _caption_once(settings)
             except Exception:
                 log.exception("caption job failed")
+            try:
+                _organize_once(settings)
+            except Exception:
+                log.exception("organize job failed")
             time.sleep(CAPTION_POLL_SECONDS)
     except KeyboardInterrupt:
         return 0
+
+
+def _run_organize(settings: Settings, raw) -> None:
+    """One organize analysis (units, hashes, duplicates, proposals), holding the model lock."""
+    data_dir = settings.data_dir
+
+    def report(status: organize.OrganizeStatus) -> None:
+        try:
+            organize.write_status(data_dir, status)
+        except OSError as err:
+            log.warning("cannot write organize status: %r", err)
+
+    try:
+        scope = caption_job.parse_scope(raw, settings.roots)
+    except ValueError as err:
+        report(organize.OrganizeStatus(error=f"范围不对：{err}", finished=time.time()))
+        return
+    config = load_caption_config(data_dir)
+    if not config.active:
+        report(organize.OrganizeStatus(error="整理要用看图模型：先在「看图描述」里设置好接口", finished=time.time()))
+        return
+    log.info("organizing %s/%s", scope.root, scope.prefix)
+    report(organize.OrganizeStatus(running=True, root=scope.root, prefix=scope.prefix, phase="units", started=time.time()))
+    conn = connect(settings.db_path)
+    try:
+        final = organize.run_analysis(
+            conn, settings, scope, config, should_stop=lambda: organize.stop_requested(data_dir), report=report
+        )
+    except Exception as err:  # e.g. "database is locked": say so instead of "running" forever
+        log.exception("organizing failed")
+        report(organize.OrganizeStatus(root=scope.root, prefix=scope.prefix, error=f"出错中断：{err!r}", finished=time.time()))
+        return
+    finally:
+        conn.close()
+    report(final)
+    log.info("organize: proposed %d of %d packs, %d failed%s", final.done, final.total, final.failed,
+             f"; stopped: {final.error}" if final.error else "")
+
+
+def _organize_once(settings: Settings) -> bool:
+    """Run the analysis requested from the web UI, if any; True if one ran."""
+    if not organize.is_requested(settings.data_dir):
+        return False
+    try:
+        with scan_lock(settings.data_dir, wait_seconds=LOCK_WAIT_SECONDS, name=organize.LOCK_NAME):
+            raw = organize.take_job(settings.data_dir)
+            if raw is None:
+                return False
+            _run_organize(settings, raw)
+    except ScanLocked:
+        return False  # a caption job holds the model: try again next round
+    return True
+
+
+def _organize_now(root: str, prefix: str, redo: bool) -> int:
+    settings = load_settings()
+    try:
+        with scan_lock(settings.data_dir, name=organize.LOCK_NAME):
+            (settings.data_dir / organize.STOP_NAME).unlink(missing_ok=True)
+            _run_organize(settings, {"root": root, "prefix": prefix, "redo": redo})
+    except ScanLocked as err:
+        log.error("%s; not starting another", err)
+        return 3
+    return 1 if organize.read_status(settings.data_dir).error else 0
 
 
 def _caption_now(root: str, prefix: str, redo: bool) -> int:
@@ -288,6 +356,10 @@ def main(argv: list[str] | None = None) -> int:
     describe.add_argument("--root", help="describe pictures under this root now")
     describe.add_argument("--prefix", default="", help="only this folder under the root")
     describe.add_argument("--redo", action="store_true", help="also pictures that already have a description")
+    tidy = sub.add_parser("organize", help="find duplicate packs and propose where each pack belongs (moves nothing)")
+    tidy.add_argument("--root", required=True)
+    tidy.add_argument("--prefix", default="", help="only propose for packs in this folder")
+    tidy.add_argument("--redo", action="store_true", help="also packs that already have an undecided proposal")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -305,4 +377,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.root:
             parser.error("caption needs --watch or --root")
         return _caption_now(args.root, args.prefix, args.redo)
+    if args.cmd == "organize":
+        _exit_on_sigterm()
+        return _organize_now(args.root, args.prefix, args.redo)
     return _serve(args.host, args.port)
