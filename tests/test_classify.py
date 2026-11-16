@@ -16,6 +16,7 @@ from assetindex.classify import (
     parse_answer,
     picture,
     target_for,
+    unit_members,
 )
 from assetindex.embedding import EmbedError
 from assetindex.scanner import scan_root
@@ -178,6 +179,17 @@ def test_an_archive_without_a_sheet_is_shown_by_its_preview(library, settings, s
     content = server.requests[-1]["body"]["messages"][0]["content"]
     assert any(part.get("type") == "image_url" for part in content)  # the preview went along
     assert _caption(library, "2D/Ice Bundle.png") == ("一块蓝色的冰晶\n火焰、红色", "m")  # described on its own card
+
+
+def test_a_preview_in_a_preview_folder_is_the_archive_picture(library, settings, asset_root):
+    (asset_root / "2D" / "Frost.rar").write_bytes(b"not really a rar")
+    (asset_root / "2D" / "JPEG").mkdir()
+    Image.new("RGB", (32, 32), (0, 0, 255)).save(asset_root / "2D" / "JPEG" / "Frost.jpg")
+    scan_root(library, "art", asset_root)
+
+    assert unit_members(library, "art", "2D/Frost.rar") == ["2D/Frost.rar", "2D/JPEG/Frost.jpg"]
+    jpeg = picture(library, settings, "art", "2D/Frost.rar", is_dir=False)
+    assert Image.open(io.BytesIO(jpeg)).getpixel((10, 10))[2] > 200  # the blue preview
 
 
 def test_unusable_answer_is_an_item_problem(library, settings, server):

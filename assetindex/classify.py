@@ -24,7 +24,7 @@ from assetindex.embed_stage import BACKGROUND, JPEG_QUALITY, _has_image, card_jp
 from assetindex.embedding import EmbedError
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.thumbs import file_thumb_path, open_image, sheet_image, sheet_path
-from assetindex.units import pair_companions
+from assetindex.units import folder_companions
 
 # The library layout (after the Unity Asset Store's categories). Engine is not a folder:
 # a Unity character pack is a character pack; the engine shows as a badge.
@@ -83,20 +83,26 @@ def under(path: str) -> tuple[str, str]:
 
 def unit_members(conn: sqlite3.Connection, root: str, path: str) -> list[str]:
     """A file unit's files: the file, then its companions (other volumes, a same-name
-    preview), paired as assetindex.units pairs them."""
+    preview here or in a preview folder below), paired as assetindex.units pairs them."""
     folder, _, name = path.rpartition("/")
-    if folder:
-        low, high = under(folder)
-        rows = conn.execute(
-            "SELECT rel_path FROM files WHERE root = ? AND rel_path >= ? AND rel_path < ?"
-            " AND instr(substr(rel_path, ?), '/') = 0",
-            (root, low, high, len(low) + 1),
-        )
-    else:
-        rows = conn.execute("SELECT rel_path FROM files WHERE root = ? AND instr(rel_path, '/') = 0", (root,))
     prefix = folder + "/" if folder else ""
-    names = [r[0][len(prefix) :] for r in rows]
-    return [path, *sorted(prefix + n for n, main in pair_companions(names).items() if main == name)]
+    low, high = under(folder) if folder else ("", "\U0010ffff")
+    here: list[str] = []
+    below: dict[str, list[str]] = {}
+    deep: set[str] = set()  # subfolders with subfolders: never preview folders
+    rows = conn.execute("SELECT rel_path FROM files WHERE root = ? AND rel_path >= ? AND rel_path < ?", (root, low, high))
+    for (rel_path,) in rows:
+        rest = rel_path[len(prefix) :]
+        sub, slash, tail = rest.partition("/")
+        if not slash:
+            here.append(rest)
+        elif "/" in tail:
+            deep.add(sub)
+        else:
+            below.setdefault(sub, []).append(tail)
+    below = {sub: names for sub, names in below.items() if sub not in deep}
+    pairs = folder_companions(here, below)
+    return [path, *sorted(prefix + rel for rel, main in pairs.items() if main == name)]
 
 
 def _unit_rows(conn: sqlite3.Connection, root: str, path: str, is_dir: bool) -> list[sqlite3.Row]:

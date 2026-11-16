@@ -1,7 +1,8 @@
 """Split a root into units ("packs"): the things the organizer proposes to move.
 
 Invariant: a unit is one directory, or one file together with its companions (the other
-volumes of a split archive, a same-name preview image or readme next to an archive).
+volumes of a split archive, a same-name preview image or readme next to an archive, or in
+a subfolder that holds nothing but such previews, like PM895/JPEG/<pack>.jpg).
 Units never nest, and every indexed file belongs to exactly one unit. Moving a unit is
 then a rename or two, and a pack (a downloaded asset pack, a game's art dump) always
 stays together.
@@ -69,8 +70,11 @@ class Layout:
         depth = 0
         while depth < len(parts) - 1 and "/".join(parts[: depth + 1]) in self.opened:
             depth += 1
+        main = self.companions.get(rel_path)
+        if main is not None:
+            return main, False
         if depth == len(parts) - 1:  # a file directly in an opened folder (or the root)
-            return self.companions.get(rel_path, rel_path), False
+            return rel_path, False
         return "/".join(parts[: depth + 1]), True
 
 
@@ -123,6 +127,25 @@ def pair_companions(names: Iterable[str]) -> dict[str, str]:
             )
         if stem is not None:
             pairs[name] = main[stem]
+    return pairs
+
+
+def folder_companions(here: list[str], below: Mapping[str, list[str]]) -> dict[str, str]:
+    """One opened folder's companions, paths relative to it: files here that go with an
+    archive here, and every file of a preview folder. `below` maps the folder's direct
+    subfolders that have no subfolders of their own to their file names; one whose files
+    are all previews or notes of archives here ("JPEG/(1)_x.jpg" for "(1)_x.zip") is a
+    preview folder."""
+    pairs = pair_companions(here)
+    archives = [name for name in here if archive_stem(name) is not None]
+    if not archives:
+        return pairs
+    for sub, names in below.items():
+        if not names or any(name.rpartition(".")[2].lower() not in NOTE_EXTS for name in names):
+            continue
+        matched = pair_companions([*archives, *names])
+        if all(name in matched for name in names):
+            pairs.update({f"{sub}/{name}": matched[name] for name in names})
     return pairs
 
 
@@ -195,7 +218,11 @@ def layout(paths: Iterable[str], splits: Iterable[str] = (), joins: Iterable[str
     companions = {}
     for folder in opened | {""}:
         prefix = folder + "/" if folder else ""
-        for name, main in pair_companions(files.get(folder, ())).items():
+        below = {
+            sub.rpartition("/")[2]: files.get(sub, [])
+            for sub in subdirs.get(folder, ()) if sub not in opened and not subdirs.get(sub)
+        }
+        for name, main in folder_companions(files.get(folder, []), below).items():
             companions[prefix + name] = prefix + main
     return Layout(frozenset(opened), companions)
 

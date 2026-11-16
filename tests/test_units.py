@@ -118,3 +118,14 @@ def test_only_previews_and_notes_pair_by_prefix_and_the_closest_name_wins():
 def test_joining_a_deep_folder_keeps_its_parent_open():
     files = [("Stuff/Inbox/Deep/a.rar", 1), ("Stuff/Inbox/Deep/bb.rar", 1), ("Stuff/Inbox/Deep/ccc.rar", 1)]
     assert {u.path for u in compute_units(files, joins=["Stuff/Inbox/Deep"])} == {"Stuff/Inbox/Deep"}
+
+
+def test_a_folder_of_previews_goes_with_the_archives_above_it():
+    files = [
+        ("Packs/(1)_Icons.zip", 10), ("Packs/(2)_Icons.zip", 10), ("Packs/Swords.zip", 10),
+        ("Packs/JPEG/(1)_Icons.jpg", 1), ("Packs/JPEG/(2)_Icons.jpg", 1), ("Packs/JPEG/Swords.jpg", 1),
+        ("Packs/Mixed/(1)_Icons.jpg", 1), ("Packs/Mixed/hero.png", 1),  # not all previews: a pack of its own
+    ]
+    units = {u.path: u for u in compute_units(files)}
+    assert units["Packs/(1)_Icons.zip"].files == 2 and units["Packs/Swords.zip"].files == 2
+    assert "Packs/JPEG" not in units and units["Packs/Mixed"].files == 2
