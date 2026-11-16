@@ -17,55 +17,55 @@
 </head>
 <body>
   <header class="bar">
-    <h1>素材库</h1>
-    <input id="q" type="search" placeholder="搜索文件名或路径，空格分隔多个词" autocomplete="off" autofocus>
-    <select id="kind" aria-label="类型">
-      <option value="">全部类型</option>
-      <option value="image">图片</option>
-      <option value="audio">音频</option>
-      <option value="video">视频</option>
-      <option value="model">模型</option>
-      <option value="archive">压缩包</option>
-      <option value="unreal">Unreal</option>
-      <option value="other">其他</option>
-    </select>
-    <label id="semantic-toggle" class="toggle" title="按意思找：可以用中文描述画面或用途" hidden>
-      <input id="semantic" type="checkbox"> 按描述搜
-    </label>
-    <button id="settings-btn" class="btn secondary" type="button">设置</button>
+    <div class="bar-main">
+      <h1>素材库</h1>
+      <input id="q" type="search" placeholder="搜索文件名或路径，空格分隔多个词" autocomplete="off" autofocus>
+      <label id="semantic-toggle" class="toggle" title="按意思找：可以用中文描述画面或用途" hidden>
+        <input id="semantic" type="checkbox"> 按描述搜
+      </label>
+      <button id="settings-btn" class="btn secondary" type="button">设置</button>
+    </div>
+    <nav id="kinds" class="kinds" aria-label="按类型筛选"></nav>
   </header>
-  <p id="stats" class="stats"></p>
   <section class="tasks" aria-label="任务">
     <div id="task-scan" class="task">
       <span class="task-dot" aria-hidden="true"></span>
       <span class="task-name">扫描</span>
       <span id="scan-status" class="task-text" aria-live="polite"></span>
       <progress id="scan-task-bar" class="task-bar" max="1" value="0" hidden></progress>
-      <button id="scan" class="link-btn" type="button" title="NAS 上加了新素材后，点这里马上重新扫描">立即扫描</button>
-      <button id="scan-stop" class="link-btn" type="button" hidden>停止</button>
+      <span class="task-actions">
+        <button id="scan" class="link-btn" type="button" title="NAS 上加了新素材后，点这里马上重新扫描">立即扫描</button>
+        <button id="scan-stop" class="link-btn" type="button" hidden>停止</button>
+      </span>
     </div>
     <div id="task-caption" class="task">
       <span class="task-dot" aria-hidden="true"></span>
       <span class="task-name">看图描述</span>
       <span id="caption-task-text" class="task-text" aria-live="polite"></span>
       <progress id="caption-task-bar" class="task-bar" max="1" value="0" hidden></progress>
-      <button id="caption-task-stop" class="link-btn" type="button" hidden>停止</button>
-      <button id="caption-task-open" class="link-btn" type="button">打开</button>
+      <span class="task-actions">
+        <button id="caption-task-stop" class="link-btn" type="button" hidden>停止</button>
+        <button id="caption-task-open" class="link-btn" type="button">打开</button>
+      </span>
     </div>
     <div id="task-update" class="task">
       <span class="task-dot" aria-hidden="true"></span>
       <span class="task-name">更新</span>
       <span id="update-task-text" class="task-text"></span>
-      <button id="update-check" class="link-btn" type="button" hidden>检查</button>
-      <button id="update-run" class="link-btn" type="button" hidden>更新</button>
-      <button id="update-stop" class="link-btn" type="button" hidden>停止</button>
+      <span class="task-actions">
+        <button id="update-check" class="link-btn" type="button" hidden>检查</button>
+        <button id="update-run" class="link-btn" type="button" hidden>更新</button>
+        <button id="update-stop" class="link-btn" type="button" hidden>停止</button>
+      </span>
     </div>
     <div id="task-organize" class="task">
       <span class="task-dot" aria-hidden="true"></span>
       <span class="task-name">整理</span>
       <span id="organize-task-text" class="task-text"></span>
-      <button id="organize-task-stop" class="link-btn" type="button" hidden>停止</button>
-      <a class="link-btn" href="/organize.html">打开</a>
+      <span class="task-actions">
+        <button id="organize-task-stop" class="link-btn" type="button" hidden>停止</button>
+        <a class="link-btn" href="/organize.html">打开</a>
+      </span>
     </div>
   </section>
   <p id="summary" class="summary"></p>

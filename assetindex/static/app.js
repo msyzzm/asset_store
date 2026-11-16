@@ -162,10 +162,14 @@ function basename(path) {
   return path.slice(path.lastIndexOf('/') + 1);
 }
 
-function sizeLine(item) {
-  const parts = [KIND_LABELS[item.kind] ?? item.kind, formatSize(item.size)];
-  if (item.entry_count) parts.push(`${item.entry_count.toLocaleString('zh-CN')} 个文件`);
-  return parts.join(' · ');
+// Format, size, and for an archive how many files it holds: "ZIP  39.0 MB      688 个文件".
+function metaLine(item) {
+  const parts = [
+    el('span', { className: 'ext-tag', text: item.ext || KIND_LABELS[item.kind] || '' }),
+    el('span', { className: 'num', text: formatSize(item.size) }),
+  ];
+  if (item.entry_count) parts.push(el('span', { className: 'count', text: `${item.entry_count.toLocaleString('zh-CN')} 个文件` }));
+  return el('div', { className: 'meta' }, parts);
 }
 
 function card(item) {
@@ -180,7 +184,7 @@ function card(item) {
     thumbBox,
     el('div', { className: 'name', text: item.name }),
     el('div', { className: 'path', text: `${item.root}:/${dirname(item.rel_path)}` }),
-    el('div', { className: 'size', text: sizeLine(item) }),
+    metaLine(item),
     ...hits,
   ]);
   node.addEventListener('click', () => openViewer(item));
@@ -233,7 +237,6 @@ function syncUrl() {
 
 function search() {
   state.q = $('q').value.trim();
-  state.kind = $('kind').value;
   // Hide "more" until the new results land, or a click would page the new query onto the old grid.
   state.offset = 0;
   $('more').hidden = true;
@@ -464,17 +467,45 @@ async function copyPath(text) {
   }
 }
 
+// The library by kind, biggest first; each count is also the filter for that kind.
+function kindButton(kind, label, count) {
+  const button = el('button', { className: 'kind', type: 'button', 'aria-pressed': String(state.kind === kind) }, [
+    el('span', { text: label }),
+    ...(count == null ? [] : [el('span', { className: 'num', text: count.toLocaleString('zh-CN') })]),
+  ]);
+  button.dataset.kind = kind;
+  button.addEventListener('click', () => {
+    if (state.kind === kind) return;
+    state.kind = kind;
+    $('kinds').querySelectorAll('.kind').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.kind === kind)));
+    search();
+  });
+  return button;
+}
+
 async function loadStats() {
   try {
     const resp = await fetch('/api/stats');
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const stats = await resp.json();
-    $('stats').textContent = Object.entries(stats)
-      .sort((a, b) => b[1] - a[1])
-      .map(([kind, n]) => `${KIND_LABELS[kind] ?? kind} ${n.toLocaleString('zh-CN')}`)
-      .join(' · ');
+    const kinds = Object.entries(stats).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+    if (state.kind && !kinds.some(([kind]) => kind === state.kind)) kinds.push([state.kind, 0]);  // from the URL
+    // Rebuilt after every scan: keep keyboard focus on the same kind.
+    const focused = $('kinds').contains(document.activeElement) ? document.activeElement.dataset.kind : null;
+    $('kinds').replaceChildren(
+      kindButton('', '全部'),
+      ...kinds.map(([kind, n]) => kindButton(kind, KIND_LABELS[kind] ?? kind, n)),
+    );
+    if (focused != null) $('kinds').querySelector(`.kind[data-kind="${CSS.escape(focused)}"]`)?.focus();
   } catch (err) {
-    $('stats').textContent = `统计加载失败：${err.message}`;
+    // Keep the buttons already shown (the active filter stays visible); add the buttons
+    // a filter needs only if there are none yet.
+    $('kinds').querySelector('.error')?.remove();
+    if (!$('kinds').querySelector('.kind')) {
+      $('kinds').append(kindButton('', '全部'));
+      if (state.kind) $('kinds').append(kindButton(state.kind, KIND_LABELS[state.kind] ?? state.kind));
+    }
+    $('kinds').append(el('span', { className: 'error', text: `统计加载失败：${err.message}` }));
   }
 }
 
@@ -507,8 +538,8 @@ function duration(seconds) {
 
 function scanTimeText(status) {
   if (status.elapsed == null) return '';
-  const left = status.eta == null ? '' : ` · 这一步还要约 ${duration(status.eta)}`;
-  return ` · 已用 ${duration(status.elapsed)}${left}`;
+  const left = status.eta == null ? '' : `，这一步还要约 ${duration(status.eta)}`;
+  return `，已用 ${duration(status.elapsed)}${left}`;
 }
 
 function scanText(status) {
@@ -604,12 +635,11 @@ async function stopScan() {
 function init() {
   const params = new URLSearchParams(location.search);
   $('q').value = params.get('q') ?? '';
-  $('kind').value = params.get('kind') ?? '';
+  state.kind = params.get('kind') ?? '';
   state.mode = params.get('mode') === 'semantic' ? 'semantic' : 'text';
 
   let timer;
   $('q').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(search, DEBOUNCE_MS); });
-  $('kind').addEventListener('change', search);
   $('more').addEventListener('click', () => load(false));
   $('v-close').addEventListener('click', () => $('viewer').close());
   // Clearing the preview stops audio/video playback when the dialog closes.
