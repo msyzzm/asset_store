@@ -45,6 +45,8 @@
 .org-move-list li { margin: 2px 0; overflow-wrap: anywhere; }
 .org-move-list .link-btn { margin-left: 8px; }
 .org-move-path { color: var(--muted); }
+.org-move-error { margin: 4px 0 0; color: var(--danger); }
+.org-move-error:empty { display: none; }
 .org-move details { margin-top: 8px; }
 .org-move summary { cursor: pointer; }
 

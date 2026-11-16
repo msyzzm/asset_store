@@ -32,6 +32,7 @@ LOCK_WAIT_SECONDS = 2
 MIN_SCAN_GAP_SECONDS = 60
 # How soon the captioner notices a job started from the web UI.
 CAPTION_POLL_SECONDS = 3
+MOUNT_EVERY_SECONDS = 90
 # A running scan rewrites scan.status at most this often per step (plus at each new step).
 PROGRESS_SECONDS = 1.0
 
@@ -335,10 +336,16 @@ def _caption_watch() -> int:
 def _move_watch() -> int:
     """The mover service: waits for move jobs from the web UI."""
     settings = load_settings()
-    move_job.write_mount(settings.data_dir, {name: move_job.writable(path) for name, path in settings.roots.items()})
     log.info("mover waiting for move jobs from the web UI")
+    last_mount = 0.0
     try:
         while True:
+            if time.time() - last_mount > MOUNT_EVERY_SECONDS:  # also a heartbeat: the page knows a mover runs
+                try:
+                    move_job.write_mount(settings.data_dir, {n: move_job.writable(p) for n, p in settings.roots.items()})
+                except OSError as err:
+                    log.warning("cannot write move.mount: %r", err)
+                last_mount = time.time()
             try:
                 _move_once(settings)
             except Exception:
@@ -355,8 +362,11 @@ def _move_once(settings: Settings) -> bool:
     if not move_job.is_requested(data_dir):
         return False
     try:
-        with scan_lock(data_dir, wait_seconds=LOCK_WAIT_SECONDS), \
-                scan_lock(data_dir, wait_seconds=LOCK_WAIT_SECONDS, name=organize.LOCK_NAME):
+        # Its own lock (the page's "running"), then the model's, then the scan's without
+        # waiting: never hold a lock a scheduled scan needs while waiting for another.
+        with scan_lock(data_dir, wait_seconds=LOCK_WAIT_SECONDS, name=move_job.LOCK_NAME), \
+                scan_lock(data_dir, wait_seconds=LOCK_WAIT_SECONDS, name=organize.LOCK_NAME), \
+                scan_lock(data_dir):
             raw = move_job.take(data_dir)
             if raw is None:
                 return False

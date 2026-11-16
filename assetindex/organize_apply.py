@@ -178,7 +178,25 @@ class _Journal:
         self._f.close()
 
 
+_parsed: dict[Path, tuple[tuple[int, int], list[dict]]] = {}  # the page polls: parse a journal once per change
+
+
 def _records(path: Path) -> list[dict]:
+    try:
+        stat = path.stat()
+        key = (stat.st_size, stat.st_mtime_ns)
+    except OSError:
+        key = None
+    cached = _parsed.get(path)
+    if key is not None and cached is not None and cached[0] == key:
+        return cached[1]
+    records = _parse(path)
+    if key is not None:
+        _parsed[path] = (key, records)
+    return records
+
+
+def _parse(path: Path) -> list[dict]:
     records = []
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
@@ -473,6 +491,8 @@ def undo(
     root: str,
     journal_path: Path,
     move: Callable[[str, str, bool], None] = move_no_replace,
+    should_stop: Callable[[], bool] = lambda: False,
+    report: Callable[[int, int], None] = lambda done, total: None,
 ) -> ApplyResult:
     """Put back every pack the journal moved, newest first, as a proposal to confirm
     again. Only where all its files are where the move left them and their old places
@@ -487,6 +507,9 @@ def undo(
     restored, problems = 0, []
     try:
         for n, done in enumerate(sorted(todo, key=lambda t: -t.id)):
+            if should_stop():
+                return ApplyResult(restored, tuple(problems), stopped=True)
+            report(n, len(todo))
             back = tuple(Rename(s.dst, s.src, s.is_dir) for s in reversed(done.steps))
             if not all(os.path.lexists(base / s.src) and not os.path.lexists(base / s.dst) for s in back):
                 problems.append(Problem(done.unit, "文件已经不在移动后的位置，或者原来的位置被占了，没有撤销"))

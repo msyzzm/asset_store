@@ -104,3 +104,44 @@ def test_the_mover_runs_a_requested_job(env, monkeypatch):
     status = move_job.read_status(settings.data_dir)
     assert status.running is False and status.moved == 1 and (root / "02_3D/Props/剑.rar").exists()
     assert cli._move_once(settings) is False  # nothing asked
+
+
+def test_undo_only_on_the_root_the_run_moved_in(env, tmp_path):
+    conn, settings, _ = env
+    done = move_job.run(conn, settings, {"action": "apply", "root": "lib"}, move=fake_move)
+    other = Settings(roots={"lib": settings.roots["lib"], "art": tmp_path}, data_dir=settings.data_dir)
+    with pytest.raises(ValueError, match="不是在这个根目录"):
+        move_job.parse({"action": "undo", "root": "art", "journal": done.journal}, other)
+    with pytest.raises(ValueError):
+        move_job.parse({"action": "undo", "root": "lib", "journal": done.journal + "\n"}, other)
+
+
+def test_a_mover_that_stopped_writing_its_heartbeat_counts_as_gone(tmp_path):
+    move_job.write_mount(tmp_path, {"lib": True})
+    assert move_job.read_mount(tmp_path) == {"lib": True}
+    assert move_job.read_mount(tmp_path, now=move_job.time.time() + move_job.MOUNT_STALE_SECONDS + 1) is None
+
+
+def test_taking_a_job_marks_it_running_first_and_keeps_a_stop(tmp_path):
+    move_job.request(tmp_path, {"action": "undo", "root": "lib", "journal": "x"})
+    move_job.request_stop(tmp_path)  # pressed before the mover took it: dropped with the request
+    assert move_job.take(tmp_path) is None
+    move_job.request(tmp_path, {"action": "apply", "root": "lib"})
+    (tmp_path / move_job.STOP_NAME).touch()  # pressed just as the mover takes it
+
+    assert move_job.take(tmp_path) == {"action": "apply", "root": "lib"}
+
+    assert move_job.read_status(tmp_path).running is True and move_job.stop_requested(tmp_path)
+
+
+def test_a_journal_of_an_unknown_root_never_borrows_another_root(env):
+    conn, settings, root = env
+    journal = settings.data_dir / "moves" / "20260101-000000.jsonl"
+    journal.parent.mkdir(parents=True)
+    journal.write_text('{"op": "start", "root": "gone"}\n{"op": "begin", "txn": 1, "kind": "move", "unit": "UE/道具/Bow.rar",'
+                       ' "new_unit": "x.rar", "target": "x.rar", "status": "accepted", "steps": [["UE/道具/Bow.rar", "x.rar", false]]}\n',
+                       encoding="utf-8")
+
+    done = move_job.run(conn, settings, {"action": "recover", "root": "lib"}, move=fake_move)
+
+    assert done.error is None and (root / "UE/道具/Bow.rar").exists()  # left alone, and not blocking

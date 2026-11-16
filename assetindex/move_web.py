@@ -19,7 +19,7 @@ PLAN_SAMPLE = 200  # moves listed on the page; the count covers all
 
 def move_state(data_dir) -> dict:
     status = move_job.read_status(data_dir)
-    if status.running and not is_scan_running(data_dir):  # the mover holds the scan lock while it runs
+    if status.running and not is_scan_running(data_dir, move_job.LOCK_NAME):  # held for the whole job
         status = replace(status, running=False, error=status.error or "中途断了（mover 被停止或重启）：再点一次会先收尾")
     requested = move_job.is_requested(data_dir)
     busy = is_scan_running(data_dir) or is_scan_running(data_dir, organize.LOCK_NAME)

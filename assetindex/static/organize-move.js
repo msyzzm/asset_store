@@ -42,7 +42,7 @@ function renderMoveState(data) {
   $('m-mount').textContent = mountText(data.mount);
   $('m-status').textContent = moveJobText(job);
   $('m-job-problems').replaceChildren(...problemList(job.problems ?? []));
-  $('m-stop').hidden = !busy;
+  $('m-stop').hidden = !busy || job.action === 'recover';  // settling cannot be stopped halfway
   $('m-start').hidden = busy;
   $('m-start').disabled = !writable || !move.plan?.moves;
   $('m-recover').hidden = !data.unsettled || busy;
@@ -75,8 +75,10 @@ async function refreshMoves() {
   try {
     const data = await api('/api/organize/moves');
     if (seq !== move.seq) return;
+    const finished = move.wasBusy && !(data.job.running || data.job.requested);
+    if (finished) { move.plan = null; $('m-plan-view').hidden = true; }  // things moved: the plan is old
     busy = renderMoveState(data);
-    if (move.wasBusy && !busy) { move.plan = null; $('m-plan-view').hidden = true; afterChange(); }  // things moved
+    if (finished) afterChange();
     move.wasBusy = busy;
   } catch (err) {
     if (seq !== move.seq) return;
@@ -114,21 +116,35 @@ async function showPlan() {
 
 async function startMove(body, question) {
   if (question && !window.confirm(question)) return;
+  $('m-error').textContent = '';
   try {
     await post('/api/organize/moves', body);
   } catch (err) {
-    $('m-status').textContent = `没能开始：${err.message}`;
+    $('m-error').textContent = `没能开始：${err.message}`;  // its own line: the status poll does not overwrite it
   }
   refreshMoves();
 }
 
+async function startApply() {
+  $('m-start').disabled = true;
+  try {  // the plan as it is now: proposals may have been confirmed since it was shown
+    const plan = await api(`/api/organize/moves/plan?${new URLSearchParams({ root: view.root })}`);
+    if (!plan.moves) { $('m-error').textContent = '现在没有可以移动的包。'; return; }
+    await startMove({ action: 'apply', root: view.root },
+      `把 ${plan.moves} 个已确认的包（${plan.files} 个文件）移动到分类文件夹？每一步都有记录，之后可以整次撤销。`);
+  } catch (err) {
+    $('m-error').textContent = `没能开始：${err.message}`;
+  } finally {
+    if (move.state) renderMoveState(move.state);
+  }
+}
+
 function initMoves() {
   $('m-plan').addEventListener('click', showPlan);
-  $('m-start').addEventListener('click', () => startMove({ action: 'apply', root: view.root },
-    `把 ${move.plan?.moves ?? 0} 个已确认的包（${move.plan?.files ?? 0} 个文件）移动到分类文件夹？每一步都有记录，之后可以整次撤销。`));
+  $('m-start').addEventListener('click', startApply);
   $('m-recover').addEventListener('click', () => startMove({ action: 'recover', root: view.root }));
   $('m-stop').addEventListener('click', async () => {
-    try { await post('/api/organize/moves/stop', {}); } catch (err) { $('m-status').textContent = `没能停止：${err.message}`; }
+    try { await post('/api/organize/moves/stop', {}); } catch (err) { $('m-error').textContent = `没能停止：${err.message}`; }
     refreshMoves();
   });
   $('o-form').root.addEventListener('change', () => { move.plan = null; $('m-plan-view').hidden = true; refreshMoves(); });

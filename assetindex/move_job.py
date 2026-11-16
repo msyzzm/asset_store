@@ -29,9 +29,12 @@ log = logging.getLogger(__name__)
 REQUEST_NAME = "move.request"
 STOP_NAME = "move.stop"
 STATUS_NAME = "move.status"
+LOCK_NAME = "move.lock"  # held by the mover for a whole job: "running" means this lock is held
 ACTIONS = ("apply", "undo", "recover")
 MAX_PROBLEMS = 200  # shown on the page; the journal has every detail
-_JOURNAL_NAME = re.compile(r"^[0-9]{8}-[0-9]{6}\.jsonl$")
+MAX_HISTORY = 50
+MOUNT_STALE_SECONDS = 300  # the mover refreshes move.mount every ~90 s; older: it is not running
+_JOURNAL_NAME = re.compile(r"[0-9]{8}-[0-9]{6}\.jsonl")
 
 
 @dataclass(frozen=True)
@@ -68,14 +71,19 @@ def write_mount(data_dir: Path, roots: dict[str, bool]) -> None:
     write_json_atomic(data_dir / MOUNT_NAME, {"roots": roots, "at": time.time()})
 
 
-def read_mount(data_dir: Path) -> dict[str, bool] | None:
-    """None: no mover has started (not deployed)."""
+def read_mount(data_dir: Path, now: float | None = None) -> dict[str, bool] | None:
+    """Which roots the mover may write; None if no mover runs (not deployed, stopped)."""
     try:
         raw = json.loads((data_dir / MOUNT_NAME).read_text(encoding="utf-8"))
-        roots = raw.get("roots") if isinstance(raw, dict) else None
-        return {k: v for k, v in roots.items() if isinstance(v, bool)} if isinstance(roots, dict) else None
     except (OSError, ValueError):
         return None
+    roots = raw.get("roots") if isinstance(raw, dict) else None
+    at = raw.get("at") if isinstance(raw, dict) else None
+    if not isinstance(roots, dict) or not isinstance(at, (int, float)):
+        return None
+    if (time.time() if now is None else now) - at > MOUNT_STALE_SECONDS:
+        return None
+    return {k: v for k, v in roots.items() if isinstance(v, bool)}
 
 
 def request(data_dir: Path, raw: dict) -> None:
@@ -84,6 +92,9 @@ def request(data_dir: Path, raw: dict) -> None:
 
 
 def take(data_dir: Path) -> dict | None:
+    """The requested job, marked running before the request goes, so the page never
+    sees a moment with neither (and accepts a second job). A stop pressed meanwhile
+    stays: request() clears stale ones."""
     path = data_dir / REQUEST_NAME
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -91,8 +102,9 @@ def take(data_dir: Path) -> dict | None:
         return None
     except (OSError, ValueError):
         raw = None
+    action = raw.get("action") if isinstance(raw, dict) and raw.get("action") in ACTIONS else None
+    write_status(data_dir, MoveStatus(running=True, action=action, started=time.time()))
     path.unlink(missing_ok=True)
-    (data_dir / STOP_NAME).unlink(missing_ok=True)
     return raw if isinstance(raw, dict) else None
 
 
@@ -133,10 +145,13 @@ def parse(raw, settings: Settings) -> tuple[str, str, str | None]:
     if not isinstance(root, str) or root not in settings.roots:
         raise ValueError("没有这个根目录")
     if action == "undo":
-        if not isinstance(journal, str) or not _JOURNAL_NAME.match(journal):
+        if not isinstance(journal, str) or not _JOURNAL_NAME.fullmatch(journal):
             raise ValueError("要撤销哪一次？")
-        if not (settings.data_dir / organize_apply.JOURNAL_DIR / journal).is_file():
+        path = settings.data_dir / organize_apply.JOURNAL_DIR / journal
+        if not path.is_file():
             raise ValueError("没有这次移动的记录")
+        if organize_apply.journal_root(path) != root:
+            raise ValueError("这次移动不是在这个根目录里做的")
     elif journal is not None:
         raise ValueError("请求格式不对")
     return action, root, journal
@@ -144,7 +159,8 @@ def parse(raw, settings: Settings) -> tuple[str, str, str | None]:
 
 def history(data_dir: Path) -> list[dict]:
     """Past runs, newest first: what each moved and whether it can still be undone."""
-    return [{"journal": j.name, **organize_apply.summary(j)} for j in reversed(organize_apply.journals(data_dir))]
+    recent = list(reversed(organize_apply.journals(data_dir)))[:MAX_HISTORY]
+    return [{"journal": j.name, **organize_apply.summary(j)} for j in recent]
 
 
 def _problems(items) -> list[dict]:
@@ -170,7 +186,10 @@ def run(
     report(status)
     left = []  # first, whatever a crash left open, in every run
     for journal in organize_apply.unsettled(settings.data_dir):
-        journal_root = organize_apply.journal_root(journal) or root
+        journal_root = organize_apply.journal_root(journal)
+        if journal_root not in settings.roots:  # unknown or unreadable: never guess which root it was
+            log.warning("move journal %s is for root %r, not configured: left as it is", journal.name, journal_root)
+            continue
         left += organize_apply.recover(conn, settings.roots[journal_root].resolve(), journal_root, journal, move=move)
     if left:
         return replace(status, running=False, finished=now(), problems=_problems(left),
@@ -179,22 +198,26 @@ def run(
         organize.refresh_units(conn, root)
         return replace(status, running=False, finished=now())
     journals = settings.data_dir / organize_apply.JOURNAL_DIR
+    progress = {"done": 0}
+
+    def step(done: int, total: int) -> None:
+        progress["done"] = done
+        report(replace(status, done=done, total=total))
+
     if action == "undo":
         journal = journals / journal_name
         status = replace(status, journal=journal_name)
-        result = organize_apply.undo(conn, base, root, journal, move=move)
+        result = organize_apply.undo(conn, base, root, journal, move=move, should_stop=should_stop, report=step)
     else:
         plan = build_plan(conn, root)
         journal = journals / f"{datetime.fromtimestamp(now()).strftime('%Y%m%d-%H%M%S')}.jsonl"
         status = replace(status, total=len(plan.moves), journal=journal.name, problems=_problems(plan.problems))
         report(status)
-        result = organize_apply.apply_plan(
-            conn, base, root, plan, journal, should_stop,
-            lambda done, total: report(replace(status, done=done, total=total)), move=move,
-        )
+        result = organize_apply.apply_plan(conn, base, root, plan, journal, should_stop, step, move=move)
     organize.refresh_units(conn, root)
     return replace(
-        status, running=False, finished=now(), moved=result.moved, done=status.total,
+        status, running=False, finished=now(), moved=result.moved,
+        done=progress["done"] if result.stopped else status.total,
         problems=(status.problems + _problems(result.problems))[:MAX_PROBLEMS],
         error=result.error, stopped=result.stopped,
     )
