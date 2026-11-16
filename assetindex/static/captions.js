@@ -1,6 +1,6 @@
 'use strict';
 
-// "看图描述" dialog: vision-model settings, a folder scope, start/stop and progress.
+// "看图描述" dialog: a folder scope, start/stop and progress (the model is set in "设置").
 // Loaded after app.js ($, el) and settings.js (PAGE_HEADERS, errorText).
 
 const CAPTION_POLL_MS = 3000;
@@ -28,42 +28,12 @@ function captionScope() {
 }
 
 function applyCaptionSettings(s) {
-  const form = $('c-form');
-  form.base_url.value = s.base_url;
-  form.model.value = s.model;
-  form.api_key.value = '';
-  form.api_key.placeholder = s.has_key ? '已保存（留空则不改）' : '没有可以不填';
   const roots = $('c-scope').root;
   if (roots.options.length !== s.roots.length) {
     roots.replaceChildren(...s.roots.map((r) => el('option', { value: r }, [r])));
   }
   $('c-start').disabled = !s.active;
-}
-
-async function saveCaptionSettings(event) {
-  event.preventDefault();
-  const form = $('c-form');
-  const update = { base_url: form.base_url.value.trim(), model: form.model.value.trim() };
-  if (form.api_key.value.trim()) update.api_key = form.api_key.value.trim();
-  $('c-setup-status').textContent = '保存中…';
-  try {
-    applyCaptionSettings(await captionFetch('/api/settings/caption', {
-      method: 'PUT', headers: PAGE_HEADERS, body: JSON.stringify(update),
-    }));
-    $('c-setup-status').textContent = '已保存。可以点「测试」看看效果。';
-  } catch (err) {
-    $('c-setup-status').textContent = `保存失败：${err.message}`;
-  }
-}
-
-async function testCaptionSettings() {
-  $('c-setup-status').textContent = '测试中，模型在看一张红色圆形的示例图…';
-  try {
-    const r = await captionFetch('/api/settings/caption/test', { method: 'POST', headers: PAGE_HEADERS });
-    $('c-setup-status').textContent = r.ok ? `成功（${r.seconds} 秒）：${r.text}` : `失败：${r.error}`;
-  } catch (err) {
-    $('c-setup-status').textContent = `测试失败：${err.message}`;
-  }
+  $('c-need-model').hidden = s.active;
 }
 
 async function refreshCount() {
@@ -198,13 +168,10 @@ async function stopCaptions() {
 }
 
 async function openCaptions() {
-  $('c-setup-status').textContent = '';
   try {
-    const s = await captionFetch('/api/settings/caption');
-    applyCaptionSettings(s);
-    $('c-setup').open = !s.active;  // only on open: saving must not fold away the test button
+    applyCaptionSettings(await captionFetch('/api/settings/caption'));
   } catch (err) {
-    $('c-setup-status').textContent = `设置读取失败：${err.message}`;
+    $('c-status').textContent = `设置读取失败：${err.message}`;
   }
   $('captions').showModal();
   refreshCount();
@@ -216,8 +183,6 @@ function initCaptions() {
   $('caption-task-open').addEventListener('click', openCaptions);
   $('caption-task-stop').addEventListener('click', stopCaptions);
   $('c-close').addEventListener('click', () => $('captions').close());
-  $('c-form').addEventListener('submit', saveCaptionSettings);
-  $('c-test').addEventListener('click', testCaptionSettings);
   $('c-scope').addEventListener('submit', startCaptions);
   $('c-scope').addEventListener('input', scopeChanged);
   $('c-stop').addEventListener('click', stopCaptions);

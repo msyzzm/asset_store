@@ -435,10 +435,6 @@ body {
 .btn:disabled { opacity: 0.5; cursor: default; }
 .bar .btn { height: 40px; white-space: nowrap; }
 
-.toggle { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; cursor: pointer; color: var(--muted); }
-.toggle:has(input:checked) { color: var(--text); }
-.toggle input { accent-color: var(--accent); }
-
 .settings { width: min(560px, calc(100vw - 32px)); }
 .settings-form { display: grid; gap: 12px; margin-top: 12px; }
 .settings-form label { display: grid; gap: 4px; }
@@ -458,14 +454,6 @@ body {
 .settings .hint { margin: 0; color: var(--muted); font-size: 13px; }
 .settings-status { min-height: 1.5em; margin: 12px 0 4px; overflow-wrap: anywhere; }
 
-.caption-setup {
-  margin-top: 12px;
-  padding: 8px 12px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-.caption-setup summary { cursor: pointer; font-weight: 600; }
 .caption-bar { width: 100%; margin-top: 12px; }
 
 .muted { color: var(--muted); }

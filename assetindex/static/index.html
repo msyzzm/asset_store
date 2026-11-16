@@ -20,10 +20,7 @@
     <div class="bar-main">
       <h1>素材库</h1>
       <input id="q" type="search" placeholder="搜索文件名或路径，空格分隔多个词" autocomplete="off" autofocus>
-      <label id="semantic-toggle" class="toggle" title="按意思找：可以用中文描述画面或用途" hidden>
-        <input id="semantic" type="checkbox"> 按描述搜
-      </label>
-      <button id="settings-btn" class="btn secondary" type="button">设置</button>
+      <button id="settings-btn" class="btn secondary" type="button" title="看图描述和素材整理用的模型">设置</button>
     </div>
     <nav id="kinds" class="kinds" aria-label="按类型筛选"></nav>
   </header>
@@ -87,26 +84,21 @@
 
   <dialog id="settings" class="viewer settings">
     <div class="viewer-head">
-      <h2>语义搜索</h2>
+      <h2>看图模型</h2>
       <button id="s-close" class="icon-btn" type="button" aria-label="关闭">✕</button>
     </div>
-    <p class="hint">接一个 OpenAI 兼容的 embeddings 接口后，可以用描述来搜，比如「蓝色的冰魔法特效」。扫描时会把每个素材的路径（和缩略图）发给这个接口。</p>
-    <form id="s-form" class="settings-form">
-      <label class="check"><input name="enabled" type="checkbox"> 启用</label>
-      <label>接口地址 <input name="base_url" placeholder="http://192.168.1.10:8000/v1" autocomplete="off"></label>
-      <label>模型名 <input name="model" autocomplete="off"></label>
+    <p class="hint">一个能看图的模型（OpenAI 兼容的 chat 接口，比如 Strata 上的 Qwen）。「看图描述」和「素材整理」都用它。</p>
+    <form id="c-form" class="settings-form">
+      <label>接口地址 <input name="base_url" placeholder="http://192.168.1.10:8080/v1" autocomplete="off"></label>
+      <label>模型名 <input name="model" placeholder="Strata 随便填，其他服务填真实模型名" autocomplete="off"></label>
       <label>API key <input name="api_key" type="password" autocomplete="new-password"></label>
-      <label id="s-clear-key" class="check" hidden><input name="clear_key" type="checkbox"> 删除已保存的 key</label>
       <p class="hint">key 只保存在服务器上，不会再显示出来。改了接口地址要重新填 key。</p>
-      <label>图片格式 <select name="image_format"></select></label>
-      <label>每批数量 <input name="batch_size" type="number" min="1" max="256" required></label>
       <div class="viewer-actions">
         <button class="btn" type="submit">保存</button>
-        <button id="s-test" class="btn secondary" type="button">测试连接</button>
+        <button id="c-test" class="btn secondary" type="button">测试（描述一张示例图）</button>
       </div>
     </form>
-    <p id="s-status" class="settings-status" aria-live="polite"></p>
-    <p id="s-progress" class="hint"></p>
+    <p id="c-setup-status" class="settings-status" aria-live="polite"></p>
   </dialog>
 
   <dialog id="captions" class="viewer settings">
@@ -114,21 +106,7 @@
       <h2>看图描述</h2>
       <button id="c-close" class="icon-btn" type="button" aria-label="关闭">✕</button>
     </div>
-    <p class="hint">让一个能看图的模型（OpenAI 兼容的 chat 接口，比如 Strata 上的 Qwen）给图片写一句中文描述和关键词。写好后，搜索框和「按描述搜」都能按画面内容找到图片。每张图要几秒，只在你点「开始」时才跑。</p>
-    <details id="c-setup" class="caption-setup">
-      <summary>接口设置</summary>
-      <form id="c-form" class="settings-form">
-        <label>接口地址 <input name="base_url" placeholder="http://192.168.1.10:8080/v1" autocomplete="off"></label>
-        <label>模型名 <input name="model" placeholder="Strata 随便填，其他服务填真实模型名" autocomplete="off"></label>
-        <label>API key <input name="api_key" type="password" autocomplete="new-password"></label>
-        <p class="hint">key 只保存在服务器上，不会再显示出来。改了接口地址要重新填 key。</p>
-        <div class="viewer-actions">
-          <button class="btn" type="submit">保存</button>
-          <button id="c-test" class="btn secondary" type="button">测试（描述一张示例图）</button>
-        </div>
-      </form>
-      <p id="c-setup-status" class="settings-status" aria-live="polite"></p>
-    </details>
+    <p class="hint">让一个能看图的模型（OpenAI 兼容的 chat 接口，比如 Strata 上的 Qwen）给图片写一句中文描述和关键词。写好后，搜索框能按画面内容找到图片。每张图要几秒，只在你点「开始」时才跑。模型在右上角「设置」里设置。</p>
     <form id="c-scope" class="settings-form">
       <label>根目录 <select name="root"></select></label>
       <label>文件夹（留空 = 整个根目录）
@@ -137,6 +115,7 @@
       </label>
       <label class="check"><input name="redo" type="checkbox"> 已经有描述的也重新描述</label>
       <p id="c-count" class="hint" aria-live="polite"></p>
+      <p id="c-need-model" class="hint" hidden>还没设置看图模型：先点右上角「设置」。</p>
       <div class="viewer-actions">
         <button id="c-start" class="btn" type="submit">开始</button>
         <button id="c-stop" class="btn secondary" type="button" hidden>停止</button>

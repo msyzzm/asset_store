@@ -92,7 +92,7 @@ function jobText(job) {
 function renderJob(data) {
   const job = data.job;
   const busy = job.running || job.requested;
-  $('o-status').textContent = data.model_ready ? jobText(job) : '要先在主页「看图描述」里设置好看图模型的接口，整理会用同一个模型。';
+  $('o-status').textContent = data.model_ready ? jobText(job) : '要先在主页右上角「设置」里设置好看图模型。';
   $('o-start').hidden = busy;
   $('o-start').disabled = !data.model_ready;
   $('o-stop').hidden = !busy;
