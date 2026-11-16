@@ -13,6 +13,7 @@ scan; `scan --retry-errors` sends them again.
 
 import io
 import sqlite3
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -59,8 +60,13 @@ def _readable(path: str) -> str:
 
 
 def card_text(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
-    """What a card is about, in words: its path, and for archives the names inside."""
+    """What a card is about, in words: its path, what its picture shows (if described),
+    and for archives the names inside. The description goes first so a long list of
+    names can't push it past MAX_TEXT_CHARS."""
     text = _readable(row["rel_path"])
+    caption = conn.execute("SELECT text FROM captions WHERE file_id = ? AND text IS NOT NULL", (row["id"],)).fetchone()
+    if caption:
+        text += " | 画面: " + " ".join(caption[0].split())
     if row["ext"] in LISTABLE_ARCHIVE_EXTS:
         names: dict[str, None] = {}  # ordered set
         entries = conn.execute(
@@ -110,10 +116,11 @@ def _picture(settings: Settings, row: sqlite3.Row) -> tuple[Path | io.BytesIO, t
     return io.BytesIO(encoded), IMAGE_BOX
 
 
-def card_jpeg(settings: Settings, row: sqlite3.Row) -> bytes:
-    source, box = _picture(settings, row)
+def card_jpeg(settings: Settings, row: sqlite3.Row, box: tuple[int, int] | None = None) -> bytes:
+    """The card's picture as a JPEG, at most `box` (default: small, for embedding)."""
+    source, default_box = _picture(settings, row)
     try:
-        image = open_image(source, box)
+        image = open_image(source, box or default_box)
     except Exception as err:  # Pillow raises many types for malformed files
         raise _Unusable(f"cannot decode image: {err!r}") from None
     if image.mode == "RGBA":
@@ -186,9 +193,28 @@ def _embed_chunk(chunk, embed: Callable[[list], list]) -> list[tuple[sqlite3.Row
         return results
 
 
+def _without_new_captions(conn: sqlite3.Connection, results: list, started: float) -> list:
+    """Drop text vectors of cards described (by the captioner, another process) while
+    they were being embedded: they hold the text from before the caption. Left out,
+    those cards stay pending and get embedded again, with the caption."""
+    ids = [row["id"] for row, _, _ in results]
+    if not ids:
+        return results
+    fresh = {
+        r[0]
+        for r in conn.execute(
+            f"SELECT file_id FROM captions WHERE text IS NOT NULL AND created >= ?"
+            f" AND file_id IN ({','.join('?' * len(ids))})",
+            (started, *ids),
+        )
+    }
+    return [r for r in results if r[0]["id"] not in fresh]
+
+
 def _run_source(conn, rows, source, config: EmbedConfig, prepare, embed) -> tuple[_Tally, str | None]:
     tally = _Tally()
     for start in range(0, len(rows), config.batch_size):
+        started = time.time()  # before card_text reads any caption
         chunk, unusable = [], []
         for row in rows[start : start + config.batch_size]:
             try:
@@ -199,6 +225,8 @@ def _run_source(conn, rows, source, config: EmbedConfig, prepare, embed) -> tupl
             results = _embed_chunk(chunk, embed) if chunk else []
         except EmbedError as err:
             return tally, f"{source}: {err}"
+        if source == TEXT:
+            results = _without_new_captions(conn, results, started)
         with conn:  # one short write per chunk: a stopped scanner resumes from here
             for row, vector, error in [*results, *unusable]:
                 if _save(conn, row, source, config.model, vector=vector, error=error):

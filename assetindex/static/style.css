@@ -318,6 +318,17 @@ body {
 .settings-status { min-height: 1.5em; margin: 12px 0 4px; overflow-wrap: anywhere; }
 .bar .btn { white-space: nowrap; }
 
+.viewer-meta dd { white-space: pre-line; }
+.caption-setup {
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.caption-setup summary { cursor: pointer; font-weight: 600; }
+.caption-bar { width: 100%; height: 8px; margin-top: 12px; accent-color: var(--accent); }
+
 .muted { color: var(--muted); }
 
 @media (max-width: 600px) {

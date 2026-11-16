@@ -33,6 +33,7 @@
       <input id="semantic" type="checkbox"> 按描述搜
     </label>
     <button id="scan" class="btn secondary" type="button" title="NAS 上加了新素材后，点这里马上重新扫描">扫描</button>
+    <button id="caption-btn" class="btn secondary" type="button" title="让看图模型给图片写描述，之后可以按画面内容搜">看图描述</button>
     <button id="settings-btn" class="btn secondary" type="button">设置</button>
   </header>
   <p id="stats" class="stats"></p>
@@ -78,7 +79,45 @@
     <p id="s-progress" class="hint"></p>
   </dialog>
 
+  <dialog id="captions" class="viewer settings">
+    <div class="viewer-head">
+      <h2>看图描述</h2>
+      <button id="c-close" class="icon-btn" type="button" aria-label="关闭">✕</button>
+    </div>
+    <p class="hint">让一个能看图的模型（OpenAI 兼容的 chat 接口，比如 Strata 上的 Qwen）给图片写一句中文描述和关键词。写好后，搜索框和「按描述搜」都能按画面内容找到图片。每张图要几秒，只在你点「开始」时才跑。</p>
+    <details id="c-setup" class="caption-setup">
+      <summary>接口设置</summary>
+      <form id="c-form" class="settings-form">
+        <label>接口地址 <input name="base_url" placeholder="http://192.168.1.10:8080/v1" autocomplete="off"></label>
+        <label>模型名 <input name="model" placeholder="Strata 随便填，其他服务填真实模型名" autocomplete="off"></label>
+        <label>API key <input name="api_key" type="password" autocomplete="new-password"></label>
+        <p class="hint">key 只保存在服务器上，不会再显示出来。改了接口地址要重新填 key。</p>
+        <div class="viewer-actions">
+          <button class="btn" type="submit">保存</button>
+          <button id="c-test" class="btn secondary" type="button">测试（描述一张示例图）</button>
+        </div>
+      </form>
+      <p id="c-setup-status" class="settings-status" aria-live="polite"></p>
+    </details>
+    <form id="c-scope" class="settings-form">
+      <label>根目录 <select name="root"></select></label>
+      <label>文件夹（留空 = 整个根目录）
+        <input name="prefix" list="c-folders" placeholder="例如 2DPixel/PM895" autocomplete="off">
+        <datalist id="c-folders"></datalist>
+      </label>
+      <label class="check"><input name="redo" type="checkbox"> 已经有描述的也重新描述</label>
+      <p id="c-count" class="hint" aria-live="polite"></p>
+      <div class="viewer-actions">
+        <button id="c-start" class="btn" type="submit">开始</button>
+        <button id="c-stop" class="btn secondary" type="button" hidden>停止</button>
+      </div>
+    </form>
+    <progress id="c-bar" class="caption-bar" max="1" value="0" hidden></progress>
+    <p id="c-status" class="settings-status" aria-live="polite"></p>
+  </dialog>
+
   <script src="app.js"></script>
   <script src="settings.js"></script>
+  <script src="captions.js"></script>
 </body>
 </html>

@@ -10,7 +10,7 @@ MAX_TERMS = 8  # each term is a separate LIKE subquery; cap the cost per request
 MAX_QUERY_LENGTH = 200
 FILE_COLUMNS = (
     "f.id, f.root, f.rel_path, f.name, f.ext, f.kind, f.size, f.mtime, f.seq_frames AS frames,"
-    " a.engine, a.engine_version, a.entry_count, a.preview_state AS sheet"
+    " a.engine, a.engine_version, a.entry_count, a.preview_state AS sheet, c.text AS caption"
 )
 # Hidden sequence members (seq_frames = 0) are represented by their head row.
 VISIBLE = "(f.seq_frames IS NULL OR f.seq_frames > 0)"
@@ -31,14 +31,18 @@ def parse_terms(query: str) -> list[str]:
 def _match(
     alias: str, terms: list[str], kind: str | None, with_entries: bool
 ) -> tuple[str, list[object]]:
-    """A term matches a file's own path, or (with_entries) any path inside it if it is an archive."""
-    own = f"{alias}.id IN (SELECT rowid FROM files_fts WHERE rel_path LIKE ?)"
+    """A term matches a file's own path or picture description, or (with_entries) any
+    path inside it if it is an archive."""
+    own = (
+        f"{alias}.id IN (SELECT rowid FROM files_fts WHERE rel_path LIKE ?)"
+        f" OR {alias}.id IN (SELECT rowid FROM captions_fts WHERE text LIKE ?)"
+    )
     inner = (
         f"{alias}.id IN (SELECT e.file_id FROM archive_entries e"
         " WHERE e.id IN (SELECT rowid FROM entries_fts WHERE path LIKE ?))"
     )
-    clause = f"({own} OR {inner})" if with_entries else own
-    per_term = 2 if with_entries else 1
+    clause = f"({own} OR {inner})" if with_entries else f"({own})"
+    per_term = 3 if with_entries else 2
     clauses = [clause for _ in terms]
     params: list[object] = [f"%{term}%" for term in terms for _ in range(per_term)]
     if kind:
@@ -90,6 +94,7 @@ def fetch_items(conn: sqlite3.Connection, ids: list[int], terms: list[str]) -> l
         return []
     rows = conn.execute(
         f"SELECT {FILE_COLUMNS} FROM files f LEFT JOIN archives a ON a.file_id = f.id"
+        " LEFT JOIN captions c ON c.file_id = f.id"
         f" WHERE f.id IN ({','.join('?' * len(ids))})",
         ids,
     ).fetchall()

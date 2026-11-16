@@ -56,6 +56,7 @@ class FakeEmbedServer:
         self.requests: list[dict] = []  # {"path", "headers", "body"}
         self.fail_status: int | None = None
         self.reject_images = False  # answer 400 to any request containing an image
+        self.chat_reply: str | None = None  # fixed chat answer instead of the colour-based one
         server = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -84,6 +85,8 @@ class FakeEmbedServer:
     def respond(self, path: str, body: dict) -> tuple[int, dict]:
         if self.fail_status:
             return self.fail_status, {"error": {"message": "fake failure"}}
+        if path == "/v1/chat/completions":
+            return self.chat(body)
         if path != "/v1/embeddings":
             return 404, {"error": {"message": "not found"}}
         if "messages" in body:
@@ -100,6 +103,18 @@ class FakeEmbedServer:
         data = [{"object": "embedding", "index": n, "embedding": _item_vector(i)} for n, i in enumerate(items)]
         # Out of order on purpose: clients must sort by index.
         return 200, {"object": "list", "data": list(reversed(data)), "model": body.get("model")}
+
+    def chat(self, body: dict) -> tuple[int, dict]:
+        """A vision chat model that "sees" colour: red pictures are fire, others are ice."""
+        if self.chat_reply is not None:
+            content = self.chat_reply
+        else:
+            parts = body["messages"][0]["content"]
+            url = next(p["image_url"]["url"] for p in parts if p.get("type") == "image_url")
+            red = image_vector(url)[1] > 0.5
+            content = "<think>看一下</think>一团红色的火焰特效\n火焰、红色、特效" if red else "一块蓝色的冰晶\n冰、蓝色"
+        message = {"role": "assistant", "content": content}
+        return 200, {"object": "chat.completion", "choices": [{"index": 0, "message": message}]}
 
     def __enter__(self):
         self.thread.start()

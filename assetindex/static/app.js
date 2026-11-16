@@ -173,7 +173,8 @@ function card(item) {
   const engine = engineLabel(item);
   if (engine) thumbBox.append(el('span', { className: `engine-badge ${item.engine}`, text: engine }));
   const hits = (item.hits ?? []).map((hit) => el('div', { className: 'hit', title: hit, text: `包内：${basename(hit)}` }));
-  const node = el('button', { className: 'card', type: 'button', title: item.rel_path }, [
+  const title = item.caption ? `${item.rel_path}\n${item.caption}` : item.rel_path;
+  const node = el('button', { className: 'card', type: 'button', title }, [
     thumbBox,
     el('div', { className: 'name', text: item.name }),
     el('div', { className: 'path', text: `${item.root}:/${dirname(item.rel_path)}` }),
@@ -373,6 +374,7 @@ function metaRows(item) {
     ['修改时间', new Date(item.mtime * 1000).toLocaleString('zh-CN')],
   ];
   if (isSequence(item)) rows.push(['序列', `${item.frames} 张（拖动滑块逐张查看，下载当前张）`]);
+  if (item.caption) rows.push(['画面描述', item.caption]);
   return rows.flatMap(([k, v]) => [el('dt', { text: k }), el('dd', { text: v })]);
 }
 

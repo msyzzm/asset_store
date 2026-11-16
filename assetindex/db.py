@@ -99,6 +99,33 @@ CREATE TABLE IF NOT EXISTS embeddings (
 CREATE TRIGGER IF NOT EXISTS files_ad_embeddings AFTER DELETE ON files BEGIN
     DELETE FROM embeddings WHERE file_id = old.id;
 END;
+-- What a vision model says a card's picture shows (see assetindex/caption_job.py).
+CREATE TABLE IF NOT EXISTS captions (
+    file_id INTEGER PRIMARY KEY,
+    model   TEXT    NOT NULL,
+    mtime   REAL    NOT NULL,  -- the file's mtime when described: a change means redo
+    text    TEXT,              -- NULL when describing failed
+    error   TEXT,
+    created REAL    NOT NULL
+);
+-- Write captions with INSERT ... ON CONFLICT DO UPDATE, not INSERT OR REPLACE: REPLACE
+-- skips delete triggers and would leave stale rows in this index.
+CREATE VIRTUAL TABLE IF NOT EXISTS captions_fts USING fts5(
+    text, content='captions', content_rowid='file_id', tokenize='trigram'
+);
+CREATE TRIGGER IF NOT EXISTS captions_ai AFTER INSERT ON captions BEGIN
+    INSERT INTO captions_fts(rowid, text) VALUES (new.file_id, new.text);
+END;
+CREATE TRIGGER IF NOT EXISTS captions_ad AFTER DELETE ON captions BEGIN
+    INSERT INTO captions_fts(captions_fts, rowid, text) VALUES ('delete', old.file_id, old.text);
+END;
+CREATE TRIGGER IF NOT EXISTS captions_au AFTER UPDATE ON captions BEGIN
+    INSERT INTO captions_fts(captions_fts, rowid, text) VALUES ('delete', old.file_id, old.text);
+    INSERT INTO captions_fts(rowid, text) VALUES (new.file_id, new.text);
+END;
+CREATE TRIGGER IF NOT EXISTS files_ad_captions AFTER DELETE ON files BEGIN
+    DELETE FROM captions WHERE file_id = old.id;
+END;
 -- Separate trigger so databases created before scan_attempts existed get it too.
 CREATE TRIGGER IF NOT EXISTS files_ad_attempts AFTER DELETE ON files BEGIN
     DELETE FROM scan_attempts WHERE file_id = old.id;  -- ids get reused

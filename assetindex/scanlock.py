@@ -39,25 +39,26 @@ def _try_lock(f) -> bool:
 
 
 @contextlib.contextmanager
-def scan_lock(data_dir: Path, wait_seconds: float = 0) -> Iterator[None]:
-    """Hold the scan lock. `wait_seconds` rides out the web server's momentary probe
-    (see is_scan_running); a real scan holds the lock far longer and still refuses us."""
+def scan_lock(data_dir: Path, wait_seconds: float = 0, name: str = LOCK_NAME) -> Iterator[None]:
+    """Hold the scan lock (or another job's lock, by file name). `wait_seconds` rides
+    out the web server's momentary probe (see is_scan_running); a real scan holds the
+    lock far longer and still refuses us."""
     data_dir.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + wait_seconds
-    with open(data_dir / LOCK_NAME, "a+b") as f:
+    with open(data_dir / name, "a+b") as f:
         f.seek(0)
         while not _try_lock(f):
             if time.monotonic() >= deadline:
-                raise ScanLocked(f"another scan is running (lock {data_dir / LOCK_NAME})")
+                raise ScanLocked(f"another job holds the lock {data_dir / name}")
             time.sleep(RETRY_SECONDS)
         yield  # closing the file releases the lock
 
 
-def is_scan_running(data_dir: Path) -> bool:
-    """True if some process holds the scan lock. Briefly takes the lock to find out,
+def is_scan_running(data_dir: Path, name: str = LOCK_NAME) -> bool:
+    """True if some process holds the lock. Briefly takes the lock to find out,
     which is why scanners wait a moment for it."""
     try:
-        with open(data_dir / LOCK_NAME, "rb") as f:  # never create it: the web side only looks
+        with open(data_dir / name, "rb") as f:  # never create it: the web side only looks
             return not _try_lock(f)
     except FileNotFoundError:
         return False

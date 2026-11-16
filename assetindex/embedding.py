@@ -77,7 +77,8 @@ def _forbidden_host(host: str) -> bool:
     return ip.is_link_local or ip.is_unspecified or ip.is_multicast
 
 
-def _check_url(url: str) -> str:
+def check_url(url: str) -> str:
+    """A typed-in API base address, normalised; ValueError if it is not one."""
     url = url.strip().rstrip("/")
     if not url:
         return ""
@@ -114,12 +115,26 @@ def _check_types(update: dict) -> None:
             raise ValueError(f"设置项 {name} 的类型不对")
 
 
+def next_key(update: dict, stored: str, same_address: bool) -> str:
+    """The API key after an update: an omitted key keeps the stored one only while the
+    address stays the same; "" clears it. ValueError if it can't go in a header."""
+    api_key = update.get("api_key")
+    if api_key is None:
+        api_key = stored if same_address else ""
+    api_key = api_key.strip()
+    if len(api_key) > MAX_KEY_LENGTH:
+        raise ValueError("API key 太长")
+    if not all(KEY_CHARS[0] <= c <= KEY_CHARS[1] for c in api_key):
+        raise ValueError("API key 只能包含英文字母、数字和符号，不能有空格或换行")
+    return api_key
+
+
 def apply_update(current: EmbedConfig, update: dict) -> EmbedConfig:
     """New settings from a partial update. An omitted key keeps the stored one, "" clears
     it, and a new address without a new key clears it too, so whoever can open the
     settings page can't redirect the stored key to a host of their choosing."""
     _check_types(update)
-    base_url = _check_url(update.get("base_url", current.base_url))
+    base_url = check_url(update.get("base_url", current.base_url))
     model = update.get("model", current.model).strip()
     if len(model) > MAX_MODEL_LENGTH:
         raise ValueError("模型名太长")
@@ -129,14 +144,7 @@ def apply_update(current: EmbedConfig, update: dict) -> EmbedConfig:
     batch_size = update.get("batch_size", current.batch_size)
     if not 1 <= batch_size <= MAX_BATCH:
         raise ValueError(f"每批数量要在 1 到 {MAX_BATCH} 之间")
-    api_key = update.get("api_key")
-    if api_key is None:
-        api_key = current.api_key if base_url == current.base_url else ""
-    api_key = api_key.strip()
-    if len(api_key) > MAX_KEY_LENGTH:
-        raise ValueError("API key 太长")
-    if not all(KEY_CHARS[0] <= c <= KEY_CHARS[1] for c in api_key):
-        raise ValueError("API key 只能包含英文字母、数字和符号，不能有空格或换行")
+    api_key = next_key(update, current.api_key, base_url == current.base_url)
 
     config = EmbedConfig(
         enabled=update.get("enabled", current.enabled),
@@ -160,14 +168,19 @@ def load_config(data_dir: Path) -> EmbedConfig:
         return EmbedConfig()
 
 
-def save_config(data_dir: Path, config: EmbedConfig) -> None:
+def save_private_json(data_dir: Path, name: str, data: dict) -> None:
+    """Write settings that hold an API key: owner-only, and atomically."""
     data_dir.mkdir(parents=True, exist_ok=True)
-    target = data_dir / CONFIG_NAME
-    tmp = target.with_name(f"{CONFIG_NAME}.{os.getpid()}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # holds the API key
+    target = data_dir / name
+    tmp = target.with_name(f"{name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(asdict(config), f)
+        json.dump(data, f)
     os.replace(tmp, target)
+
+
+def save_config(data_dir: Path, config: EmbedConfig) -> None:
+    save_private_json(data_dir, CONFIG_NAME, asdict(config))
 
 
 def public_view(config: EmbedConfig) -> dict:
@@ -246,34 +259,38 @@ def _vectors(body, expected: int) -> list[list[float]]:
     return vectors
 
 
+def post_json(url: str, api_key: str, body: dict, timeout: float):
+    """POST JSON to an OpenAI-compatible API and parse the answer. Every failure becomes
+    an EmbedError whose text is safe to show (never the key)."""
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    request = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
+    deadline = time.monotonic() + timeout
+    try:
+        with _opener.open(request, timeout=timeout) as resp:
+            raw = _read_limited(resp, MAX_RESPONSE_BYTES, deadline)
+    except urllib.error.HTTPError as err:
+        detail = _error_detail(err.read(MAX_ERROR_BYTES))
+        raise EmbedError(f"HTTP {err.code}" + (f": {detail}" if detail else ""), err.code) from None
+    except (urllib.error.URLError, OSError) as err:
+        raise EmbedError(f"连不上接口：{getattr(err, 'reason', err)}") from None
+    except (http.client.HTTPException, ValueError):
+        # Broken or truncated responses; ValueError's text could quote the auth header.
+        raise EmbedError("接口返回的内容不完整或不是 HTTP") from None
+    try:
+        return json.loads(raw)
+    except (ValueError, RecursionError):
+        raise EmbedError("返回内容不是 JSON") from None
+
+
 class EmbedClient:
     def __init__(self, config: EmbedConfig, timeout: float = DEFAULT_TIMEOUT_SECONDS):
         self.config = config
         self.timeout = timeout
 
     def _post(self, body: dict, expected: int) -> list[list[float]]:
-        headers = {"Content-Type": "application/json"}
-        if self.config.api_key:
-            headers["Authorization"] = f"Bearer {self.config.api_key}"
-        request = urllib.request.Request(
-            self.config.base_url + "/embeddings", data=json.dumps(body).encode(), headers=headers, method="POST"
-        )
-        deadline = time.monotonic() + self.timeout
-        try:
-            with _opener.open(request, timeout=self.timeout) as resp:
-                raw = _read_limited(resp, MAX_RESPONSE_BYTES, deadline)
-        except urllib.error.HTTPError as err:
-            detail = _error_detail(err.read(MAX_ERROR_BYTES))
-            raise EmbedError(f"HTTP {err.code}" + (f": {detail}" if detail else ""), err.code) from None
-        except (urllib.error.URLError, OSError) as err:
-            raise EmbedError(f"连不上接口：{getattr(err, 'reason', err)}") from None
-        except (http.client.HTTPException, ValueError):
-            # Broken or truncated responses; ValueError's text could quote the auth header.
-            raise EmbedError("接口返回的内容不完整或不是 HTTP") from None
-        try:
-            parsed = json.loads(raw)
-        except (ValueError, RecursionError):
-            raise EmbedError("返回内容不是 JSON") from None
+        parsed = post_json(self.config.base_url + "/embeddings", self.config.api_key, body, self.timeout)
         return _vectors(parsed, expected)
 
     def _batches(self, items: list) -> list[list]:

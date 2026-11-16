@@ -65,11 +65,15 @@ def wait_for_request(
         sleep(min(POLL_SECONDS, until - elapsed))
 
 
-def write_status(data_dir: Path, status: ScanStatus) -> None:
-    target = data_dir / STATUS_NAME
-    tmp = target.with_name(f"{STATUS_NAME}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(asdict(status)), encoding="utf-8")
+def write_json_atomic(target: Path, data: dict) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data), encoding="utf-8")
     os.replace(tmp, target)  # readers never see a half-written file
+
+
+def write_status(data_dir: Path, status: ScanStatus) -> None:
+    write_json_atomic(data_dir / STATUS_NAME, asdict(status))
 
 
 def _number_or_none(value) -> float | None:

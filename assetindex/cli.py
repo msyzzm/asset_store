@@ -8,10 +8,11 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
-from assetindex import attempts, scan_request
+from assetindex import attempts, caption_job, scan_request
 from assetindex.archive_index import index_archives
 from assetindex.archive_previews import build_previews
 from assetindex.cache_prune import prune_thumbs
+from assetindex.caption import load_config as load_caption_config
 from assetindex.check import run_checks
 from assetindex.config import Settings, load_settings
 from assetindex.db import connect
@@ -28,6 +29,8 @@ log = logging.getLogger("assetindex")
 LOCK_WAIT_SECONDS = 2
 # A web request never starts a scan sooner than this after the previous one ended.
 MIN_SCAN_GAP_SECONDS = 60
+# How soon the captioner notices a job started from the web UI.
+CAPTION_POLL_SECONDS = 3
 
 
 def _scan_one(
@@ -159,6 +162,91 @@ def _scan_every(only_root: str | None, retry_errors: bool, seconds: int) -> int:
         return 0
 
 
+def _run_caption(settings: Settings, raw) -> None:
+    """One describe-pictures job, holding the caption lock. Its progress goes to
+    caption.status for the web UI."""
+    data_dir = settings.data_dir
+
+    def report(status: caption_job.CaptionStatus) -> None:
+        try:
+            caption_job.write_status(data_dir, status)
+        except OSError as err:
+            log.warning("cannot write caption status: %r", err)
+
+    try:
+        scope = caption_job.parse_scope(raw, settings.roots)
+    except ValueError as err:
+        report(caption_job.CaptionStatus(error=f"范围不对：{err}", finished=time.time()))
+        return
+    config = load_caption_config(data_dir)
+    if not config.active:
+        report(caption_job.CaptionStatus(error="看图描述还没设置好接口", finished=time.time()))
+        return
+    log.info("describing pictures in %s/%s%s", scope.root, scope.prefix, " (redo)" if scope.redo else "")
+    # Show "running" before counting the pictures, so the web UI can't queue a second job meanwhile.
+    report(caption_job.CaptionStatus(running=True, root=scope.root, prefix=scope.prefix, started=time.time()))
+    conn = connect(settings.db_path)
+    try:
+        final = caption_job.run_job(
+            conn, settings, scope, config,
+            should_stop=lambda: caption_job.stop_requested(data_dir),
+            report=report,
+            after_batch=lambda: _embed(conn, settings, retry_errors=False),
+        )
+    except Exception as err:  # e.g. "database is locked": say so instead of "running" forever
+        log.exception("describing pictures failed")
+        report(caption_job.CaptionStatus(root=scope.root, prefix=scope.prefix, error=f"出错中断：{err!r}", finished=time.time()))
+        return
+    finally:
+        conn.close()
+    report(final)
+    log.info("described %d of %d pictures, %d failed%s", final.done, final.total, final.failed,
+             f"; stopped: {final.error}" if final.error else " (stopped from the web UI)" if final.stopped else "")
+
+
+def _caption_once(settings: Settings) -> bool:
+    """Run the job requested from the web UI, if any; True if one ran."""
+    if not caption_job.is_requested(settings.data_dir):
+        return False
+    try:
+        with scan_lock(settings.data_dir, wait_seconds=LOCK_WAIT_SECONDS, name=caption_job.LOCK_NAME):
+            raw = caption_job.take_job(settings.data_dir)
+            if raw is None:
+                return False
+            _run_caption(settings, raw)
+    except ScanLocked as err:
+        log.error("%s; not starting another", err)
+        return False
+    return True
+
+
+def _caption_watch() -> int:
+    """The captioner container: wait for jobs started from the web UI."""
+    settings = load_settings()
+    try:
+        while True:
+            try:
+                _caption_once(settings)
+            except Exception:
+                log.exception("caption job failed")
+            time.sleep(CAPTION_POLL_SECONDS)
+    except KeyboardInterrupt:
+        return 0
+
+
+def _caption_now(root: str, prefix: str, redo: bool) -> int:
+    settings = load_settings()
+    try:
+        with scan_lock(settings.data_dir, name=caption_job.LOCK_NAME):
+            (settings.data_dir / caption_job.STOP_NAME).unlink(missing_ok=True)  # a stale stop from the web UI
+            _run_caption(settings, {"root": root, "prefix": prefix, "redo": redo})
+    except ScanLocked as err:
+        log.error("%s; not starting another", err)
+        return 3
+    status = caption_job.read_status(settings.data_dir)
+    return 1 if status.error else 0
+
+
 def _positive_int(text: str) -> int:
     value = int(text)
     if value <= 0:
@@ -195,6 +283,11 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
     sub.add_parser("check", help="verify the deployment (roots, data dir, bsdtar, viewer files)")
+    describe = sub.add_parser("caption", help="describe pictures with the vision model set up in the web UI")
+    describe.add_argument("--watch", action="store_true", help="wait for jobs started from the web UI")
+    describe.add_argument("--root", help="describe pictures under this root now")
+    describe.add_argument("--prefix", default="", help="only this folder under the root")
+    describe.add_argument("--redo", action="store_true", help="also pictures that already have a description")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -205,4 +298,11 @@ def main(argv: list[str] | None = None) -> int:
         return _scan(args.root, args.retry_errors)
     if args.cmd == "check":
         return _check()
+    if args.cmd == "caption":
+        _exit_on_sigterm()
+        if args.watch:
+            return _caption_watch()
+        if not args.root:
+            parser.error("caption needs --watch or --root")
+        return _caption_now(args.root, args.prefix, args.redo)
     return _serve(args.host, args.port)

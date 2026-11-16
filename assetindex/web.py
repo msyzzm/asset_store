@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from assetindex.archive_queries import list_entries
+from assetindex.caption_web import add_caption_routes
 from assetindex.config import Settings
 from assetindex.db import connect
 from assetindex.embed_stage import progress
@@ -265,6 +266,11 @@ def create_app(settings: Settings) -> FastAPI:
         with slot(probe_busy, PROBE_SLOTS, "上一次测试还没结束"):
             return probe(config)
 
+    caption_probe_busy = _Busy()
+    add_caption_routes(
+        app, settings, get_conn, page_request, lambda: slot(caption_probe_busy, PROBE_SLOTS, "上一次测试还没结束")
+    )
+
     @app.get("/api/stats")
     def api_stats(conn: sqlite3.Connection = Depends(get_conn)) -> dict[str, int]:
         rows = conn.execute("SELECT kind, COUNT(*) AS n FROM files GROUP BY kind")
@@ -294,7 +300,11 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.get("/api/files/{file_id}")
     def api_file(file_id: FileId, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
-        row = conn.execute("SELECT * FROM files WHERE id = ?", (file_id,)).fetchone()
+        row = conn.execute(
+            "SELECT f.*, c.text AS caption, c.error AS caption_error"
+            " FROM files f LEFT JOIN captions c ON c.file_id = f.id WHERE f.id = ?",
+            (file_id,),
+        ).fetchone()
         if row is None:
             raise HTTPException(404, "file not indexed")
         return dict(row)

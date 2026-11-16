@@ -40,5 +40,15 @@ services:
     # archive is marked bad and skipped (see assetindex/attempts.py).
     mem_limit: ${SCANNER_MEM_LIMIT:-3g}
 
+  # Idle until a "看图描述" job is started from the web UI; then describes pictures one
+  # by one with the vision model set up there. Separate from the scanner so a job that
+  # takes hours never holds up scheduled scans.
+  captioner:
+    <<: *app
+    command: ["python", "-m", "assetindex", "caption", "--watch"]
+    healthcheck:
+      disable: true
+    mem_limit: ${CAPTIONER_MEM_LIMIT:-1g}
+
 volumes:
   asset-data:
