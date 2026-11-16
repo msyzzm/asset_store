@@ -196,3 +196,12 @@ def test_stop_comes_before_an_archive_so_it_is_not_counted_as_a_crash(conn, pack
         index_archives(conn, "art", pack_root, should_stop=lambda: True)
 
     assert _count(conn, "archives") == 0 and _count(conn, "scan_attempts") == 0
+
+
+def test_listing_reports_progress(conn, pack_root):
+    seen = []
+    scan_root(conn, "art", pack_root)
+
+    index_archives(conn, "art", pack_root, progress=lambda phase, done, total: seen.append((phase, done, total)))
+
+    assert seen[-1] == ("archives", 3, 3)

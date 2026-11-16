@@ -94,6 +94,17 @@ def test_stop_comes_before_an_archive_so_previews_stay_pending(conn, preview_roo
     assert conn.execute("SELECT COUNT(*) FROM scan_attempts").fetchone()[0] == 0
 
 
+def test_previews_report_progress(conn, preview_root, tmp_path):
+    seen = []
+    scan_root(conn, "art", preview_root)
+    index_archives(conn, "art", preview_root)
+
+    build_previews(conn, "art", preview_root, tmp_path / "thumbs", TOOL,
+                   progress=lambda phase, done, total: seen.append((phase, done, total)))
+
+    assert seen and seen[-1][0] == "previews" and seen[-1][1] == seen[-1][2]
+
+
 def test_choose_candidates_spreads_folders_and_skips_junk():
     entries = [
         (1, "A/a1.png", 10),

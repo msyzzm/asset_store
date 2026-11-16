@@ -89,3 +89,11 @@ def test_wait_holds_an_early_request_until_the_minimum_gap(tmp_path):
 
     assert scan_request.wait_for_request(tmp_path, 3600, min_seconds=12, sleep=clock.sleep, clock=clock.time) is True
     assert clock.now == 12
+
+
+def test_progress_round_trips(tmp_path):
+    status = ScanStatus(running=True, started=1.0, root="nas", phase="archives", done=3, total=10)
+
+    scan_request.write_status(tmp_path, status)
+
+    assert scan_request.read_status(tmp_path) == status

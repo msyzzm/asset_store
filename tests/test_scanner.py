@@ -133,3 +133,11 @@ def test_stopped_walk_keeps_the_files_it_did_not_reach(conn, asset_root):
         scan_root(conn, "art", asset_root, should_stop=lambda: next(flags))
 
     assert set(_rows(conn)) == before  # not seen this time is not "deleted"
+
+
+def test_walk_reports_how_many_files_it_has_seen(conn, asset_root):
+    seen = []
+
+    scan_root(conn, "art", asset_root, progress=lambda phase, done, total: seen.append((phase, done, total)))
+
+    assert seen[-1] == ("walk", 5, None) and {p for p, _, _ in seen} == {"walk"}

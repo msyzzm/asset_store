@@ -346,3 +346,18 @@ def test_stop_pressed_while_idle_does_not_cancel_the_next_scan(monkeypatch, tmp_
 
     status = scan_request.read_status(data_dir)
     assert status.ok is True and status.stopped is False
+
+
+def test_scan_status_shows_which_step_it_is_on(monkeypatch, tmp_path, asset_root):
+    from assetindex import cli
+
+    _env(monkeypatch, tmp_path, asset_root)
+    statuses = []
+    monkeypatch.setattr(cli, "_set_status", lambda data_dir, status: statuses.append(status))
+
+    assert main(["scan"]) == 0
+
+    running = [s for s in statuses if s.running]
+    assert {s.phase for s in running} >= {"walk", "archives", "previews"}
+    assert all(s.root == "art" for s in running if s.phase in ("walk", "archives", "previews"))
+    assert statuses[-1].running is False and statuses[-1].phase is None

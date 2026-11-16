@@ -32,6 +32,28 @@ LOCK_WAIT_SECONDS = 2
 MIN_SCAN_GAP_SECONDS = 60
 # How soon the captioner notices a job started from the web UI.
 CAPTION_POLL_SECONDS = 3
+# A running scan rewrites scan.status at most this often per step (plus at each new step).
+PROGRESS_SECONDS = 1.0
+
+
+class _Progress:
+    """Shows the web UI which root and step a scan is on, and how far it got."""
+
+    def __init__(self, data_dir: Path, started: float) -> None:
+        self.data_dir = data_dir
+        self.started = started
+        self.root: str | None = None  # None for the steps that cover every root
+        self._phase: str | None = None
+        self._last = 0.0
+
+    def __call__(self, phase: str, done: int, total: int | None) -> None:
+        now = time.monotonic()
+        if phase == self._phase and now - self._last < PROGRESS_SECONDS:
+            return
+        self._phase, self._last = phase, now
+        _set_status(self.data_dir, ScanStatus(
+            running=True, started=self.started, root=self.root, phase=phase, done=done, total=total,
+        ))
 
 
 def _scan_one(
@@ -42,11 +64,12 @@ def _scan_one(
     tool: str | None,
     retry_errors: bool,
     should_stop: Callable[[], bool] = scan_request.never,
+    progress: Callable[[str, int, int | None], None] = scan_request.no_progress,
 ) -> bool:
     """Index one root; False if it couldn't be read at all. Raises ScanStopped."""
     started = time.monotonic()
     try:
-        stats = scan_root(conn, name, path, should_stop)
+        stats = scan_root(conn, name, path, should_stop, progress)
     except OSError as err:
         # e.g. NAS not mounted; keep going so other roots still get indexed.
         log.error("scan of %s (%s) failed: %s", name, path, err)
@@ -58,7 +81,7 @@ def _scan_one(
         " (stale entries kept: read errors or empty root)" if stats.deletion_skipped else "",
     )
     started = time.monotonic()
-    archived = index_archives(conn, name, path, retry_errors=retry_errors, should_stop=should_stop)
+    archived = index_archives(conn, name, path, retry_errors=retry_errors, should_stop=should_stop, progress=progress)
     log.info(
         "archives in %s listed in %.1fs: new/changed %d, bad %d, unreadable %d, unchanged %d",
         name, time.monotonic() - started,
@@ -72,7 +95,7 @@ def _scan_one(
                 (name,),
             )
     started = time.monotonic()
-    previews = build_previews(conn, name, path, settings.thumb_dir, tool, should_stop=should_stop)
+    previews = build_previews(conn, name, path, settings.thumb_dir, tool, should_stop=should_stop, progress=progress)
     log.info(
         "archive previews in %s built in %.1fs: sheets %d, nothing to show %d, pending %d",
         name, time.monotonic() - started, previews.built, previews.empty, previews.skipped,
@@ -102,17 +125,21 @@ def _scan(only_root: str | None, retry_errors: bool = False) -> int:
                 return scan_request.stop_requested(data_dir)
 
             ok = stopped = False  # ok stays False if the scan is interrupted
+            progress = _Progress(data_dir, started)
             conn = connect(settings.db_path)
             try:
                 if retry_errors:
                     attempts.clear(conn)
-                results = [
-                    _scan_one(conn, settings, name, path, tool, retry_errors, should_stop)
-                    for name, path in roots.items()
-                ]
+                results = []
+                for name, path in roots.items():
+                    progress.root = name
+                    results.append(_scan_one(conn, settings, name, path, tool, retry_errors, should_stop, progress))
+                progress.root = None
+                progress("prune", 0, None)
                 pruned = prune_thumbs(conn, settings.thumb_dir, settings.thumb_cache_bytes)
                 log.info("thumbnail cache: removed %d files, %.1f MB", pruned.removed, pruned.freed_bytes / 1024**2)
-                _embed(conn, replace(settings, roots=roots), retry_errors, should_stop)  # only the roots scanned
+                # Only the roots scanned.
+                _embed(conn, replace(settings, roots=roots), retry_errors, should_stop, progress)
                 ok = all(results)
             except ScanStopped as err:
                 stopped = True
@@ -132,6 +159,7 @@ def _embed(
     settings: Settings,
     retry_errors: bool,
     should_stop: Callable[[], bool] = scan_request.never,
+    progress: Callable[[str, int, int | None], None] = scan_request.no_progress,
 ) -> None:
     """Semantic search vectors, if switched on in the web UI. An unreachable API only
     postpones them to the next scan; it doesn't fail this one. Raises ScanStopped."""
@@ -140,7 +168,9 @@ def _embed(
         return
     started = time.monotonic()
     try:
-        stats = embed_pending(conn, settings, config, retry_errors=retry_errors, should_stop=should_stop)
+        stats = embed_pending(
+            conn, settings, config, retry_errors=retry_errors, should_stop=should_stop, progress=progress
+        )
     except ScanStopped:
         raise
     except Exception:  # e.g. "database is locked": vectors are extra, the scan itself worked

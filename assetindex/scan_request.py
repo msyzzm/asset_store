@@ -28,6 +28,10 @@ def never() -> bool:
     return False
 
 
+def no_progress(phase: str, done: int, total: int | None) -> None:
+    """Default `progress` for scan stages: (phase, items done, items in all or None)."""
+
+
 @dataclass(frozen=True)
 class ScanStatus:
     running: bool = False
@@ -35,6 +39,12 @@ class ScanStatus:
     finished: float | None = None
     ok: bool | None = None  # False if any root was unreadable or the scan was interrupted
     stopped: bool = False  # ended early by the "停止" button
+    # While running: which root and step (walk | archives | previews | prune | embed_text |
+    # embed_image), and how far; total is None while walking (not known in advance).
+    root: str | None = None
+    phase: str | None = None
+    done: int = 0
+    total: int | None = None
 
 
 def request_stop(data_dir: Path) -> None:
@@ -122,4 +132,16 @@ def read_status(data_dir: Path) -> ScanStatus:
         finished=_number_or_none(raw.get("finished")),
         ok=ok if isinstance(ok, bool) else None,
         stopped=raw.get("stopped") is True,
+        root=_text_or_none(raw.get("root")),
+        phase=_text_or_none(raw.get("phase")),
+        done=_count(raw.get("done")) or 0,
+        total=_count(raw.get("total")),
     )
+
+
+def _text_or_none(value) -> str | None:
+    return value[:200] if isinstance(value, str) else None
+
+
+def _count(value) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None

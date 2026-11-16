@@ -482,9 +482,24 @@ function formatTime(epochSeconds) {
   return new Date(epochSeconds * 1000).toLocaleString('zh-CN', { hour12: false });
 }
 
+const SCAN_PHASES = {
+  walk: '查看文件', archives: '读取压缩包目录', previews: '生成压缩包预览',
+  prune: '清理缩略图缓存', embed_text: '计算文字搜索向量', embed_image: '计算图片搜索向量',
+};
+
+// Which root and step a running scan is on, and how far it got.
+function scanProgressText(status) {
+  const where = status.root ? `${status.root}：` : '';
+  const phase = SCAN_PHASES[status.phase];
+  if (!phase) return `${formatTime(status.started)} 开始`;
+  const done = status.done.toLocaleString();
+  if (status.total != null) return `${where}${phase} ${done}/${status.total.toLocaleString()}`;
+  return status.phase === 'walk' ? `${where}${phase}，已看到 ${done} 个` : `${where}${phase}`;
+}
+
 function scanText(status) {
   if (status.running && status.stopping) return '正在停止：处理完手上这个文件夹或压缩包就停…';
-  if (status.running) return `正在扫描（${formatTime(status.started)} 开始）…`;
+  if (status.running) return `正在扫描 ${scanProgressText(status)}…`;
   if (status.requested) return '已请求扫描，扫描器一分钟内会开始…';
   if (status.finished == null) {
     return status.ok === false ? '上次扫描中途断了（扫描器被强制退出？看扫描日志）' : '';
@@ -516,7 +531,7 @@ async function refreshScan(status) {
   state.scanWaitingSince = waiting ? (state.scanWaitingSince ?? Date.now()) : null;
   if (waiting && Date.now() - state.scanWaitingSince > SCAN_START_TIMEOUT_MS) {
     state.scanBusy = false;
-    $('scan').disabled = false;
+    $('scan').hidden = false;
     showScanTask('扫描器没有响应：scanner 容器可能没在运行', false, true);
     state.scanTimer = setTimeout(refreshScan, SCAN_IDLE_POLL_MS);
     return;
@@ -527,8 +542,12 @@ async function refreshScan(status) {
     if (state.offset <= PAGE_SIZE) search();
   }
   state.scanBusy = busy;
-  $('scan').disabled = busy;
+  $('scan').hidden = busy;
   $('scan-stop').hidden = !busy || Boolean(status.stopping);
+  const bar = $('scan-task-bar');
+  bar.hidden = !status.running || status.total == null;
+  bar.max = Math.max(1, status.total ?? 1);
+  bar.value = status.done ?? 0;
   showScanTask(scanText(status) || '空闲', busy, status.ok === false && !status.stopped && !busy);
   state.scanTimer = setTimeout(refreshScan, busy ? SCAN_POLL_MS : SCAN_IDLE_POLL_MS);
 }
@@ -542,7 +561,7 @@ function showScanTask(text, busy, failed) {
 }
 
 async function requestScan() {
-  $('scan').disabled = true;
+  $('scan').hidden = true;
   state.scanWaitingSince = null;
   try {
     // The header proves the request comes from this page (see api_scan_request).
@@ -550,7 +569,7 @@ async function requestScan() {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     await refreshScan(await resp.json());
   } catch (err) {
-    $('scan').disabled = false;
+    $('scan').hidden = false;
     showScanTask(`请求扫描失败：${err.message}`, false, true);
   }
 }

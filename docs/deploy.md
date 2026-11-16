@@ -126,7 +126,7 @@ docker compose up -d
 docker compose logs -f scanner     # 首次扫描：看到 "thumbnail cache: removed" 就是扫完一轮
 ```
 
-启动（包括重启、更新）时不会自动扫描。第一次装好后，在网页右上角点「扫描」开始首次扫描。之后定时扫描接着上一次扫描的时间走，默认每 6 小时一次（`SCAN_INTERVAL_SECONDS`）；如果停机期间错过了，就从启动时起重新计时。
+启动（包括重启、更新）时不会自动扫描。第一次装好后，在网页任务栏「扫描」一行点「立即扫描」开始首次扫描，同一行会显示扫到哪一步、进度多少。之后定时扫描接着上一次扫描的时间走，默认每 6 小时一次（`SCAN_INTERVAL_SECONDS`）；如果停机期间错过了，就从启动时起重新计时。
 
 检查网页和 3D 预览需要的 JS：
 
@@ -153,7 +153,7 @@ docker stats --no-stream
 
 | 要做的事 | 命令 |
 |---|---|
-| 立刻扫一次 | 网页右上角点「扫描」，或 `docker compose exec scanner python -m assetindex scan` |
+| 立刻扫一次 | 网页任务栏「扫描」一行点「立即扫描」，或 `docker compose exec scanner python -m assetindex scan` |
 | 停止扫描 | 任务栏「扫描」一行点「停止」：处理完手上这个文件夹、压缩包或这批向量就停。已扫的保留，没扫完的下一轮定时扫描接着做 |
 | 重试坏包和没封面的包 | `docker compose exec scanner python -m assetindex scan --retry-errors` |
 | 看扫描日志 | `docker compose logs --tail 100 scanner` |
@@ -227,7 +227,7 @@ sudo deploy/updater/install.sh
 
 它由单独的 `captioner` 容器执行，平时空闲。**只有在网页上点「开始」才会运行**，定时扫描不会触发它。
 
-1. 网页右上角点「看图描述」，展开「接口设置」，填写：
+1. 网页任务栏「看图描述」一行点「打开」，展开「接口设置」，填写：
    - 接口地址：填到 `/v1` 为止，例如 `http://192.168.1.234:8080/v1`，程序会自动加上 `/chat/completions`；
    - 模型名：Strata 不看这个字段，随便填；其他服务要填真实的模型名；
    - API key。

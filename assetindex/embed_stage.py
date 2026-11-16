@@ -24,7 +24,7 @@ from PIL import Image
 from assetindex.config import Settings
 from assetindex.embedding import EmbedClient, EmbedConfig, EmbedError
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
-from assetindex.scan_request import ScanStopped, never
+from assetindex.scan_request import ScanStopped, never, no_progress
 from assetindex.thumbs import (
     EMBEDDED_PREVIEW_EXTS,
     file_thumb_path,
@@ -213,10 +213,19 @@ def _without_new_captions(conn: sqlite3.Connection, results: list, started: floa
 
 
 def _run_source(
-    conn, rows, source, config: EmbedConfig, prepare, embed, should_stop: Callable[[], bool] = never
+    conn,
+    rows,
+    source,
+    config: EmbedConfig,
+    prepare,
+    embed,
+    should_stop: Callable[[], bool] = never,
+    progress: Callable[[str, int, int | None], None] = no_progress,
 ) -> tuple[_Tally, str | None]:
     tally = _Tally()
+    phase = f"embed_{source}"
     for start in range(0, len(rows), config.batch_size):
+        progress(phase, start, len(rows))
         if should_stop():
             raise ScanStopped("stopped while embedding")
         started = time.time()  # before card_text reads any caption
@@ -238,6 +247,7 @@ def _run_source(
                     tally.done += 1
                 else:
                     tally.rejected += 1
+    progress(phase, len(rows), len(rows))
     return tally, None
 
 
@@ -248,6 +258,7 @@ def embed_pending(
     retry_errors: bool = False,
     client: EmbedClient | None = None,
     should_stop: Callable[[], bool] = never,
+    progress: Callable[[str, int, int | None], None] = no_progress,
 ) -> EmbedStats:
     if not config.active:
         return EmbedStats()
@@ -258,13 +269,13 @@ def embed_pending(
 
     texts, error = _run_source(
         conn, _pending(conn, settings, TEXT, config.model), TEXT, config,
-        lambda row: card_text(conn, row), client.embed_texts, should_stop,
+        lambda row: card_text(conn, row), client.embed_texts, should_stop, progress,
     )
     images = _Tally()
     if error is None and config.embeds_images:
         images, error = _run_source(
             conn, _pending(conn, settings, IMAGE, config.model), IMAGE, config,
-            lambda row: card_jpeg(settings, row), client.embed_images, should_stop,
+            lambda row: card_jpeg(settings, row), client.embed_images, should_stop, progress,
         )
     return EmbedStats(texts.done, images.done, texts.rejected + images.rejected, error)
 

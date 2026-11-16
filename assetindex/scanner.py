@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from assetindex.kinds import kind_of
-from assetindex.scan_request import ScanStopped, never
+from assetindex.scan_request import ScanStopped, never, no_progress
 from assetindex.sequences import group_sequences, sequence_of
 
 log = logging.getLogger(__name__)
@@ -126,7 +126,11 @@ def _delete_stale(
 
 
 def scan_root(
-    conn: sqlite3.Connection, root_name: str, root: Path, should_stop: Callable[[], bool] = never
+    conn: sqlite3.Connection,
+    root_name: str,
+    root: Path,
+    should_stop: Callable[[], bool] = never,
+    progress: Callable[[str, int, int | None], None] = no_progress,
 ) -> ScanStats:
     """Raises ScanStopped if stopped mid-walk; nothing is deleted then, since files not
     reached yet would look gone."""
@@ -150,6 +154,7 @@ def scan_root(
             updated += 1
         else:
             unchanged += 1
+        progress("walk", added + updated + unchanged, None)
         batch.append(entry)
         if len(batch) >= BATCH_SIZE:
             with conn:

@@ -213,7 +213,6 @@ async function openCaptions() {
 }
 
 function initCaptions() {
-  $('caption-btn').addEventListener('click', openCaptions);
   $('caption-task-open').addEventListener('click', openCaptions);
   $('caption-task-stop').addEventListener('click', stopCaptions);
   $('c-close').addEventListener('click', () => $('captions').close());

@@ -21,7 +21,7 @@ from PIL import Image
 from assetindex import attempts
 from assetindex.archives import ArchiveError, read_unity_previews
 from assetindex.extract import ExtractError, ExtractTimeout, read_member
-from assetindex.scan_request import ScanStopped, never
+from assetindex.scan_request import ScanStopped, never, no_progress
 from assetindex.sequences import sequence_of
 from assetindex.thumbs import (
     EMBEDDED_PREVIEW_EXTS,
@@ -209,6 +209,7 @@ def build_previews(
     thumb_dir: Path,
     tool: str | None,
     should_stop: Callable[[], bool] = never,
+    progress: Callable[[str, int, int | None], None] = no_progress,
 ) -> PreviewStats:
     rows = conn.execute(
         """
@@ -223,7 +224,8 @@ def build_previews(
         (root_name, SHEET_VERSION),
     ).fetchall()
     built = empty = skipped = 0
-    for row in rows:
+    for i, row in enumerate(rows):
+        progress("previews", i, len(rows))
         if should_stop():  # before attempts.begin: a stop is not a crash
             raise ScanStopped("stopped while building archive previews")
         is_unity = row["ext"] == "unitypackage"
@@ -259,4 +261,5 @@ def build_previews(
                 "UPDATE archives SET preview_state = ?, sheet_version = ? WHERE file_id = ? AND size = ? AND mtime = ?",
                 (1 if images or _is_rebuild(row) else 0, SHEET_VERSION, row["id"], row["size"], row["mtime"]),
             )
+    progress("previews", len(rows), len(rows))
     return PreviewStats(built=built, empty=empty, skipped=skipped)

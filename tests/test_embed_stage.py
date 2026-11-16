@@ -43,6 +43,15 @@ def test_stop_ends_embedding_between_batches(scanned, settings, server):
     assert len(_rows(scanned)) == 1  # the finished batch is kept
 
 
+def test_embedding_reports_progress(scanned, settings, server):
+    seen = []
+
+    embed_pending(scanned, settings, _config(server, batch_size=2),
+                  progress=lambda phase, done, total: seen.append((phase, done, total)))
+
+    assert seen[-1] == ("embed_text", 5, 5) and seen[0] == ("embed_text", 0, 5)
+
+
 def test_every_card_gets_a_text_vector_once(scanned, settings, server):
     stats = embed_pending(scanned, settings, _config(server))
 

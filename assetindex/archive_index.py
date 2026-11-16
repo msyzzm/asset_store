@@ -8,7 +8,7 @@ from pathlib import Path
 
 from assetindex import attempts
 from assetindex.archives import ARCHIVE_EXTS, ArchiveError, ArchiveListing, list_archive
-from assetindex.scan_request import ScanStopped, never
+from assetindex.scan_request import ScanStopped, never, no_progress
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +60,7 @@ def index_archives(
     root: Path,
     retry_errors: bool = False,
     should_stop: Callable[[], bool] = never,
+    progress: Callable[[str, int, int | None], None] = no_progress,
 ) -> ArchiveStats:
     """List every new or changed archive under one root. Commits per archive, so an
     interrupted run resumes where it stopped. retry_errors relists archives recorded as
@@ -75,7 +76,8 @@ def index_archives(
     ).fetchall()
 
     counts = {"listed": 0, "failed": 0, "unreadable": 0, "unchanged": 0}
-    for row in rows:
+    for i, row in enumerate(rows):
+        progress("archives", i, len(rows))
         retry = retry_errors and row["status"] == "error"
         if not retry and (row["a_size"], row["a_mtime"]) == (row["size"], row["mtime"]):
             counts["unchanged"] += 1
@@ -93,6 +95,7 @@ def index_archives(
             counts[_list_one(conn, root, row)] += 1
         finally:
             attempts.finish(conn, row["id"], STAGE)
+    progress("archives", len(rows), len(rows))
     return ArchiveStats(**counts)
 
 
