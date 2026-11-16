@@ -172,19 +172,34 @@ def _exit_on_sigterm() -> None:
     signal.signal(signal.SIGTERM, handler)
 
 
+def _first_wait(data_dir: Path, seconds: int) -> float:
+    """How long a freshly started scheduler waits: starting up (an update, a reboot) never
+    scans by itself. The schedule goes on from the last scan; if that is overdue or
+    unknown, it starts over from now."""
+    last = scan_request.read_status(data_dir)
+    ended = last.finished or last.started
+    if ended is None:
+        return seconds
+    remaining = ended + seconds - time.time()
+    return remaining if 0 < remaining <= seconds else seconds
+
+
 def _scan_every(only_root: str | None, retry_errors: bool, seconds: int) -> int:
-    """Scan, wait, repeat: the container's scheduler. A scan requested from the web UI
+    """Wait, scan, repeat: the container's scheduler. A scan requested from the web UI
     ends the wait early. Stops on Ctrl-C."""
     data_dir = load_settings().data_dir
+    wait = _first_wait(data_dir, seconds)
+    log.info("next scheduled scan in %.0f min (or when asked from the web UI)", wait / 60)
     try:
         while True:
+            if scan_request.wait_for_request(data_dir, wait, min_seconds=MIN_SCAN_GAP_SECONDS):
+                log.info("scan requested from the web UI")
             try:
                 _scan(only_root, retry_errors)
             except Exception:  # e.g. "database is locked": log, keep the schedule going
                 log.exception("scan round failed; next try in %ds", seconds)
             retry_errors = False  # a one-off request, not every round
-            if scan_request.wait_for_request(data_dir, seconds, min_seconds=MIN_SCAN_GAP_SECONDS):
-                log.info("scan requested from the web UI")
+            wait = seconds
     except KeyboardInterrupt:
         return 0
 

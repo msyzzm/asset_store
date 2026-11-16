@@ -58,6 +58,16 @@ from assetindex.thumbs import (
 log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+class _RevalidatedStaticFiles(StaticFiles):
+    """The page's own files: the browser asks every time (an unchanged file is a cheap
+    304), so after an update it never runs an old cached page or script."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 THUMB_CACHE_SECONDS = 7 * 24 * 3600
 THUMB_CONCURRENCY = 4  # decoding big PSD/TIFF is memory-heavy; bound parallel renders
 ENTRY_THUMB_BOX = (160, 160)
@@ -457,5 +467,5 @@ def create_app(settings: Settings) -> FastAPI:
             extract_slots.release()
         return _webp(target)
 
-    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+    app.mount("/", _RevalidatedStaticFiles(directory=STATIC_DIR, html=True), name="static")
     return app

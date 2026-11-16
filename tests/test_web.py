@@ -167,6 +167,13 @@ def test_scan_request_fails_cleanly_when_data_dir_unwritable(client, monkeypatch
     assert resp.status_code == 503
 
 
+def test_page_files_are_revalidated_so_an_update_shows_up(client):
+    # Without this, browsers may keep a cached old page or script after an update.
+    for path in ("/", "/app.js", "/style.css"):
+        resp = client.get(path)
+        assert resp.status_code == 200 and resp.headers["cache-control"] == "no-cache", path
+
+
 def test_scan_stop_button(client, settings):
     from assetindex import scan_request
     from assetindex.scan_request import ScanStatus

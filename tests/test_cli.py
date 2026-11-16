@@ -78,14 +78,43 @@ def test_scan_every_repeats_until_stopped(monkeypatch, tmp_path, asset_root):
 
     def fake_wait(data_dir, seconds, **kwargs):
         waits.append(seconds)
-        if len(waits) == 2:
+        if len(waits) == 3:
             raise KeyboardInterrupt
         return False
 
     monkeypatch.setattr(cli.scan_request, "wait_for_request", fake_wait)
 
     assert main(["scan", "--every", "60"]) == 0
-    assert len(runs) == 2 and waits == [60, 60]
+    assert len(runs) == 2 and waits == [60, 60, 60]  # never scanned: a full interval first
+
+
+def test_starting_up_does_not_scan_but_keeps_the_schedule(monkeypatch, tmp_path, asset_root):
+    import time
+
+    import pytest
+
+    from assetindex import cli, scan_request
+    from assetindex.scan_request import ScanStatus
+
+    data_dir = _env(monkeypatch, tmp_path, asset_root)
+    runs, waits = [], []
+    monkeypatch.setattr(cli, "_scan", lambda *a: runs.append(a) or 0)
+
+    def fake_wait(data_dir, seconds, **kwargs):
+        waits.append(seconds)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.scan_request, "wait_for_request", fake_wait)
+
+    # Last scan ended 20 s ago: the next one is due in 40 s, as if nothing restarted.
+    scan_request.write_status(data_dir, ScanStatus(started=time.time() - 30, finished=time.time() - 20, ok=True))
+    assert main(["scan", "--every", "60"]) == 0
+    assert runs == [] and waits[-1] == pytest.approx(40, abs=2)
+
+    # Overdue (the machine was off): still no scan at startup, the schedule restarts.
+    scan_request.write_status(data_dir, ScanStatus(started=1.0, finished=2.0, ok=True))
+    assert main(["scan", "--every", "60"]) == 0
+    assert runs == [] and waits[-1] == 60
 
 
 def test_scan_takes_a_pending_request_once_it_holds_the_lock(monkeypatch, tmp_path, asset_root):
@@ -208,14 +237,14 @@ def test_scan_every_survives_a_failed_round(monkeypatch, tmp_path, asset_root):
             raise RuntimeError("database is locked")
         return 0
 
-    def stop_on_second_wait(data_dir, seconds, _count=[], **kwargs):
+    def stop_on_third_wait(data_dir, seconds, _count=[], **kwargs):
         _count.append(seconds)
-        if len(_count) == 2:
+        if len(_count) == 3:
             raise KeyboardInterrupt
         return False
 
     monkeypatch.setattr(cli, "_scan", flaky)
-    monkeypatch.setattr(cli.scan_request, "wait_for_request", stop_on_second_wait)
+    monkeypatch.setattr(cli.scan_request, "wait_for_request", stop_on_third_wait)
 
     assert main(["scan", "--every", "60"]) == 0
     assert len(calls) == 2
