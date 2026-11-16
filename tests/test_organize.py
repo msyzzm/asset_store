@@ -148,8 +148,8 @@ def test_unusable_answers_are_recorded_per_pack(lib, server, monkeypatch):
 
     final = run_analysis(conn, settings, Scope("lib"), _config(server))
 
-    assert final.failed == 2 and "连续" in final.error
-    assert sum(1 for r in _rows(conn).values() if r["error"]) == 2
+    assert final.failed >= 2 and "连续" in final.error  # questions already asked still finish
+    assert sum(1 for r in _rows(conn).values() if r["error"]) == final.failed
 
 
 def test_stop_between_packs(lib, server):
@@ -244,3 +244,82 @@ def test_a_preview_appearing_next_to_an_archive_keeps_the_decision(lib):
 
     row = _rows(conn)["2D/Swords.zip"]
     assert row["status"] == "accepted" and row["files"] == 2
+
+
+class _Overlapping:
+    """A model client that waits until two questions are open at once (or gives up)."""
+
+    def __init__(self, server):
+        import threading
+
+        from assetindex.caption import CaptionClient
+
+        self.inner = CaptionClient(_config(server))
+        self.config = self.inner.config
+        self.lock = threading.Lock()
+        self.both = threading.Event()
+        self.open = self.peak = 0
+
+    def ask(self, prompt, jpeg, max_tokens):
+        with self.lock:
+            self.open += 1
+            self.peak = max(self.peak, self.open)
+            if self.open >= 2:
+                self.both.set()
+        self.both.wait(5)
+        try:
+            return self.inner.ask(prompt, jpeg, max_tokens)
+        finally:
+            with self.lock:
+                self.open -= 1
+
+
+def test_several_packs_wait_for_the_model_at_once(lib, server):
+    conn, settings, _ = lib
+    client = _Overlapping(server)
+
+    final = run_analysis(conn, settings, Scope("lib"), _config(server), client=client)
+
+    assert client.peak >= 2 and final.done == 3 and final.error is None
+    assert _rows(conn)["2D/Ice Pack"]["category"] == "01_2D/Textures"
+
+
+def test_a_picture_that_cannot_be_made_fails_only_that_pack(lib, server, monkeypatch):
+    conn, settings, _ = lib
+    real = organize.prepare_question
+
+    def broken(conn_, settings_, root, path, is_dir):
+        if path == "2D/Ice Pack":
+            raise OSError("NAS gone for a moment")
+        return real(conn_, settings_, root, path, is_dir)
+
+    monkeypatch.setattr(organize, "prepare_question", broken)
+
+    final = run_analysis(conn, settings, Scope("lib"), _config(server))
+
+    assert final.done == 2 and final.failed == 1 and final.error is None
+    assert "NAS gone" in _rows(conn)["2D/Ice Pack"]["error"]
+
+
+def test_api_going_down_stops_asking_but_keeps_answers_already_given(lib, server, monkeypatch):
+    from assetindex.embedding import EmbedError
+
+    conn, settings, _ = lib
+    client = _Overlapping(server)
+    real = client.ask
+    calls = []
+
+    def ask(prompt, jpeg, max_tokens):
+        calls.append(1)
+        if len(calls) == 2:
+            client.both.set()
+            raise EmbedError("HTTP 503")
+        return real(prompt, jpeg, max_tokens)
+
+    client.ask = ask
+    monkeypatch.setattr(organize, "MODEL_WORKERS", 2)
+
+    final = run_analysis(conn, settings, Scope("lib"), _config(server), client=client)
+
+    assert "503" in final.error and final.done == 1 and len(calls) == 2  # the third is never asked
+    assert sum(1 for r in _rows(conn).values() if r["status"] == "proposed" and r["dup_of"] is None) == 1

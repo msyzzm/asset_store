@@ -320,29 +320,56 @@ def target_for(category: str, name: str, is_dir: bool, taken: set[str]) -> str:
     return target
 
 
-def classify_unit(
-    client: CaptionClient, conn: sqlite3.Connection, settings: Settings, root: str, path: str, is_dir: bool
-) -> Proposal:
-    """Ask the model about one unit. Raises EmbedError: an unusable answer counts as an
-    item problem (this unit fails, the job goes on), API trouble as a stop.
+@dataclass(frozen=True)
+class Question:
+    """Everything the model needs for one unit, made from the database and the cached
+    pictures (no model call), so the next one can be made while the model works."""
 
-    A file unit (an archive, a lone image) whose picture's card has no description yet
+    prompt: str
+    jpeg: bytes | None
+    tokens: int
+    card: sqlite3.Row | None  # the picture's card, to describe in the same answer
+    original: str  # the unit's current name
+    is_dir: bool
+
+
+def prepare_question(conn: sqlite3.Connection, settings: Settings, root: str, path: str, is_dir: bool) -> Question:
+    """A file unit (an archive, a lone image) whose picture's card has no description yet
     gets it in the same question, saving the caption job a request."""
     if is_dir:
         jpeg, card = picture(conn, settings, root, path, is_dir), None
     else:
         jpeg, shown = _file_picture(settings, _unit_rows(conn, root, path, is_dir))
         card = _undescribed_card(conn, root, shown["rel_path"]) if shown else None
-    tokens = ANSWER_TOKENS + (CAPTION_TOKENS if card else 0)
-    answer = client.ask(build_prompt(digest(conn, root, path, is_dir), with_caption=card is not None), jpeg, tokens)
+    return Question(
+        prompt=build_prompt(digest(conn, root, path, is_dir), with_caption=card is not None),
+        jpeg=jpeg,
+        tokens=ANSWER_TOKENS + (CAPTION_TOKENS if card else 0),
+        card=card,
+        original=path.rsplit("/", 1)[-1],
+        is_dir=is_dir,
+    )
+
+
+def read_answer(conn: sqlite3.Connection, model: str, question: Question, answer: str) -> Proposal:
+    """The proposal in the model's answer. Raises EmbedError (an item problem) if unusable."""
     try:
         proposal = parse_answer(answer)
     except ValueError as err:
         raise EmbedError(f"{err}：{answer[:100]}", ITEM_PROBLEM) from None
-    if card is not None and proposal.caption:
-        save_caption(conn, card, client.config.model, proposal.caption, None)
-    name = clean_name(proposal.name, path.rsplit("/", 1)[-1], is_dir)
+    if question.card is not None and proposal.caption:
+        save_caption(conn, question.card, model, proposal.caption, None)
+    name = clean_name(proposal.name, question.original, question.is_dir)
     return Proposal(proposal.category, name, proposal.reason, proposal.caption)
+
+
+def classify_unit(
+    client: CaptionClient, conn: sqlite3.Connection, settings: Settings, root: str, path: str, is_dir: bool
+) -> Proposal:
+    """Ask the model about one unit. Raises EmbedError: an unusable answer counts as an
+    item problem (this unit fails, the job goes on), API trouble as a stop."""
+    question = prepare_question(conn, settings, root, path, is_dir)
+    return read_answer(conn, client.config.model, question, client.ask(question.prompt, question.jpeg, question.tokens))
 
 
 def _undescribed_card(conn: sqlite3.Connection, root: str, path: str) -> sqlite3.Row | None:

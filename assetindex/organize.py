@@ -17,14 +17,18 @@ import json
 import logging
 import sqlite3
 import time
+from collections import deque
 from collections.abc import Callable
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path, PurePosixPath
 
 from assetindex import caption_job
 from assetindex.caption import CaptionClient, CaptionConfig
 from assetindex.caption_job import Scope
-from assetindex.classify import CATEGORY_PATHS, DUPLICATES, classify_unit, file_suffix, strip_junk_source, target_for
+from assetindex.classify import (
+    CATEGORY_PATHS, DUPLICATES, Question, file_suffix, prepare_question, read_answer, strip_junk_source, target_for,
+)
 from assetindex.config import Settings
 from assetindex.dupes import UnitFile, duplicate_units, file_duplicates, hash_pending, signature, unit_files
 from assetindex.embedding import EmbedError
@@ -39,6 +43,7 @@ STATUS_NAME = "organize.status"
 REPORT_NAME = "organize.report.json"
 LOCK_NAME = caption_job.LOCK_NAME  # the same model, one job at a time
 MAX_CONSECUTIVE_FAILURES = 5
+MODEL_WORKERS = 3  # questions open at once: one being answered while the next ones wait ready
 MAX_ERROR_CHARS = 300
 STATUSES = ("todo", "proposed", "accepted", "rejected")
 DECIDED = ("accepted", "rejected")
@@ -284,34 +289,90 @@ def run_analysis(
                        error=f"「{scope.prefix}」里没有找到素材包：检查路径（不用写 {scope.root}:/），或先扫描")
     status = replace(status, phase="classifying", total=len(rows), done=0)
     report(status)
-    consecutive = 0
-    for row in rows:
-        if should_stop():
-            status = replace(status, stopped=True)
-            break
-        report(replace(status, current=row["path"]))
+    status = _classify(_Run(conn, scope.root, config.model, status), settings, client, rows, should_stop, report)
+    return replace(status, running=False, current=None, finished=time.time())
+
+
+def _classify(
+    run: "_Run",
+    settings: Settings,
+    client: CaptionClient,
+    rows: list[sqlite3.Row],
+    should_stop: Callable[[], bool],
+    report: Callable[[OrganizeStatus], None],
+) -> OrganizeStatus:
+    """Ask about every row, MODEL_WORKERS questions at once: the next question is made
+    (from the database and cached pictures) while the model answers the ones before.
+    Only the model calls run in threads; the database stays on this one."""
+    queue = deque(rows)
+    asked: dict[Future, tuple[str, Question]] = {}
+    with ThreadPoolExecutor(MODEL_WORKERS) as pool:
+        while queue or asked:
+            while queue and len(asked) < MODEL_WORKERS and not run.halted:
+                if should_stop():
+                    run.status = replace(run.status, stopped=True)
+                    break
+                row = queue.popleft()
+                path = row["path"]
+                report(replace(run.status, current=path))
+                try:  # reads only the database and cached pictures: no API errors here
+                    question = prepare_question(run.conn, settings, run.root, path, bool(row["is_dir"]))
+                except Exception as err:  # an odd pack (unreadable picture...) must not end the job
+                    run.failed(path, err)
+                    continue
+                asked[pool.submit(client.ask, question.prompt, question.jpeg, question.tokens)] = (path, question)
+            if not asked:
+                break
+            finished, _ = wait(asked, return_when=FIRST_COMPLETED)
+            for future in finished:
+                path, question = asked.pop(future)
+                run.settle(path, question, future)
+            report(run.status)
+            if run.halted:
+                queue.clear()  # the ones already asked still finish and are kept
+    return run.status
+
+
+class _Run:
+    """The classifying loop's running count, and when it must stop asking."""
+
+    def __init__(self, conn: sqlite3.Connection, root: str, model: str, status: OrganizeStatus) -> None:
+        self.conn, self.root, self.model = conn, root, model
+        self.status = status
+        self.consecutive = 0
+
+    @property
+    def halted(self) -> bool:
+        return self.status.stopped or self.status.error is not None
+
+    def settle(self, path: str, question: Question, future: Future) -> None:
         try:
-            proposal = classify_unit(client, conn, settings, scope.root, row["path"], bool(row["is_dir"]))
+            proposal = read_answer(self.conn, self.model, question, future.result())
         except EmbedError as err:
             if not err.item_problem:
-                status = replace(status, error=f"接口出错，已停止：{err}")
-                break
-            _save_error(conn, scope.root, row["path"], str(err))
-            status = replace(status, failed=status.failed + 1)
-            consecutive += 1
-            if consecutive >= MAX_CONSECUTIVE_FAILURES:
-                status = replace(status, error=f"连续 {consecutive} 个都失败，已停止，检查设置：{err}")
-                break
-            continue
-        except Exception as err:  # an odd pack (unreadable picture...) must not end the job
-            log.exception("classifying %r failed", row["path"])
-            _save_error(conn, scope.root, row["path"], f"{type(err).__name__}: {err}")
-            status = replace(status, failed=status.failed + 1)
-            continue
-        save_proposal(conn, scope.root, row["path"], proposal.category, proposal.name, proposal.reason, config.model)
-        consecutive = 0
-        status = replace(status, done=status.done + 1)
-    return replace(status, running=False, current=None, finished=time.time())
+                self._stop(f"接口出错，已停止：{err}")
+                return
+            _save_error(self.conn, self.root, path, str(err))
+            self.status = replace(self.status, failed=self.status.failed + 1)
+            self.consecutive += 1
+            if self.consecutive >= MAX_CONSECUTIVE_FAILURES:
+                self._stop(f"连续 {self.consecutive} 个都失败，已停止，检查设置：{err}")
+            return
+        except Exception as err:
+            self.failed(path, err)
+            return
+        save_proposal(self.conn, self.root, path, proposal.category, proposal.name, proposal.reason, self.model)
+        self.consecutive = 0
+        self.status = replace(self.status, done=self.status.done + 1)
+
+    def failed(self, path: str, err: Exception) -> None:
+        log.error("classifying %r failed", path, exc_info=err)
+        _save_error(self.conn, self.root, path, f"{type(err).__name__}: {err}")
+        self.status = replace(self.status, failed=self.status.failed + 1)
+
+    def _stop(self, error: str) -> None:
+        if self.status.error is None:  # the first reason is the one to show
+            self.status = replace(self.status, error=error)
 
 
 def write_report(data_dir: Path, root: str, groups: list, units: dict) -> None:
