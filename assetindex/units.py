@@ -20,9 +20,12 @@ The user can also join a folder back into one pack, which overrides the rules ab
 
 import os
 import re
+import sqlite3
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+
+from assetindex.categories import SCHEME_FOLDERS
 
 # Top-level folder names that group packs rather than being one.
 _CONTAINER = re.compile(
@@ -137,15 +140,18 @@ def folder_companions(here: list[str], below: Mapping[str, list[str]]) -> dict[s
     are all previews or notes of archives here ("JPEG/(1)_x.jpg" for "(1)_x.zip") is a
     preview folder."""
     pairs = pair_companions(here)
-    archives = [name for name in here if archive_stem(name) is not None]
-    if not archives:
+    main = {}  # squashed stem -> the archive a preview of it goes with
+    for name in sorted(here):
+        stem = archive_stem(name)
+        if stem is not None:
+            main.setdefault(_squash(stem), pairs.get(name, name))
+    if not main:
         return pairs
     for sub, names in below.items():
-        if not names or any(name.rpartition(".")[2].lower() not in NOTE_EXTS for name in names):
-            continue
-        matched = pair_companions([*archives, *names])
-        if all(name in matched for name in names):
-            pairs.update({f"{sub}/{name}": matched[name] for name in names})
+        # Exact names only: "Tiles/tile_001.png" next to "Tile.zip" is a folder of tiles.
+        keys = {name: _squash(_COPY_SUFFIX.sub("", name.rpartition(".")[0])) for name in names}
+        if names and all(name.rpartition(".")[2].lower() in NOTE_EXTS and keys[name] in main for name in names):
+            pairs.update({f"{sub}/{name}": main[keys[name]] for name in names})
     return pairs
 
 
@@ -193,9 +199,12 @@ def _holds_packs(folder: str, files: dict[str, list[str]], subdirs: dict[str, se
     return len(os.path.commonprefix(list(names))) < MIN_SHARED
 
 
-def layout(paths: Iterable[str], splits: Iterable[str] = (), joins: Iterable[str] = ()) -> Layout:
+def layout(
+    paths: Iterable[str], splits: Iterable[str] = (), joins: Iterable[str] = (), always_open: Iterable[str] = ()
+) -> Layout:
     """The units of one root, from its indexed paths, by the rules above plus the user's
-    splits (opened) and joins (kept as one pack)."""
+    splits (opened) and joins (kept as one pack). `always_open` are folders that hold
+    packs by definition: the organizer's category folders, which a sorted pack lands in."""
     paths = list(paths)
     files, subdirs = _tree(paths)
     folders = {d for ds in subdirs.values() for d in ds}
@@ -210,7 +219,7 @@ def layout(paths: Iterable[str], splits: Iterable[str] = (), joins: Iterable[str
     packed = {d for d in folders if _holds_packs(d, files, subdirs)}
     # A joined folder's parent stays open, or the join would make the parent the pack.
     parents = {j.rpartition("/")[0] for j in joins if "/" in j}
-    opened = {d for d in top | collections | packed if not joined(d)} | parents | set(splits)
+    opened = {d for d in top | collections | packed if not joined(d)} | parents | set(splits) | set(always_open)
     for folder in list(opened):  # a folder holding an opened folder is not one pack
         while "/" in folder:
             folder = folder.rpartition("/")[0]
@@ -218,14 +227,46 @@ def layout(paths: Iterable[str], splits: Iterable[str] = (), joins: Iterable[str
     companions = {}
     for folder in opened | {""}:
         prefix = folder + "/" if folder else ""
-        below = {
+        below = {  # a folder kept as one pack stays one
             sub.rpartition("/")[2]: files.get(sub, [])
-            for sub in subdirs.get(folder, ()) if sub not in opened and not subdirs.get(sub)
+            for sub in subdirs.get(folder, ()) if sub not in opened and not subdirs.get(sub) and not joined(sub)
         }
         for name, main in folder_companions(files.get(folder, []), below).items():
             companions[prefix + name] = prefix + main
     return Layout(frozenset(opened), companions)
 
+
+
+def stored_splits(conn: sqlite3.Connection, root: str) -> list[str]:
+    return [r[0] for r in conn.execute("SELECT path FROM unit_splits WHERE root = ?", (root,))]
+
+
+def stored_joins(conn: sqlite3.Connection, root: str) -> list[str]:
+    """Folders kept as one pack: joined by the user, or a folder pack already decided on
+    (a rule change must not take a confirmed pack apart)."""
+    return [
+        r[0] for r in conn.execute(
+            "SELECT path FROM unit_joins WHERE root = ?"
+            " UNION SELECT path FROM organize_units WHERE root = ? AND is_dir = 1 AND status IN ('accepted', 'rejected')",
+            (root, root),
+        )
+    ]
+
+
+def stored_layout(conn: sqlite3.Connection, root: str) -> tuple[list[str], Layout]:
+    """A root's indexed paths and how they split into units, with the user's splits and joins."""
+    paths = [r[0] for r in conn.execute("SELECT rel_path FROM files WHERE root = ?", (root,))]
+    return paths, layout(paths, stored_splits(conn, root), stored_joins(conn, root), SCHEME_FOLDERS)
+
+
+def companions_by_unit(paths: Iterable[str], shape: Layout) -> dict[str, list[str]]:
+    """File unit -> its companions, sorted."""
+    found: dict[str, list[str]] = defaultdict(list)
+    for path in paths:
+        unit, is_dir = shape.unit_of(path)
+        if not is_dir and unit != path:
+            found[unit].append(path)
+    return {unit: sorted(members) for unit, members in found.items()}
 
 
 def compute_units(files: Iterable[tuple[str, int]], splits: Iterable[str] = (), joins: Iterable[str] = ()) -> list[Unit]:

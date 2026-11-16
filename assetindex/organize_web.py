@@ -16,11 +16,12 @@ from pydantic import BaseModel, Field
 
 from assetindex import caption_job, organize
 from assetindex.caption import load_config
-from assetindex.classify import CATEGORIES, DUPLICATES, UNSORTED, file_suffix, under, unit_members
+from assetindex.classify import CATEGORIES, DUPLICATES, UNSORTED, file_suffix, under
 from assetindex.config import Settings
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.scanlock import is_scan_running
 from assetindex.thumbs import EMBEDDED_PREVIEW_EXTS
+from assetindex.units import companions_by_unit
 
 log = logging.getLogger(__name__)
 
@@ -81,10 +82,10 @@ def check_target(target: str) -> tuple[str, str]:
     return category, name
 
 
-def _thumb_id(conn: sqlite3.Connection, root: str, path: str, is_dir: bool) -> int | None:
-    """A file whose thumbnail stands for the unit."""
+def _thumb_id(conn: sqlite3.Connection, root: str, path: str, is_dir: bool, companions: dict[str, list[str]]) -> int | None:
+    """A file whose thumbnail stands for the unit (`companions`: file unit -> its companions)."""
     if not is_dir:  # the file's own picture, else a preview next to it
-        for member in unit_members(conn, root, path):
+        for member in [path, *companions.get(path, [])]:
             row = conn.execute(
                 "SELECT f.id, f.ext, a.preview_state FROM files f LEFT JOIN archives a ON a.file_id = f.id"
                 " WHERE f.root = ? AND f.rel_path = ?",
@@ -174,8 +175,11 @@ def add_organize_routes(app: FastAPI, settings: Settings, get_conn: Callable, pa
             f"SELECT * FROM organize_units WHERE {clause} ORDER BY path LIMIT ? OFFSET ?", (*params, limit, offset)
         ).fetchall()
         items = []
+        companions = {}
+        if any(not r["is_dir"] for r in rows):  # once per page, not per row
+            companions = companions_by_unit(*organize.stored_layout(conn, root))
         for r in rows:
-            thumb = _thumb_id(conn, root, r["path"], bool(r["is_dir"]))
+            thumb = _thumb_id(conn, root, r["path"], bool(r["is_dir"]), companions)
             items.append({
                 "path": r["path"], "is_dir": bool(r["is_dir"]), "files": r["files"], "size": r["size"],
                 "category": r["category"], "name": r["name"], "target": r["target"], "reason": r["reason"],

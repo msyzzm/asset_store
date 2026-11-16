@@ -191,6 +191,10 @@ def test_a_preview_in_a_preview_folder_is_the_archive_picture(library, settings,
     jpeg = picture(library, settings, "art", "2D/Frost.rar", is_dir=False)
     assert Image.open(io.BytesIO(jpeg)).getpixel((10, 10))[2] > 200  # the blue preview
 
+    with library:  # the user split the preview folder: its picture is a unit of its own now
+        library.execute("INSERT INTO unit_splits (root, path) VALUES ('art', '2D/JPEG')")
+    assert unit_members(library, "art", "2D/Frost.rar") == ["2D/Frost.rar"]
+
 
 def test_unusable_answer_is_an_item_problem(library, settings, server):
     server.chat_reply = "我不知道"

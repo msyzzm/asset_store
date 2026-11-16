@@ -19,40 +19,14 @@ from PIL import Image
 from assetindex.archive_previews import choose_candidates
 from assetindex.caption import CaptionClient, clean_caption
 from assetindex.caption_job import save_caption
+from assetindex.categories import CATEGORIES, CATEGORY_PATHS, DUPLICATES, UNSORTED  # noqa: F401 (re-exported)
 from assetindex.config import Settings
 from assetindex.embed_stage import BACKGROUND, JPEG_QUALITY, _has_image, card_jpeg
 from assetindex.embedding import EmbedError
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.thumbs import file_thumb_path, open_image, sheet_image, sheet_path
-from assetindex.units import folder_companions
+from assetindex.units import SCHEME_FOLDERS, layout, stored_joins, stored_splits
 
-# The library layout (after the Unity Asset Store's categories). Engine is not a folder:
-# a Unity character pack is a character pack; the engine shows as a badge.
-CATEGORIES = (
-    ("01_2D/Characters", "2D 角色、怪物、立绘、头像、角色序列帧"),
-    ("01_2D/Environments", "2D 场景、背景、地图、Tileset 图块"),
-    ("01_2D/Props", "2D 道具、物品、武器、装备"),
-    ("01_2D/UI", "界面、按钮、窗口、图标、字体"),
-    ("01_2D/VFX", "2D 特效、技能特效序列帧"),
-    ("01_2D/Textures", "贴图、材质、纹理、无缝图"),
-    ("02_3D/Characters", "3D 角色、怪物、人物模型"),
-    ("02_3D/Environments", "3D 场景、建筑、地形"),
-    ("02_3D/Props", "3D 道具、物品、武器"),
-    ("02_3D/Vehicles", "3D 载具、交通工具"),
-    ("02_3D/Vegetation", "3D 植物、树木"),
-    ("02_3D/Animations", "动作、动画、动捕数据"),
-    ("03_Audio/Music", "音乐、BGM"),
-    ("03_Audio/SFX", "音效"),
-    ("03_Audio/Ambient", "环境音"),
-    ("03_Audio/Voice", "语音、配音"),
-    ("04_Tools/Shaders", "Shader、材质效果、后处理"),
-    ("04_Tools/Plugins", "引擎插件、脚本、工具"),
-    ("04_Tools/Templates", "项目模板、完整工程"),
-    ("05_Reference", "参考资料、设定集、原画、照片、教程"),
-)
-UNSORTED = "_Unsorted"  # the model couldn't tell, or answered outside the list
-DUPLICATES = "_Duplicates"  # extra copies of identical units
-CATEGORY_PATHS = frozenset(path for path, _ in CATEGORIES) | {UNSORTED}
 
 MAX_NAME_CHARS = 60
 SAMPLE_NAMES = 40
@@ -83,26 +57,16 @@ def under(path: str) -> tuple[str, str]:
 
 def unit_members(conn: sqlite3.Connection, root: str, path: str) -> list[str]:
     """A file unit's files: the file, then its companions (other volumes, a same-name
-    preview here or in a preview folder below), paired as assetindex.units pairs them."""
-    folder, _, name = path.rpartition("/")
-    prefix = folder + "/" if folder else ""
+    preview here or in a preview folder below). The same rules as the whole root's
+    layout, run on the folder's subtree: everything that decides how a file there is
+    grouped (its folder's rules, splits and joins) lives in that subtree."""
+    folder = path.rpartition("/")[0]
     low, high = under(folder) if folder else ("", "\U0010ffff")
-    here: list[str] = []
-    below: dict[str, list[str]] = {}
-    deep: set[str] = set()  # subfolders with subfolders: never preview folders
-    rows = conn.execute("SELECT rel_path FROM files WHERE root = ? AND rel_path >= ? AND rel_path < ?", (root, low, high))
-    for (rel_path,) in rows:
-        rest = rel_path[len(prefix) :]
-        sub, slash, tail = rest.partition("/")
-        if not slash:
-            here.append(rest)
-        elif "/" in tail:
-            deep.add(sub)
-        else:
-            below.setdefault(sub, []).append(tail)
-    below = {sub: names for sub, names in below.items() if sub not in deep}
-    pairs = folder_companions(here, below)
-    return [path, *sorted(prefix + rel for rel, main in pairs.items() if main == name)]
+    paths = [r[0] for r in conn.execute(
+        "SELECT rel_path FROM files WHERE root = ? AND rel_path >= ? AND rel_path < ?", (root, low, high)
+    )]
+    shape = layout(paths, stored_splits(conn, root), stored_joins(conn, root), SCHEME_FOLDERS)
+    return [path, *sorted(p for p in paths if p != path and shape.unit_of(p) == (path, False))]
 
 
 def _unit_rows(conn: sqlite3.Connection, root: str, path: str, is_dir: bool) -> list[sqlite3.Row]:

@@ -29,7 +29,7 @@ from assetindex.config import Settings
 from assetindex.dupes import UnitFile, duplicate_units, file_duplicates, hash_pending, signature, unit_files
 from assetindex.embedding import EmbedError
 from assetindex.scan_request import write_json_atomic
-from assetindex.units import Layout, layout
+from assetindex.units import SCHEME_FOLDERS, Layout, stored_joins, stored_layout, stored_splits  # noqa: F401
 
 log = logging.getLogger(__name__)
 
@@ -63,25 +63,8 @@ class OrganizeStatus:
 # ---- units and proposals -------------------------------------------------------------
 
 
-def _splits(conn: sqlite3.Connection, root: str) -> list[str]:
-    return [r[0] for r in conn.execute("SELECT path FROM unit_splits WHERE root = ?", (root,))]
-
-
-def _joins(conn: sqlite3.Connection, root: str) -> list[str]:
-    """Folders kept as one pack: joined by the user, or a folder pack already decided on
-    (a rule change must not take a confirmed pack apart)."""
-    return [
-        r[0] for r in conn.execute(
-            "SELECT path FROM unit_joins WHERE root = ?"
-            " UNION SELECT path FROM organize_units WHERE root = ? AND is_dir = 1 AND status IN ('accepted', 'rejected')",
-            (root, root),
-        )
-    ]
-
-
 def unit_layout(conn: sqlite3.Connection, root: str) -> Layout:
-    paths = [r[0] for r in conn.execute("SELECT rel_path FROM files WHERE root = ?", (root,))]
-    return layout(paths, _splits(conn, root), _joins(conn, root))
+    return stored_layout(conn, root)[1]
 
 
 def current_units(conn: sqlite3.Connection, root: str) -> dict[tuple[str, bool], list[UnitFile]]:

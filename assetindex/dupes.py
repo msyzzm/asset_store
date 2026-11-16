@@ -252,7 +252,11 @@ def unit_files(conn: sqlite3.Connection, root: str, shape_of: Layout) -> dict[tu
 
 
 def _companion_name(unit: str, rel_path: str) -> str:
-    return "" if rel_path == unit else rel_path.rpartition("/")[2]
+    """"" for the main file; a companion's path from the unit's folder ("JPEG/x.jpg")."""
+    if rel_path == unit:
+        return ""
+    folder = unit.rpartition("/")[0]
+    return rel_path[len(folder) + 1 :] if folder else rel_path
 
 
 def member_path(unit: str, is_dir: bool, rel: str) -> str:

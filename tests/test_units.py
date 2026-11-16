@@ -129,3 +129,16 @@ def test_a_folder_of_previews_goes_with_the_archives_above_it():
     units = {u.path: u for u in compute_units(files)}
     assert units["Packs/(1)_Icons.zip"].files == 2 and units["Packs/Swords.zip"].files == 2
     assert "Packs/JPEG" not in units and units["Packs/Mixed"].files == 2
+
+
+PREVIEWS = [("Packs/A.zip", 1), ("Packs/Bb.zip", 1), ("Packs/Ccc.zip", 1), ("Packs/JPEG/A.jpg", 1), ("Packs/JPEG/Bb.jpg", 1)]
+
+
+def test_a_preview_folder_kept_or_split_by_the_user_is_not_taken_into_the_archives():
+    assert {u.path for u in compute_units(PREVIEWS, joins=["Packs/JPEG"])} >= {"Packs/JPEG"}
+    assert {u.path for u in compute_units(PREVIEWS, splits=["Packs/JPEG"])} >= {"Packs/JPEG/A.jpg", "Packs/JPEG/Bb.jpg"}
+
+
+def test_a_folder_of_tiles_is_not_a_preview_folder_of_a_like_named_archive():
+    files = [("Art/Tile.zip", 1), ("Art/Rock.zip", 1), ("Art/Wall.zip", 1), ("Art/Tiles/tile_001.png", 1), ("Art/Tiles/tile_002.png", 1)]
+    assert "Art/Tiles" in {u.path for u in compute_units(files)}
