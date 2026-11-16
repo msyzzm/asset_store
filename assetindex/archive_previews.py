@@ -24,6 +24,7 @@ from assetindex.extract import ExtractError, ExtractTimeout, read_member
 from assetindex.sequences import sequence_of
 from assetindex.thumbs import (
     EMBEDDED_PREVIEW_EXTS,
+    THUMB_SIZE,
     archive_preview_dir,
     compose_sheet,
     open_image,
@@ -40,7 +41,12 @@ SHEET_IMAGES = 9
 STAGE = "preview"
 SPARE_CANDIDATES = 6  # replacements for images that fail to extract or decode
 ARCHIVE_TIME_BUDGET_SECONDS = 60
-CELL_BOX = (160, 160)
+# Opened at full cover size: a lone image is the whole cover, and compose_sheet
+# shrinks them for a 2x2 or 3x3 grid.
+CELL_BOX = THUMB_SIZE
+# Bump when sheets should look different: built ones are redone on the next scan.
+# 2: a single image fills the cover instead of sitting half-size in the middle.
+SHEET_VERSION = 2
 UNITY_PREVIEW_BOX = (128, 128)
 MAX_UNITY_PREVIEWS = 2000
 MAX_UNITY_PREVIEW_BYTES = 512 * 1024
@@ -176,10 +182,16 @@ def _inside_root(root: Path, rel_path: str) -> Path | None:
     return path if path.is_relative_to(root_real) else None
 
 
+def _is_rebuild(row: sqlite3.Row) -> bool:
+    """A sheet from an older SHEET_VERSION, as opposed to a first attempt."""
+    return row["preview_state"] == 1
+
+
 def _render(
     conn: sqlite3.Connection, row: sqlite3.Row, archive: Path, thumb_dir: Path, tool: str | None
 ) -> list[Image.Image]:
-    shutil.rmtree(archive_preview_dir(thumb_dir, row["id"]), ignore_errors=True)
+    if not _is_rebuild(row):  # a rebuild overwrites the sheet, keeping it if the rebuild fails
+        shutil.rmtree(archive_preview_dir(thumb_dir, row["id"]), ignore_errors=True)
     images = (
         _unity_images(conn, row["id"], archive, row["mtime"], thumb_dir) if row["ext"] == "unitypackage"
         else _member_images(conn, row["id"], archive, tool)
@@ -194,11 +206,15 @@ def build_previews(
 ) -> PreviewStats:
     rows = conn.execute(
         """
-        SELECT f.id, f.rel_path, f.ext, a.size, a.mtime
+        SELECT f.id, f.rel_path, f.ext, a.size, a.mtime, a.preview_state
         FROM archives a JOIN files f ON f.id = a.file_id
-        WHERE f.root = ? AND a.status = 'ok' AND a.preview_state IS NULL
+        WHERE f.root = ? AND a.status = 'ok' AND (
+            a.preview_state IS NULL
+            -- Unity's own previews are small already: older sheets of them look the same.
+            OR (a.preview_state = 1 AND a.sheet_version IS NOT ? AND f.ext != 'unitypackage')
+        )
         """,
-        (root_name,),
+        (root_name, SHEET_VERSION),
     ).fetchall()
     built = empty = skipped = 0
     for row in rows:
@@ -232,7 +248,7 @@ def build_previews(
         with conn:
             # Guarded by size/mtime: if the archive was relisted meanwhile, leave it pending.
             conn.execute(
-                "UPDATE archives SET preview_state = ? WHERE file_id = ? AND size = ? AND mtime = ?",
-                (1 if images else 0, row["id"], row["size"], row["mtime"]),
+                "UPDATE archives SET preview_state = ?, sheet_version = ? WHERE file_id = ? AND size = ? AND mtime = ?",
+                (1 if images or _is_rebuild(row) else 0, SHEET_VERSION, row["id"], row["size"], row["mtime"]),
             )
     return PreviewStats(built=built, empty=empty, skipped=skipped)

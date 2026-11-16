@@ -283,3 +283,56 @@ def test_real_images_are_tried_before_uassets():
     entries = [(1, "A/BP.uasset", 10), (2, "B/M.uasset", 10), (3, "C/icon.png", 10)]
 
     assert [p for _, p in choose_candidates(entries, limit=2)] == ["C/icon.png", "A/BP.uasset"]
+
+
+@needs_bsdtar
+def test_single_image_fills_the_whole_cover(conn, tmp_path):
+    root = tmp_path / "packs"
+    _zip(root / "one.zip", {"cover.png": _png(size=(400, 400))})
+    thumbs = tmp_path / "thumbs"
+
+    _build(conn, root, thumbs)
+
+    file_id = _ids(conn)["one.zip"]
+    mtime = conn.execute("SELECT mtime FROM files WHERE id = ?", (file_id,)).fetchone()[0]
+    with Image.open(sheet_path(thumbs, file_id, mtime)) as sheet:
+        box = sheet.getchannel("A").getbbox()
+    assert box[2] - box[0] >= 300  # not a half-size picture in the middle
+
+
+@needs_bsdtar
+def test_covers_from_an_older_layout_are_rebuilt_once(conn, preview_root, tmp_path):
+    thumbs = tmp_path / "thumbs"
+    _build(conn, preview_root, thumbs)
+    with conn:
+        conn.execute("UPDATE archives SET sheet_version = NULL")  # as left by an older release
+
+    rebuilt = build_previews(conn, "art", preview_root, thumbs, TOOL)
+
+    assert rebuilt.built == 1  # icons.zip; unitypackage previews are already full size
+    assert _state(conn, "icons.zip") == 1 and _state(conn, "sounds.zip") == 0
+    again = build_previews(conn, "art", preview_root, thumbs, TOOL)
+    assert again.built == again.empty == 0
+
+
+@needs_bsdtar
+@pytest.mark.parametrize("failure", ["broken", "slow"])
+def test_failed_rebuild_keeps_the_old_cover(conn, preview_root, tmp_path, monkeypatch, failure):
+    from assetindex import archive_previews
+    from assetindex.extract import ExtractError, ExtractTimeout
+
+    thumbs = tmp_path / "thumbs"
+    _build(conn, preview_root, thumbs)
+    with conn:
+        conn.execute("UPDATE archives SET sheet_version = NULL")
+    file_id = _ids(conn)["icons.zip"]
+    mtime = conn.execute("SELECT mtime FROM files WHERE id = ?", (file_id,)).fetchone()[0]
+
+    def fail(*args, **kwargs):
+        raise (ExtractError("flaky NAS") if failure == "broken" else ExtractTimeout("too slow"))
+
+    monkeypatch.setattr(archive_previews, "read_member", fail)
+    build_previews(conn, "art", preview_root, thumbs, TOOL)
+
+    assert sheet_path(thumbs, file_id, mtime).exists()
+    assert _state(conn, "icons.zip") == 1

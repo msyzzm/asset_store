@@ -52,7 +52,8 @@ CREATE TABLE IF NOT EXISTS archives (
     truncated      INTEGER NOT NULL DEFAULT 0,
     engine         TEXT,              -- 'unreal' | 'unity' | NULL
     engine_version TEXT,              -- inferred from folder names, e.g. '5.1'
-    preview_state  INTEGER            -- NULL pending, 0 nothing to show, 1 sheet built
+    preview_state  INTEGER,           -- NULL pending, 0 nothing to show, 1 sheet built
+    sheet_version  INTEGER            -- layout the sheet was built with; older ones get rebuilt
 );
 CREATE TABLE IF NOT EXISTS archive_entries (
     id          INTEGER PRIMARY KEY,
@@ -110,6 +111,7 @@ ADDED_COLUMNS = (
     ("files", "seq_index", "INTEGER"),
     ("files", "seq_frames", "INTEGER"),
     ("archives", "preview_state", "INTEGER"),
+    ("archives", "sheet_version", "INTEGER"),
 )
 # Created after migration, since they reference added columns.
 POST_MIGRATION_SQL = (
