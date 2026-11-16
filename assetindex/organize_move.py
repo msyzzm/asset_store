@@ -92,13 +92,16 @@ def build_plan(conn: sqlite3.Connection, root: str) -> MovePlan:
         (root,),
     ).fetchall()
     candidates = []
+    problems: list[Problem] = []
     for row in rows:
+        if not _current(row["path"], bool(row["is_dir"]), paths, shape):
+            problems.append(Problem(row["path"], "这个包的文件变了，重新分析后再确认"))
+            continue
         if row["is_dir"]:
             renames = [Rename(row["path"], row["target"], True)]
         else:
             renames = _file_renames(row["target"], row["path"], companions.get(row["path"], []))
         candidates.append(UnitMove(row["path"], row["target"], bool(row["is_dir"]), tuple(renames)))
-    problems: list[Problem] = []
     moves = _without_clashes(candidates, paths, problems)
     for _ in range(MAX_CHECK_ROUNDS):
         bad = _misparsed(moves, paths, shape, splits, joins)
@@ -110,6 +113,14 @@ def build_plan(conn: sqlite3.Connection, root: str) -> MovePlan:
         problems.extend(Problem(m.path, "检查没能收敛，这次先不移动") for m in moves)
         moves = []
     return MovePlan(tuple(moves), tuple(sorted(problems, key=lambda p: p.path)))
+
+
+def _current(path: str, is_dir: bool, paths: list[str], shape: Layout) -> bool:
+    """The organize row still describes a unit of today's layout."""
+    if not is_dir:
+        return path in paths and shape.unit_of(path) == (path, False)
+    inside = next((p for p in paths if p.startswith(path + "/")), None)
+    return inside is not None and shape.unit_of(inside) == (path, True)
 
 
 def _occupied(paths: list[str]) -> set[str]:
@@ -129,6 +140,8 @@ def _without_clashes(candidates: list[UnitMove], paths: list[str], problems: lis
     for move in candidates:
         for rename in move.renames:
             wanted[rename.dst.lower()].add(move.path)
+    moving_dirs = [(r.src.lower() + "/", m.path) for m in candidates for r in m.renames if r.is_dir]
+    all_dsts = [(r.dst.lower(), m.path) for m in candidates for r in m.renames]
     keep = []
     for move in candidates:
         reason = None
@@ -138,6 +151,10 @@ def _without_clashes(candidates: list[UnitMove], paths: list[str], problems: lis
                 reason = f"「{rename.dst}」也是别的包的目标"
             elif dst in taken:
                 reason = f"「{rename.dst}」已经存在"
+            elif any(dst.startswith(src) for src, owner in moving_dirs if owner != move.path):
+                reason = f"「{rename.dst}」在另一个要移动的文件夹里"
+            elif any(other != move.path and (o.startswith(dst + "/") or dst.startswith(o + "/")) for o, other in all_dsts):
+                reason = f"「{rename.dst}」和另一个包的目标是包含关系"
             if reason:
                 break
         if reason:
@@ -145,6 +162,12 @@ def _without_clashes(candidates: list[UnitMove], paths: list[str], problems: lis
         else:
             keep.append(move)
     return keep
+
+
+def left_folders(renames: list[Rename]) -> list[str]:
+    """Folders packs move out of. They stay opened (recorded as splits): the packs left
+    there must not merge into one because their neighbours went elsewhere."""
+    return sorted({r.src.rpartition("/")[0] for r in renames} - {""})
 
 
 def _relocate(path: str, files: dict[str, str], dirs: dict[str, str]) -> str:
@@ -164,11 +187,11 @@ def _misparsed(
     dirs = {r.src: r.dst for m in moves for r in m.renames if r.is_dir}
     moving = {m.path: m for m in moves}
     by_new = {m.new_path: m for m in moves}
-    # A moved folder pack stays one pack, as the decision on it keeps it now.
+    # A moved folder pack stays one pack, as the decision on it keeps it now; a folder
+    # packs left stays a folder of packs, as the executor records (see left_folders).
     after_joins = [_relocate(j, {}, dirs) for j in joins] + list(dirs.values())
-    after = layout(
-        [_relocate(p, files, dirs) for p in paths], [_relocate(s, {}, dirs) for s in splits], after_joins, SCHEME_FOLDERS
-    )
+    after_splits = [_relocate(s, {}, dirs) for s in splits] + left_folders([r for m in moves for r in m.renames])
+    after = layout([_relocate(p, files, dirs) for p in paths], after_splits, after_joins, SCHEME_FOLDERS)
     bad: dict[str, str] = {}
     for path in paths:
         unit, is_dir = before.unit_of(path)
@@ -184,9 +207,10 @@ def _misparsed(
         if captor is not None:
             bad.setdefault(captor.path, f"移动后会把「{path}」也并进这个包")
             continue
-        # An unmoved pack parses differently: blame the moves landing in its folder.
+        # An unmoved pack parses differently: blame the moves into or out of its folder,
+        # and if none, all of them (a batch that changes what it does not touch waits).
         folder = path.rpartition("/")[0]
-        for m in moves:
-            if m.new_path.rpartition("/")[0] == folder or m.new_path.startswith(folder + "/"):
-                bad.setdefault(m.path, f"移动后「{unit}」会被重新分包")
+        near = [m for m in moves if folder in (m.new_path.rpartition("/")[0], m.path.rpartition("/")[0])]
+        for m in near or moves:
+            bad.setdefault(m.path, f"移动后「{unit}」会被重新分包")
     return bad

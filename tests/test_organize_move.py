@@ -107,3 +107,29 @@ def test_nothing_accepted_nothing_planned(lib):
     conn, put = lib
     put(*HAND_SORTED)
     assert build_plan(conn, "lib").moves == ()
+
+
+def test_targets_inside_moving_folders_or_each_other_are_problems(lib):
+    conn, put = lib
+    put(*HAND_SORTED, "Game Artbook/a/1.png", "Game Artbook/b/2.png")
+    _accept(conn, "Game Artbook", "05_Reference/Artbook")
+    _accept(conn, "UE/道具/Sword.rar", "Game Artbook/Sword.rar")  # into a folder that is leaving
+    _accept(conn, "UE/道具/Shield.rar", "05_Reference/Artbook/Shield.rar")  # into another target
+
+    plan = build_plan(conn, "lib")
+
+    reasons = {p.path: p.reason for p in plan.problems}
+    assert "另一个要移动的文件夹" in reasons["UE/道具/Sword.rar"]
+    assert "包含关系" in reasons["UE/道具/Shield.rar"]
+
+
+def test_a_stale_decision_is_not_moved(lib):
+    conn, put = lib
+    put(*HAND_SORTED)
+    with conn:  # a row for a pack the layout no longer has
+        conn.execute("INSERT INTO organize_units (root, path, is_dir, files, size, signature, status, target, updated)"
+                     " VALUES ('lib', 'UE/道具/Gone.rar', 0, 1, 1, 'x', 'accepted', '02_3D/Props/Gone.rar', 0)")
+
+    plan = build_plan(conn, "lib")
+
+    assert plan.moves == () and "重新分析" in plan.problems[0].reason

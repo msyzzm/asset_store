@@ -37,6 +37,30 @@ def test_scan_refuses_to_run_while_another_scan_holds_the_lock(monkeypatch, tmp_
         assert main(["scan"]) == 3
 
 
+def test_scan_waits_while_a_move_is_left_half_done(monkeypatch, tmp_path, asset_root):
+    import json
+
+    from assetindex import scan_request
+
+    data_dir = _env(monkeypatch, tmp_path, asset_root)
+    assert main(["scan"]) == 0
+    files = sorted(p.relative_to(asset_root).as_posix() for p in asset_root.rglob("*") if p.is_file())
+    first, second = files[0], files[1]
+    (asset_root / first).rename(asset_root / "moved.bin")  # one of two renames happened, then a crash
+    journal = data_dir / "moves" / "run.jsonl"
+    journal.parent.mkdir(parents=True)
+    records = [
+        {"op": "start", "root": "art"},
+        {"op": "begin", "txn": 1, "kind": "move", "unit": first, "new_unit": "moved.bin", "target": "moved.bin",
+         "status": "accepted", "steps": [[first, "moved.bin", False], [second, "moved2.bin", False]]},
+    ]
+    journal.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
+
+    assert main(["scan"]) == 1  # would otherwise drop the moved file's row and all hanging off it
+
+    assert scan_request.read_status(data_dir).ok is False
+
+
 def test_scan_prunes_orphan_thumbnails(monkeypatch, tmp_path, asset_root):
     import os
 

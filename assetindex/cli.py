@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
-from assetindex import attempts, caption_job, organize, scan_request
+from assetindex import attempts, caption_job, organize, organize_apply, scan_request
 from assetindex.archive_index import index_archives
 from assetindex.archive_previews import build_previews
 from assetindex.cache_prune import prune_thumbs
@@ -134,6 +134,10 @@ def _scan(only_root: str | None, retry_errors: bool = False) -> int:
             try:
                 if retry_errors:
                     attempts.clear(conn)
+                left = _settle_moves(conn, settings)
+                if left:  # a scan would drop the moved files' rows, captions and previews with them
+                    log.error("moves left half done, not scanning until they are settled on the organize page: %s", left)
+                    return 1
                 results = []
                 for name, path in roots.items():
                     progress.root = name
@@ -156,6 +160,20 @@ def _scan(only_root: str | None, retry_errors: bool = False) -> int:
         log.error("%s; not starting another", err)
         return 3
     return 0 if ok or stopped else 1
+
+
+def _settle_moves(conn: sqlite3.Connection, settings: Settings) -> list[str]:
+    """Finish the index of moves a crash cut short, as far as a read-only scanner can
+    (all of a pack's renames done); the packs still half moved."""
+    left = []
+    for journal in organize_apply.unsettled(settings.data_dir):
+        root = organize_apply.journal_root(journal)
+        if root not in settings.roots:
+            left.append(f"{journal.name}: 根目录 {root!r} 不在设置里")
+            continue
+        problems = organize_apply.recover(conn, settings.roots[root].resolve(), root, journal, move=None)
+        left += [f"{journal.name}: {p.path}: {p.reason}" for p in problems]
+    return left
 
 
 def _embed(
