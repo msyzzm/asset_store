@@ -126,6 +126,8 @@ docker compose up -d
 docker compose logs -f scanner     # 首次扫描：看到 "thumbnail cache: removed" 就是扫完一轮
 ```
 
+启动（包括重启、更新）时不会自动扫描。第一次装好后，在网页右上角点「扫描」开始首次扫描。之后定时扫描接着上一次扫描的时间走，默认每 6 小时一次（`SCAN_INTERVAL_SECONDS`）；如果停机期间错过了，就从启动时起重新计时。
+
 检查网页和 3D 预览需要的 JS：
 
 ```bash
