@@ -9,6 +9,7 @@ import base64
 import io
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from PIL import Image
@@ -57,6 +58,7 @@ class FakeEmbedServer:
         self.fail_status: int | None = None
         self.reject_images = False  # answer 400 to any request containing an image
         self.chat_reply: str | None = None  # fixed chat answer instead of the colour-based one
+        self.chat_delay = 0.0  # seconds per chat answer, like a real model
         server = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -106,6 +108,7 @@ class FakeEmbedServer:
 
     def chat(self, body: dict) -> tuple[int, dict]:
         """A vision chat model that "sees" colour: red pictures are fire, others are ice."""
+        time.sleep(self.chat_delay)
         if self.chat_reply is not None:
             content = self.chat_reply
         else:

@@ -4,6 +4,7 @@
 // Loaded after app.js ($, el) and settings.js (PAGE_HEADERS, errorText).
 
 const CAPTION_POLL_MS = 3000;
+const CAPTION_IDLE_POLL_MS = 15000;  // a job can also start from another browser or the command line
 const CAPTION_DEBOUNCE_MS = 300;
 const CAPTION_PICKUP_WARN_MS = 30000;
 const captionState = { timer: 0, countSeq: 0, folderSeq: 0, statusSeq: 0, debounce: 0, waitingSince: null, wasRunning: false };
@@ -122,26 +123,57 @@ function captionStatusText(s) {
   return s.stopped ? `${summary}，已手动停止。` : `${summary}。`;
 }
 
-function applyCaptionStatus(s) {
-  const busy = s.running || s.requested;
-  captionState.waitingSince = s.requested && !s.running ? (captionState.waitingSince ?? Date.now()) : null;
-  $('c-status').textContent = captionStatusText(s);
-  $('c-stop').hidden = !busy;
-  $('c-start').hidden = busy;
-  const bar = $('c-bar');
+// Only touch text that changed: polls repeat it, and screen readers announce every write.
+function setText(node, text) {
+  if (node.textContent !== text) node.textContent = text;
+}
+
+function showProgress(bar, s) {
   bar.hidden = !s.running;
   bar.max = Math.max(1, s.total);
   bar.value = s.done + s.failed;
-  if (captionState.wasRunning && !busy) refreshCount();  // just finished: new numbers
+}
+
+function applyCaptionStatus(s) {
+  const busy = s.running || s.requested;
+  captionState.waitingSince = s.requested && !s.running ? (captionState.waitingSince ?? Date.now()) : null;
+  const text = captionStatusText(s);
+  setText($('c-status'), text);
+  $('c-stop').hidden = !busy;
+  $('c-start').hidden = busy;
+  showProgress($('c-bar'), s);
+  // The task bar under the header shows the same, with the dialog closed.
+  const row = $('task-caption');
+  row.classList.toggle('busy', busy);
+  row.classList.toggle('failed', !busy && Boolean(s.error));
+  setText($('caption-task-text'), text || '空闲');
+  $('caption-task-text').title = text;
+  $('caption-task-stop').hidden = !busy;
+  showProgress($('caption-task-bar'), s);
+  if (captionState.wasRunning && !busy) {  // just finished: new numbers and new captions
+    refreshCount();
+    if (state.offset <= PAGE_SIZE) search();  // not when the user has paged further down
+  }
   captionState.wasRunning = busy;
 }
 
+// Polls all the time (fast while a job runs) so the task bar is always current.
 async function refreshCaptionStatus() {
+  clearTimeout(captionState.timer);
+  let busy = captionState.wasRunning;
   try {
     await fetchCaptionStatus('/api/captions');
+    busy = captionState.wasRunning;
   } catch (err) {
-    $('c-status').textContent = `状态读取失败：${err.message}`;
+    setText($('c-status'), `状态读取失败：${err.message}`);
+    setText($('caption-task-text'), `状态读取失败：${err.message}`);
+    $('task-caption').classList.remove('busy');
+    $('task-caption').classList.add('failed');
+    $('caption-task-stop').hidden = true;
+    $('caption-task-bar').hidden = true;
   }
+  clearTimeout(captionState.timer);  // a call that overlapped this one must not leave a second chain
+  captionState.timer = setTimeout(refreshCaptionStatus, busy ? CAPTION_POLL_MS : CAPTION_IDLE_POLL_MS);
 }
 
 async function startCaptions(event) {
@@ -153,6 +185,7 @@ async function startCaptions(event) {
   } catch (err) {
     $('c-status').textContent = `没能开始：${err.message}`;
   }
+  refreshCaptionStatus();  // poll fast from now on
 }
 
 async function stopCaptions() {
@@ -177,19 +210,19 @@ async function openCaptions() {
   refreshCount();
   refreshFolders();
   refreshCaptionStatus();
-  clearInterval(captionState.timer);
-  captionState.timer = setInterval(refreshCaptionStatus, CAPTION_POLL_MS);
 }
 
 function initCaptions() {
   $('caption-btn').addEventListener('click', openCaptions);
+  $('caption-task-open').addEventListener('click', openCaptions);
+  $('caption-task-stop').addEventListener('click', stopCaptions);
   $('c-close').addEventListener('click', () => $('captions').close());
-  $('captions').addEventListener('close', () => clearInterval(captionState.timer));
   $('c-form').addEventListener('submit', saveCaptionSettings);
   $('c-test').addEventListener('click', testCaptionSettings);
   $('c-scope').addEventListener('submit', startCaptions);
   $('c-scope').addEventListener('input', scopeChanged);
   $('c-stop').addEventListener('click', stopCaptions);
+  refreshCaptionStatus();
 }
 
 initCaptions();

@@ -23,6 +23,8 @@ const MODEL_EXTS = new Set(['fbx']);
 // Parsing runs on the main thread; bigger files would freeze the tab for many seconds.
 const MAX_MODEL_BYTES = 64 * 1024 * 1024;
 const SCAN_POLL_MS = 5000;
+// Idle, still look now and then: scheduled scans start on their own.
+const SCAN_IDLE_POLL_MS = 15000;
 // The scanner starts a requested scan within its 60 s minimum gap plus a poll.
 const SCAN_START_TIMEOUT_MS = 2 * 60 * 1000;
 
@@ -502,8 +504,8 @@ async function refreshScan(status) {
       status = await resp.json();
     } catch (err) {
       if (seq !== state.scanSeq) return;
-      $('scan-status').textContent = `扫描状态未知：${err.message}`;
-      if (state.scanBusy) state.scanTimer = setTimeout(refreshScan, SCAN_POLL_MS);
+      showScanTask(`扫描状态未知：${err.message}`, false, true);
+      state.scanTimer = setTimeout(refreshScan, state.scanBusy ? SCAN_POLL_MS : SCAN_IDLE_POLL_MS);
       return;
     }
     if (seq !== state.scanSeq) return; // a newer refresh (e.g. the button) superseded this one
@@ -513,7 +515,8 @@ async function refreshScan(status) {
   if (waiting && Date.now() - state.scanWaitingSince > SCAN_START_TIMEOUT_MS) {
     state.scanBusy = false;
     $('scan').disabled = false;
-    $('scan-status').textContent = '扫描器没有响应：scanner 容器可能没在运行';
+    showScanTask('扫描器没有响应：scanner 容器可能没在运行', false, true);
+    state.scanTimer = setTimeout(refreshScan, SCAN_IDLE_POLL_MS);
     return;
   }
   const busy = status.requested || status.running;
@@ -523,8 +526,16 @@ async function refreshScan(status) {
   }
   state.scanBusy = busy;
   $('scan').disabled = busy;
-  $('scan-status').textContent = scanText(status);
-  if (busy) state.scanTimer = setTimeout(refreshScan, SCAN_POLL_MS);
+  showScanTask(scanText(status) || '空闲', busy, status.ok === false && !busy);
+  state.scanTimer = setTimeout(refreshScan, busy ? SCAN_POLL_MS : SCAN_IDLE_POLL_MS);
+}
+
+function showScanTask(text, busy, failed) {
+  const row = $('task-scan');
+  row.classList.toggle('busy', busy);
+  row.classList.toggle('failed', failed);
+  if ($('scan-status').textContent !== text) $('scan-status').textContent = text;  // polls repeat it
+  $('scan-status').title = text;
 }
 
 async function requestScan() {
@@ -537,7 +548,7 @@ async function requestScan() {
     await refreshScan(await resp.json());
   } catch (err) {
     $('scan').disabled = false;
-    $('scan-status').textContent = `请求扫描失败：${err.message}`;
+    showScanTask(`请求扫描失败：${err.message}`, false, true);
   }
 }
 

@@ -37,7 +37,21 @@
     <button id="settings-btn" class="btn secondary" type="button">设置</button>
   </header>
   <p id="stats" class="stats"></p>
-  <p id="scan-status" class="stats" aria-live="polite"></p>
+  <section class="tasks" aria-label="任务">
+    <div id="task-scan" class="task">
+      <span class="task-dot" aria-hidden="true"></span>
+      <span class="task-name">扫描</span>
+      <span id="scan-status" class="task-text" aria-live="polite"></span>
+    </div>
+    <div id="task-caption" class="task">
+      <span class="task-dot" aria-hidden="true"></span>
+      <span class="task-name">看图描述</span>
+      <span id="caption-task-text" class="task-text" aria-live="polite"></span>
+      <progress id="caption-task-bar" class="task-bar" max="1" value="0" hidden></progress>
+      <button id="caption-task-stop" class="link-btn" type="button" hidden>停止</button>
+      <button id="caption-task-open" class="link-btn" type="button">打开</button>
+    </div>
+  </section>
   <p id="summary" class="summary"></p>
   <main id="grid" class="grid"></main>
   <button id="more" class="more" type="button" hidden>加载更多</button>

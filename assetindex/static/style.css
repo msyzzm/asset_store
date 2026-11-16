@@ -7,6 +7,7 @@
   --accent: #2f6fdb;
   --accent-text: #ffffff;
   --thumb-bg: #ecebe6;
+  --danger: #c8442f;
   --radius: 8px;
 }
 
@@ -20,6 +21,7 @@
     --accent: #5b8ff0;
     --accent-text: #0b0b0a;
     --thumb-bg: #2a2a27;
+    --danger: #e0735f;
   }
 }
 
@@ -328,6 +330,31 @@ body {
 }
 .caption-setup summary { cursor: pointer; font-weight: 600; }
 .caption-bar { width: 100%; height: 8px; margin-top: 12px; accent-color: var(--accent); }
+
+/* Task bar: what the scanner and the captioner are doing, always visible. */
+.tasks { display: grid; gap: 2px; margin: 6px 16px 0; font-size: 13px; }
+.task { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 24px; color: var(--muted); }
+.task.busy { color: var(--text); }
+.task-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--border); }
+.task.busy .task-dot { background: var(--accent); animation: task-pulse 1.2s ease-in-out infinite; }
+.task.failed .task-dot { background: var(--danger); }
+.task-name { flex: none; font-weight: 600; }
+.task-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-bar { flex: none; width: 120px; height: 6px; accent-color: var(--accent); }
+.link-btn {
+  flex: none;
+  padding: 0 4px;
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.link-btn:hover { text-decoration: underline; }
+.link-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@keyframes task-pulse { 50% { opacity: 0.35; transform: scale(0.8); } }
+@media (prefers-reduced-motion: reduce) { .task.busy .task-dot { animation: none; } }
 
 .muted { color: var(--muted); }
 
