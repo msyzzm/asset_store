@@ -6,6 +6,7 @@ an allowlist of decoders, and the pixel count is checked from the header before 
 
 import hashlib
 import uuid
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 from typing import BinaryIO
@@ -21,6 +22,15 @@ THUMB_QUALITY = 80
 FILES_PER_THUMB_DIR = 1000
 # Checked from the header before decoding, so oversized images never hit memory.
 MAX_THUMB_SOURCE_PIXELS = 50_000_000
+# Baseline JPEGs are decoded at up to 1/8 scale (1/64 of the pixels), so print-size
+# photos and scans fit. Pillow's own bomb check would refuse them on open, before
+# that scale is chosen: raise it to our ceiling, which open_image enforces itself.
+JPEG_MAX_REDUCTION = 8
+# Scaling saves memory, not CPU (every block is still entropy-decoded): 1G pixels is
+# twice the largest print scan in the samples and takes a few seconds at most.
+MAX_JPEG_SOURCE_PIXELS = 1_000_000_000
+Image.MAX_IMAGE_PIXELS = MAX_JPEG_SOURCE_PIXELS // 2  # Pillow errors above twice this
+warnings.simplefilter("ignore", Image.DecompressionBombWarning)  # open_image checks sizes itself
 # Largest image extracted from an archive for a preview (checked before extracting).
 MAX_ARCHIVE_IMAGE_BYTES = 20 * 1024**2
 # Pillow sniffs content, not extension: only let it use decoders we expect.
@@ -77,13 +87,26 @@ def entry_thumb_path(thumb_dir: Path, file_id: int, mtime: float, size: int, inn
     return thumb_dir / "entries" / key[:2] / f"{key}.webp"
 
 
+def _decodes_at_reduced_scale(im: Image.Image) -> bool:
+    """Baseline JPEG: libjpeg decodes it straight to 1/2..1/8 size, so memory follows
+    the reduced size. A progressive JPEG keeps full-size coefficients whatever the scale."""
+    return im.format == "JPEG" and not (im.info.get("progressive") or im.info.get("progression"))
+
+
 def open_image(source: Path | BinaryIO, box: tuple[int, int]) -> Image.Image:
-    """Decode an untrusted image and shrink it to fit `box`. Raises on anything unexpected."""
+    """Decode an untrusted image and shrink it to fit `box`. Raises on anything unexpected.
+    The pixel limit applies to what is actually decoded: a print-size JPEG is fine,
+    since it is decoded at up to 1/8 scale."""
     with Image.open(source, formats=THUMB_DECODERS) as im:
         width, height = im.size
-        if width * height > MAX_THUMB_SOURCE_PIXELS:
+        reducible = _decodes_at_reduced_scale(im)
+        ceiling = min(MAX_JPEG_SOURCE_PIXELS, MAX_THUMB_SOURCE_PIXELS * JPEG_MAX_REDUCTION**2) if reducible else MAX_THUMB_SOURCE_PIXELS
+        if width * height > ceiling:
             raise ValueError(f"image too large for thumbnail: {width}x{height}")
-        im.draft("RGB", box)  # fast downscale for JPEG; no-op otherwise
+        im.draft("RGB", box)  # JPEG: pick the decode scale now (and im.size with it); no-op otherwise
+        decoded_w, decoded_h = im.size
+        if decoded_w * decoded_h > MAX_THUMB_SOURCE_PIXELS:
+            raise ValueError(f"image too large for thumbnail: {width}x{height}")
         im.thumbnail(box)
         return im.copy() if im.mode in ("RGB", "RGBA") else im.convert("RGBA")
 
