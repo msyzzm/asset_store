@@ -85,6 +85,11 @@ def _is_container(name: str) -> bool:
     return bool(_CONTAINER.match(name.strip()))
 
 
+def is_container_name(name: str) -> bool:
+    """A top-level folder named like a category or a store ("UE", "2D", "itch")."""
+    return _is_container(name)
+
+
 def _is_collection(name: str) -> bool:
     return bool(_COLLECTION.search(name))
 

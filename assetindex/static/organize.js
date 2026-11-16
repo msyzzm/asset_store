@@ -179,7 +179,7 @@ function row(item) {
   if (item.dup_of) actions.push(actionButton('改为保留这份', async () => { await post('/api/organize/units/keep', { root: view.root, path: item.path }); afterChange(); }));
   if (item.is_dir) actions.push(actionButton('拆开', async () => { await post('/api/organize/split', { root: view.root, path: item.path }); afterChange(); }));
   const parent = dir.replace(/\/$/, '');
-  if (parent.includes('/')) {
+  if (parent) {  // the server refuses top-level category folders (UE, Unity...)
     actions.push(actionButton('合并', async () => {
       if (!window.confirm(`把「${parent}」整个当成一个包？里面分开的包会合在一起，它们的建议作废。`)) return;
       await post('/api/organize/join', { root: view.root, path: parent });

@@ -142,6 +142,40 @@ def test_join_refuses_to_drop_decisions(env):
     assert client.post("/api/organize/join", headers=PAGE, json={"root": "lib", "path": "2D/Ice Pack"}).status_code == 409
 
 
+def test_a_decided_folder_pack_stays_whole_after_the_decision_is_undone(env):
+    from assetindex.db import connect
+
+    client, settings = env
+    _analyze(client, settings)
+
+    client.post("/api/organize/units/target", headers=PAGE, json={"root": "lib", "path": "2D/Ice Pack", "target": "01_2D/VFX/冰"})
+    client.post("/api/organize/units/decide", headers=PAGE, json={"root": "lib", "paths": ["2D/Ice Pack"], "action": "reset"})
+
+    conn = connect(settings.db_path)
+    joins = [r[0] for r in conn.execute("SELECT path FROM unit_joins")]
+    conn.close()
+    assert joins == ["2D/Ice Pack"]  # undoing the decision does not let the rules split it
+
+
+def test_a_top_level_folder_that_is_no_category_can_be_joined(env):
+    client, settings = env
+    root = settings.roots["lib"]
+    for name in ("Barrels", "Crates", "Lamps"):
+        (root / "OverHit").mkdir(exist_ok=True)
+        (root / "OverHit" / f"{name}.zip").write_bytes(name.encode())
+    from assetindex.db import connect
+    conn = connect(settings.db_path)
+    scan_root(conn, "lib", root)
+    conn.close()
+    _analyze(client, settings)
+    assert "OverHit/Barrels.zip" in _units(client)  # three packs inside: opened by the rules
+
+    assert client.post("/api/organize/join", headers=PAGE, json={"root": "lib", "path": "OverHit"}).status_code == 200
+
+    units = _units(client)
+    assert "OverHit" in units and "OverHit/Barrels.zip" not in units
+
+
 def test_start_needs_the_model_and_one_job_at_a_time(env):
     client, settings = env
     (settings.data_dir / "caption.json").unlink()

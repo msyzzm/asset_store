@@ -21,7 +21,7 @@ from assetindex.config import Settings
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.scanlock import is_scan_running
 from assetindex.thumbs import EMBEDDED_PREVIEW_EXTS
-from assetindex.units import companions_by_unit
+from assetindex.units import companions_by_unit, is_container_name
 
 log = logging.getLogger(__name__)
 
@@ -106,6 +106,16 @@ def _thumb_id(conn: sqlite3.Connection, root: str, path: str, is_dir: bool, comp
         (root, *under(path), *exts),
     ).fetchone()
     return row["id"] if row else None
+
+
+def _keep_folders_whole(conn: sqlite3.Connection, root: str, paths: list[str]) -> None:
+    """A folder pack someone decided on is one pack from now on, even if the decision is
+    undone later: undoing it must not let the rules split it (a join, as the user would)."""
+    conn.executemany(
+        "INSERT OR IGNORE INTO unit_joins (root, path)"
+        " SELECT root, path FROM organize_units WHERE root = ? AND path = ? AND is_dir = 1",
+        [(root, p) for p in paths],
+    )
 
 
 def _counts(conn: sqlite3.Connection) -> dict[str, dict[str, int]]:
@@ -193,6 +203,8 @@ def add_organize_routes(app: FastAPI, settings: Settings, get_conn: Callable, pa
         root_or_422(body.root)
         with conn:
             changed = sum(conn.execute(_DECIDE_SQL[body.action], (body.root, p)).rowcount for p in body.paths)
+            if body.action != "reset":
+                _keep_folders_whole(conn, body.root, body.paths)
         return {"changed": changed}
 
     @app.post("/api/organize/units/target", dependencies=guarded)
@@ -214,6 +226,7 @@ def add_organize_routes(app: FastAPI, settings: Settings, get_conn: Callable, pa
                 "UPDATE organize_units SET category = ?, name = ?, target = ?, status = 'accepted' WHERE root = ? AND path = ?",
                 (category, name, target, body.root, body.path),
             )
+            _keep_folders_whole(conn, body.root, [body.path])
         return {"target": target}
 
     @app.post("/api/organize/units/keep", dependencies=guarded)
@@ -251,8 +264,8 @@ def add_organize_routes(app: FastAPI, settings: Settings, get_conn: Callable, pa
     def api_join(body: Annotated[UnitRef, Body()], conn: sqlite3.Connection = Depends(get_conn)) -> dict:
         """Keep a folder as one pack: undoes the default rule and any split inside it."""
         root_or_422(body.root)
-        if "/" not in body.path:
-            raise HTTPException(409, "顶层文件夹不能合并成一个包")
+        if not body.path or ("/" not in body.path and is_container_name(body.path)):
+            raise HTTPException(409, "这是放分类的顶层文件夹（比如 UE、Unity），不能合并成一个包")
         low, high = under(body.path)
         if conn.execute(
             "SELECT 1 FROM files WHERE root = ? AND rel_path >= ? AND rel_path < ? LIMIT 1", (body.root, low, high)
