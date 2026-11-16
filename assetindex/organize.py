@@ -4,7 +4,7 @@ An analysis, started from the web UI, runs in the captioner process (it uses the
 vision model, so it shares the caption lock: one model job at a time):
 1. units: split each root into packs (assetindex/units.py) and remember them; a pack
    whose files changed loses its proposal;
-2. hashing: files that may have a twin (assetindex/dupes.py);
+2. sampling, hashing: compare files that may have a twin, cheaply first (assetindex/dupes.py);
 3. duplicates: identical packs; all copies but one are proposed for _Duplicates/;
 4. classifying: the model proposes a category and a name for each pack still without one.
 
@@ -67,9 +67,13 @@ def _splits(conn: sqlite3.Connection, root: str) -> list[str]:
     return [r[0] for r in conn.execute("SELECT path FROM unit_splits WHERE root = ?", (root,))]
 
 
-def current_units(conn: sqlite3.Connection, root: str) -> dict[tuple[str, bool], list[UnitFile]]:
+def _opened(conn: sqlite3.Connection, root: str) -> frozenset[str]:
     paths = [r[0] for r in conn.execute("SELECT rel_path FROM files WHERE root = ?", (root,))]
-    return unit_files(conn, root, opened_folders(paths, _splits(conn, root)))
+    return opened_folders(paths, _splits(conn, root))
+
+
+def current_units(conn: sqlite3.Connection, root: str) -> dict[tuple[str, bool], list[UnitFile]]:
+    return unit_files(conn, root, _opened(conn, root))
 
 
 def refresh_units(conn: sqlite3.Connection, root: str) -> dict[tuple[str, bool], list[UnitFile]]:
@@ -223,10 +227,12 @@ def run_analysis(
     report(status)
     refresh_units(conn, scope.root)
 
-    status = replace(status, phase="hashing")
+    status = replace(status, phase="sampling")
     report(status)
-    hashed = hash_pending(conn, settings, scope.root, should_stop,
-                          lambda done, total: report(replace(status, done=done, total=total)))
+    hashed = hash_pending(
+        conn, settings, scope.root, _opened(conn, scope.root), should_stop,
+        lambda stage, done, total: report(replace(status, phase=stage, done=done, total=total)),
+    )
     if hashed.stopped:
         return replace(status, running=False, stopped=True, finished=time.time())
     units = current_units(conn, scope.root)

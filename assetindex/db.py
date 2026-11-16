@@ -141,6 +141,17 @@ CREATE TABLE IF NOT EXISTS file_hashes (
 CREATE TRIGGER IF NOT EXISTS files_ad_hashes AFTER DELETE ON files BEGIN
     DELETE FROM file_hashes WHERE file_id = old.id;
 END;
+-- A cheap first look: the size plus three small slices (start, middle, end). Only files
+-- whose sample matches another's, in packs that could be twins, get a full hash.
+CREATE TABLE IF NOT EXISTS file_samples (
+    file_id INTEGER PRIMARY KEY,
+    size    INTEGER NOT NULL,
+    mtime   REAL    NOT NULL,
+    sample  TEXT    NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS files_ad_samples AFTER DELETE ON files BEGIN
+    DELETE FROM file_samples WHERE file_id = old.id;
+END;
 -- Folders the user opened: their children are units (packs) of their own.
 CREATE TABLE IF NOT EXISTS unit_splits (
     root TEXT NOT NULL,

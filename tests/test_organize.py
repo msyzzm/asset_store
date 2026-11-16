@@ -57,7 +57,8 @@ def test_analysis_marks_duplicates_and_proposes_a_place_for_everything_else(lib,
     final = run_analysis(conn, settings, Scope("lib"), _config(server), report=statuses.append)
 
     assert not final.running and final.error is None and final.done == 3 and final.failed == 0
-    assert [s.phase for s in statuses][:2] == ["units", "hashing"]
+    phases = [s.phase for s in statuses]
+    assert phases[:2] == ["units", "sampling"] and "hashing" in phases
     rows = _rows(conn)
     assert set(rows) == {"2D/Fire Pack", "2D/Fire Pack (1)", "2D/Ice Pack", "Audio/boom.wav"}
     dup = rows["2D/Fire Pack (1)"]

@@ -42,14 +42,41 @@ def _units(conn):
     return unit_files(conn, "lib", opened_folders(paths))
 
 
-def test_only_possible_twins_are_hashed(library):
+def _hashed_paths(conn):
+    rows = conn.execute("SELECT f.rel_path FROM file_hashes h JOIN files f ON f.id = h.file_id")
+    return {r[0] for r in rows}
+
+
+def test_only_possible_twins_are_sampled_and_only_suspects_read_whole(library):
     conn, settings = library
 
     stats = hash_pending(conn, settings, "lib")
 
-    # 300 B: a.png x2, b.png x2, shared.png, own.png; 500 B: the three zips. Not readme.txt.
-    assert stats.hashed == 9 and stats.failed == 0
-    assert hash_pending(conn, settings, "lib").hashed == 0  # cached
+    # Sampled: 300 B a.png x2, b.png x2, shared.png, own.png; 500 B the three zips. Not readme.txt.
+    assert stats.sampled == 9 and stats.failed == 0
+    # Read whole: same sample as another file AND a pack of the same shape (files, total size).
+    # Other Pack (2 files) matches no pack, so its shared.png is not; same-size.zip's sample is unique.
+    assert _hashed_paths(conn) == {
+        "2D/Knight Pack/sprites/a.png", "2D/Knight Pack/sprites/b.png",
+        "2D/Knight Pack (1)/sprites/a.png", "2D/Knight Pack (1)/sprites/b.png",
+        "2D/sword.zip", "itch/sword copy.zip",
+    }
+    again = hash_pending(conn, settings, "lib")
+    assert (again.sampled, again.hashed) == (0, 0)  # cached
+
+
+def test_same_sample_different_content_is_told_apart_by_reading_whole(tmp_path, conn, monkeypatch):
+    monkeypatch.setattr(dupes, "SAMPLE_CHUNK", 10)  # samples cover bytes 0-10, 245-255, 490-500
+    root = tmp_path / "lib"
+    _put(root, "x.zip", b"Q" * 500)
+    _put(root, "y.zip", b"Q" * 100 + b"R" + b"Q" * 399)  # differs only where the sample doesn't look
+    settings = Settings(roots={"lib": root}, data_dir=tmp_path / "data")
+    scan_root(conn, "lib", root)
+
+    stats = hash_pending(conn, settings, "lib")
+
+    assert (stats.sampled, stats.hashed) == (2, 2)
+    assert duplicate_units(_units(conn)) == []
 
 
 def test_identical_packs_and_archives_are_grouped_with_a_sensible_keeper(library):
@@ -100,23 +127,37 @@ def test_preferred_copy_is_kept_and_copyright_is_not_a_copy_mark(library):
     assert dupes._keep_rank("Copyright Free Pack")[1] is False
 
 
+def test_lone_files_are_never_called_twins_on_their_samples_alone(library, monkeypatch):
+    conn, settings = library
+
+    def unreadable(path):
+        raise OSError("NAS went away")
+
+    monkeypatch.setattr(dupes, "file_hash", unreadable)
+    hash_pending(conn, settings, "lib")
+
+    keepers = {g.keep for g in duplicate_units(_units(conn))}
+    assert "2D/sword.zip" not in keepers  # same sample, but never read whole
+
+
 def test_unreadable_files_are_skipped(library, tmp_path):
     conn, settings = library
     os.remove(tmp_path / "lib" / "2D" / "sword.zip")
 
     stats = hash_pending(conn, settings, "lib")
 
-    assert stats.failed == 1 and stats.hashed == 8
+    assert stats.failed == 1 and stats.sampled == 8
+    assert "itch/sword copy.zip" not in _hashed_paths(conn)  # its twin is gone: nothing to compare
 
 
-def test_stop_keeps_what_was_hashed(library):
+def test_stop_keeps_what_was_sampled(library):
     conn, settings = library
     calls = iter([False, False, True])
 
     stats = hash_pending(conn, settings, "lib", should_stop=lambda: next(calls))
 
-    assert stats.stopped and stats.hashed == 2
-    assert conn.execute("SELECT COUNT(*) FROM file_hashes").fetchone()[0] == 2
+    assert stats.stopped and stats.sampled == 2
+    assert conn.execute("SELECT COUNT(*) FROM file_samples").fetchone()[0] == 2
 
 
 def test_signature_changes_with_any_file(library):

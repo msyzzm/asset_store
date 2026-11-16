@@ -12,7 +12,7 @@ const TABS = [
   ['rejected', '已拒绝'], ['todo', '未分析'], ['failed', '失败'], ['all', '全部'],
 ];
 const STATUS_LABELS = { todo: '未分析', proposed: '待确认', accepted: '已确认', rejected: '已拒绝' };
-const PHASES = { units: '整理包列表', hashing: '比对文件内容', classifying: '让模型看图归类' };
+const PHASES = { units: '整理包列表', sampling: '抽样比对文件', hashing: '细比可能重复的文件', classifying: '让模型看图归类' };
 const view = { root: '', show: 'proposed', category: '', q: '', offset: 0, seq: 0, statusSeq: 0, timer: 0, wasBusy: false };
 
 const $ = (id) => document.getElementById(id);

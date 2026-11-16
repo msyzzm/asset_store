@@ -11,7 +11,7 @@ const organizeBar = { timer: 0, busy: false, stopping: false };
 function organizeText(data) {
   const job = data.job;
   if (job.running) {
-    const phase = { units: '整理包列表', hashing: '比对文件内容', classifying: '让模型看图归类' }[job.phase] ?? '';
+    const phase = { units: '整理包列表', sampling: '抽样比对文件', hashing: '细比可能重复的文件', classifying: '让模型看图归类' }[job.phase] ?? '';
     return `正在分析 ${job.root}:/${job.prefix ?? ''}：${phase}${job.total ? ` ${job.done + job.failed}/${job.total}` : ''}`;
   }
   if (job.requested) return '已提交，等 captioner 开始…';
