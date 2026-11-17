@@ -374,3 +374,27 @@ def test_set_aside_names_are_numbered(env):
                          json={"root": "lib", "path": "2D/Fire Pack", "target": "_待删除/Pack"})
 
     assert first.json()["target"] == "_待删除/Pack" and second.json()["target"] == "_待删除/Pack (2)"
+
+
+
+def test_a_name_whose_previews_would_mix_with_another_pack_is_refused(env, conn):
+    import zipfile
+
+    client, settings = env
+    root = settings.roots["lib"]
+    for name in ("A.zip", "B.zip"):
+        with zipfile.ZipFile(root / "2D" / name, "w") as z:
+            z.writestr("tex.png", name.encode() * 100)  # not copies of each other
+    scan_root(conn, "lib", root)
+    _analyze(client, settings)
+
+    def retarget(path, target):
+        return client.post("/api/organize/units/target", headers=PAGE, json={"root": "lib", "path": path, "target": target})
+
+    first = retarget("2D/A.zip", "01_2D/UI/Same")
+    assert first.json().get("target") == "01_2D/UI/Same.zip", first.text
+    assert retarget("2D/B.zip", "01_2D/UI/Other").status_code == 200
+    assert retarget("2D/A.zip", "01_2D/UI/Other").status_code == 409
+    assert retarget("2D/B.zip", "01_2D/UI/Other").status_code == 200  # its own name again is fine
+    assert retarget("2D/B.zip", "01_2D/UI/same_").status_code == 409  # "Same.png" would go with either
+    assert retarget("2D/B.zip", "01_2D/UI/Same 2").json()["target"] == "01_2D/UI/Same 2.zip"

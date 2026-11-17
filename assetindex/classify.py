@@ -25,7 +25,7 @@ from assetindex.embed_stage import BACKGROUND, JPEG_QUALITY, _has_image, card_jp
 from assetindex.embedding import EmbedError
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.thumbs import file_thumb_path, open_image, sheet_image, sheet_path
-from assetindex.units import SCHEME_FOLDERS, layout, stored_joins, stored_splits
+from assetindex.units import SCHEME_FOLDERS, archive_stem, layout, preview_key, stored_joins, stored_splits
 
 
 MAX_NAME_CHARS = 60
@@ -308,16 +308,42 @@ def clean_name(name: str, original: str, is_dir: bool) -> str:
     return cleaned + suffix
 
 
+def _file_key(name: str) -> str | None:
+    """The preview key of a file name ("Pack.part1.rar" -> "pack"), None for a name with
+    no extension: a folder, whose name previews are never matched to."""
+    stem = archive_stem(name)
+    if stem is None:
+        suffix = file_suffix(name)
+        if not suffix:
+            return None
+        stem = name[: len(name) - len(suffix)]
+    return preview_key(stem)
+
+
+def name_clashes(category: str, name: str, is_dir: bool, taken: set[str]) -> bool:
+    """The path is used or proposed, or (a file pack) another pack there has a name its
+    previews would be matched to as well: "X.zip" next to "X.rar", "X - 3D.7z" or "X (2).zip"."""
+    if f"{category}/{name}".lower() in taken:
+        return True
+    if is_dir:
+        return False
+    folder, key = category.lower(), _file_key(name)
+    return key is not None and any(
+        t.rpartition("/")[0] == folder and _file_key(t.rpartition("/")[2]) == key for t in taken
+    )
+
+
 def target_for(category: str, name: str, is_dir: bool, taken: set[str]) -> str:
-    """category/name, numbered ("name (2).zip") if that path is already used or proposed.
-    `taken` holds lower-cased paths: NAS file systems may ignore case."""
+    """category/name, numbered if it clashes (see name_clashes): "Icons (2)" for a folder,
+    "pack 2.zip" for a file ("pack (2).png" would preview "pack.zip"). `taken` holds
+    lower-cased paths: NAS file systems may ignore case."""
     suffix = "" if is_dir else file_suffix(name)
     stem = name[: len(name) - len(suffix)] if suffix else name
-    target, n = f"{category}/{name}", 2
-    while target.lower() in taken:
-        target = f"{category}/{stem} ({n}){suffix}"
+    numbered, n = name, 2
+    while name_clashes(category, numbered, is_dir, taken):
+        numbered = f"{stem} ({n})" if is_dir else f"{stem} {n}{suffix}"
         n += 1
-    return target
+    return f"{category}/{numbered}"
 
 
 @dataclass(frozen=True)

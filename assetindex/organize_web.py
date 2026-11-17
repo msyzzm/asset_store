@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from assetindex import caption_job, organize
 from assetindex.caption import load_config
-from assetindex.classify import CATEGORIES, DUPLICATES, TO_DELETE, UNSORTED, file_suffix, target_for, under
+from assetindex.classify import CATEGORIES, DUPLICATES, TO_DELETE, UNSORTED, file_suffix, name_clashes, target_for, under
 from assetindex.config import Settings
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.scanlock import is_scan_running
@@ -317,8 +317,11 @@ def add_organize_routes(app: FastAPI, settings: Settings, get_conn: Callable, pa
         if category == TO_DELETE:  # same names from different folders are common: number them
             target = target_for(TO_DELETE, name, bool(row["is_dir"]), organize._taken(conn, body.root, body.path))
             name = target.split("/", 1)[1]
-        if target != row["target"] and target.lower() in organize._taken(conn, body.root, body.path):
+        taken = organize._taken(conn, body.root, body.path)
+        if target.lower() in taken:
             raise HTTPException(409, f"「{target}」已经有了，或者被别的包占用")
+        if name_clashes(category, name, bool(row["is_dir"]), taken):
+            raise HTTPException(409, f"「{category}」里已有同名的压缩包，预览图会配错，换个名字（比如后面加 2）")
         with conn:
             conn.execute(
                 "UPDATE organize_units SET category = ?, name = ?, target = ?, status = 'accepted' WHERE root = ? AND path = ?",

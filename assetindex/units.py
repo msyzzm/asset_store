@@ -177,6 +177,11 @@ def folder_companions(here: list[str], below: Mapping[str, list[str]]) -> dict[s
     return pairs
 
 
+def preview_key(stem: str) -> str:
+    """What previews are matched to a pack by: "X (2).png" and "x-.png" both go with "X.zip"."""
+    return _squash(_COPY_SUFFIX.sub("", stem))
+
+
 def _squash(name: str) -> str:
     """Lower case without separators: "Hong_Kong Street" and "hong kong-street" match."""
     return _SEPARATORS.sub("", name).lower()

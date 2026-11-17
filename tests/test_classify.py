@@ -100,7 +100,7 @@ def test_names_are_made_safe(name, original, is_dir, expected):
 def test_targets_never_collide():
     taken = {"01_2d/ui/icons", "01_2d/ui/icons (2)", "01_2d/ui/pack.zip"}
     assert target_for("01_2D/UI", "Icons", True, taken) == "01_2D/UI/Icons (3)"
-    assert target_for("01_2D/UI", "pack.zip", False, taken) == "01_2D/UI/pack (2).zip"
+    assert target_for("01_2D/UI", "pack.zip", False, taken) == "01_2D/UI/pack 2.zip"
     assert target_for("01_2D/UI", "v1.2 pack", True, set()) == "01_2D/UI/v1.2 pack"
 
 
@@ -117,7 +117,7 @@ def test_extensions_are_kept_once(name, original, expected):
 
 
 def test_numbered_target_keeps_a_compound_extension():
-    assert target_for("01_2D/UI", "x.tar.gz", False, {"01_2d/ui/x.tar.gz"}) == "01_2D/UI/x (2).tar.gz"
+    assert target_for("01_2D/UI", "x.tar.gz", False, {"01_2d/ui/x.tar.gz"}) == "01_2D/UI/x 2.tar.gz"
 
 
 def test_engine_effects_have_a_3d_category_and_download_sites_are_no_source():
@@ -224,3 +224,20 @@ def test_unusable_answer_is_an_item_problem(library, settings, server):
     with pytest.raises(EmbedError) as err:
         classify_unit(client, library, settings, "art", "2D/Fire Pack", True)
     assert err.value.item_problem
+
+
+@pytest.mark.parametrize(
+    "name, taken, expected",
+    [
+        ("X.zip", {"c/x.rar"}, "C/X 2.zip"),  # the preview "X.png" would go with the rar
+        ("A 3D.7z", {"c/a - 3d.zip"}, "C/A 3D 2.7z"),  # separators do not tell previews apart
+        ("X.zip", {"c/x (2).rar"}, "C/X 2.zip"),  # "X (2).png" is a second preview of "X"
+        ("X.zip", {"c/x.zip", "c/x 2.7z"}, "C/X 3.zip"),
+        ("X.zip", {"d/x.rar", "c/sub/x.rar"}, "C/X.zip"),  # other folders do not matter
+        ("X.zip", {"c/x.part1.rar"}, "C/X 2.zip"),  # volumes are named after the pack
+        ("X.zip", {"c/x"}, "C/X.zip"),  # a folder takes no previews
+        ("X.zip", {"c/x.png"}, "C/X 2.zip"),  # a lone picture would become its preview
+    ],
+)
+def test_file_packs_get_names_their_previews_cannot_mix_up(name, taken, expected):
+    assert target_for("C", name, False, taken) == expected
