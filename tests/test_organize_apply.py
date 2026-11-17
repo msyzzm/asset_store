@@ -6,6 +6,7 @@ import pytest
 
 import sqlite3
 
+from assetindex import tags
 from assetindex import organize_apply
 from assetindex.organize import refresh_units
 from assetindex.organize_apply import apply_plan, open_transactions, recover, undo, unsettled
@@ -133,10 +134,12 @@ def test_a_folder_pack_moves_with_everything_under_it(lib):
     conn, root, put, journal = lib
     put("Game Artbook/a/1.png", "Game Artbook/b/2.png")
     _accept(conn, "Game Artbook", "05_Reference/Artbook")
+    tags.save_tags(conn, "lib", "Game Artbook", tags.Tags("不限", "手绘", ("设定集",)), "m")
 
     result = apply_plan(conn, root, "lib", build_plan(conn, "lib"), journal, move=linux_rename)
 
     assert result.moved == 1
+    assert tags.tags_of(conn, "lib", "05_Reference/Artbook")["themes"] == ["设定集"]  # the tags went along
     assert {"05_Reference/Artbook/a/1.png", "05_Reference/Artbook/b/2.png"} <= set(_ids(conn))
     assert (root / "05_Reference/Artbook/b/2.png").exists()
     refresh_units(conn, "lib")  # the next analysis sees the same pack, still decided

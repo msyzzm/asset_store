@@ -308,6 +308,7 @@ def rekey(conn: sqlite3.Connection, root: str, txn: _Txn) -> None:
                      (txn.new_unit, txn.target, txn.status, root, txn.unit))
         conn.execute("UPDATE organize_units SET dup_of = ? WHERE root = ? AND dup_of = ?", (txn.new_unit, root, txn.unit))
         conn.execute("UPDATE dup_keep SET path = ? WHERE root = ? AND path = ?", (txn.new_unit, root, txn.unit))
+        conn.execute("UPDATE OR REPLACE pack_tags SET path = ? WHERE root = ? AND path = ?", (txn.new_unit, root, txn.unit))
 
 
 def _rekeyed(conn: sqlite3.Connection, root: str, step: Rename) -> bool:

@@ -43,6 +43,7 @@ from assetindex.scan_request import request_stop as request_scan_stop
 from assetindex.scanlock import is_scan_running
 from assetindex.search import MAX_LIMIT, MAX_QUERY_LENGTH, parse_terms, search
 from assetindex.packs import search_packs
+from assetindex.tags import add_tag_routes
 from assetindex.semantic import NoVectors, VectorIndex, ranked_ids, semantic_search
 from assetindex.sequences import frames_of
 from assetindex.updater import add_update_routes
@@ -370,6 +371,7 @@ def create_app(settings: Settings) -> FastAPI:
         return search_packs(conn, q, category, limit, offset, meaning), used, note
 
     add_agent_routes(app, settings, get_conn, resolve, agent_search, scan_state, agent_packs)
+    add_tag_routes(app, settings, page_request)
     add_update_routes(app, settings.data_dir, page_request)
     add_organize_routes(app, settings, get_conn, page_request)
     add_move_routes(app, settings, get_conn, page_request)

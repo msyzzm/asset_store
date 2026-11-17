@@ -9,7 +9,8 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
-from assetindex import attempts, caption_job, move_job, organize, organize_apply, scan_request
+from assetindex import attempts, caption_job, move_job, organize, organize_apply, scan_request, tags
+from assetindex.caption import CaptionClient
 from assetindex.archive_index import index_archives
 from assetindex.archive_previews import build_previews
 from assetindex.cache_prune import prune_thumbs
@@ -328,6 +329,10 @@ def _caption_watch() -> int:
                 _organize_once(settings)
             except Exception:
                 log.exception("organize job failed")
+            try:
+                _tags_once(settings)
+            except Exception:
+                log.exception("tags job failed")
             time.sleep(CAPTION_POLL_SECONDS)
     except KeyboardInterrupt:
         return 0
@@ -448,6 +453,56 @@ def _organize_once(settings: Settings) -> bool:
     except ScanLocked:
         return False  # a caption job holds the model: try again next round
     return True
+
+
+def _tags_once(settings: Settings) -> bool:
+    """Run the tagging requested from the web UI, if any (it holds the model, like organizing)."""
+    if not tags.is_requested(settings.data_dir):
+        return False
+    try:
+        with scan_lock(settings.data_dir, wait_seconds=LOCK_WAIT_SECONDS, name=organize.LOCK_NAME):
+            raw = tags.take_job(settings.data_dir)
+            if raw is None:
+                return False
+            _run_tags(settings, raw)
+    except ScanLocked:
+        return False  # another job holds the model: try again next round
+    return True
+
+
+def _run_tags(settings: Settings, raw: dict) -> None:
+    data_dir = settings.data_dir
+
+    last = [tags.TagStatus()]
+
+    def report(status: tags.TagStatus) -> None:
+        last[0] = status
+        try:
+            tags.write_status(data_dir, status)
+        except OSError as err:
+            log.warning("cannot write tags status: %r", err)
+
+    root, paths = raw.get("root"), raw.get("paths")
+    if root not in settings.roots or not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+        report(tags.TagStatus(error="请求格式不对", finished=time.time()))
+        return
+    config = load_caption_config(data_dir)
+    if not config.active:
+        report(tags.TagStatus(error="打标签要用看图模型：先设置好接口", finished=time.time()))
+        return
+    conn = connect(settings.db_path)
+    try:
+        patience = tags.Patience(config.retries, config.retry_wait, config.max_failures)
+        final = tags.run_tags(conn, settings, root, paths, CaptionClient(config), config.model,
+                              should_stop=lambda: tags.stop_requested(data_dir), report=report, patience=patience)
+    except Exception as err:  # keeps the counts so far
+        log.exception("tagging failed")
+        final = replace(last[0], running=False, current=None, error=f"出错中断：{err!r}", finished=time.time())
+    finally:
+        conn.close()
+    report(final)
+    log.info("tags: %d of %d packs, %d failed%s", final.done, final.total, final.failed,
+             f"; stopped: {final.error}" if final.error else "")
 
 
 def _organize_now(root: str, prefix: str, redo: bool) -> int:

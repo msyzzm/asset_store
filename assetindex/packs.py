@@ -16,6 +16,7 @@ from assetindex.categories import DUPLICATES, TO_DELETE
 from assetindex.classify import under
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.search import _where_with_terms, parse_terms
+from assetindex.tags import tags_of
 from assetindex.units import Layout, stored_layout
 
 MAX_HITS = 5  # files shown per pack: enough to see why it matched
@@ -222,6 +223,7 @@ def describe(req: _Request, pack: _Found) -> dict:
         "dim": next((dim for prefix, dim in DIMS if pack.path.startswith(prefix)), None),
         "engine": engine,
         "caption": _caption(req.conn, ids),
+        "tags": tags_of(req.conn, pack.root, pack.path),  # view (a hint only), style, themes; None if not tagged
         "match": pack.match,
         "hit_count": len(pack.hits),
         "hits": sorted(pack.hits)[:MAX_HITS],

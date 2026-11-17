@@ -159,6 +159,17 @@ CREATE TABLE IF NOT EXISTS unit_splits (
     PRIMARY KEY (root, path)
 );
 -- Folders the user (or a decision on them) keeps as one pack, whatever the default rule says.
+-- Tags the vision model gave a pack for search (see assetindex/tags.py).
+CREATE TABLE IF NOT EXISTS pack_tags (
+    root    TEXT NOT NULL,
+    path    TEXT NOT NULL,
+    view    TEXT NOT NULL,
+    style   TEXT NOT NULL,
+    themes  TEXT NOT NULL,  -- joined by 、
+    model   TEXT NOT NULL,
+    created REAL NOT NULL,
+    PRIMARY KEY (root, path)
+);
 CREATE TABLE IF NOT EXISTS unit_joins (
     root TEXT NOT NULL,
     path TEXT NOT NULL,
