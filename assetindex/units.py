@@ -177,9 +177,11 @@ def folder_companions(here: list[str], below: Mapping[str, list[str]]) -> dict[s
     return pairs
 
 
-def preview_key(stem: str) -> str:
-    """What previews are matched to a pack by: "X (2).png" and "x-.png" both go with "X.zip"."""
-    return _squash(_COPY_SUFFIX.sub("", stem))
+def pack_keys(stem: str) -> frozenset[str]:
+    """The names previews are matched by: an archive by its whole name ("X (2).rar" -> "x2"),
+    a preview by its name without a copy number ("X (2).png" -> "x"). Two files sharing a
+    key in one folder can take each other's previews."""
+    return frozenset({_squash(stem), _squash(_COPY_SUFFIX.sub("", stem))}) - {""}  # "(1).png" goes with nothing
 
 
 def _squash(name: str) -> str:

@@ -25,7 +25,7 @@ from assetindex.embed_stage import BACKGROUND, JPEG_QUALITY, _has_image, card_jp
 from assetindex.embedding import EmbedError
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.thumbs import file_thumb_path, open_image, sheet_image, sheet_path
-from assetindex.units import SCHEME_FOLDERS, archive_stem, layout, preview_key, stored_joins, stored_splits
+from assetindex.units import SCHEME_FOLDERS, archive_stem, layout, pack_keys, stored_joins, stored_splits
 
 
 MAX_NAME_CHARS = 60
@@ -308,16 +308,16 @@ def clean_name(name: str, original: str, is_dir: bool) -> str:
     return cleaned + suffix
 
 
-def _file_key(name: str) -> str | None:
-    """The preview key of a file name ("Pack.part1.rar" -> "pack"), None for a name with
-    no extension: a folder, whose name previews are never matched to."""
+def _file_keys(name: str) -> frozenset[str]:
+    """The keys a file is matched to previews by ("Pack.part1.rar" -> "pack"), none for a
+    name with no extension: a folder, whose name previews are never matched to."""
     stem = archive_stem(name)
     if stem is None:
         suffix = file_suffix(name)
         if not suffix:
-            return None
+            return frozenset()
         stem = name[: len(name) - len(suffix)]
-    return preview_key(stem)
+    return pack_keys(stem)
 
 
 def name_clashes(category: str, name: str, is_dir: bool, taken: set[str]) -> bool:
@@ -327,10 +327,8 @@ def name_clashes(category: str, name: str, is_dir: bool, taken: set[str]) -> boo
         return True
     if is_dir:
         return False
-    folder, key = category.lower(), _file_key(name)
-    return key is not None and any(
-        t.rpartition("/")[0] == folder and _file_key(t.rpartition("/")[2]) == key for t in taken
-    )
+    folder, keys = category.lower(), _file_keys(name)
+    return bool(keys) and any(t.rpartition("/")[0] == folder and keys & _file_keys(t.rpartition("/")[2]) for t in taken)
 
 
 def target_for(category: str, name: str, is_dir: bool, taken: set[str]) -> str:

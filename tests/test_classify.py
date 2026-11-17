@@ -231,7 +231,9 @@ def test_unusable_answer_is_an_item_problem(library, settings, server):
     [
         ("X.zip", {"c/x.rar"}, "C/X 2.zip"),  # the preview "X.png" would go with the rar
         ("A 3D.7z", {"c/a - 3d.zip"}, "C/A 3D 2.7z"),  # separators do not tell previews apart
-        ("X.zip", {"c/x (2).rar"}, "C/X 2.zip"),  # "X (2).png" is a second preview of "X"
+        ("X.zip", {"c/x (2).rar"}, "C/X 3.zip"),  # "X (2).png" previews "X"; "X 2.png" would preview "X (2).rar"
+        ("X.rar", {"c/x (2).rar", "c/x.zip"}, "C/X 3.rar"),
+        ("(1).zip", {"c/(2).png"}, "C/(1).zip"),  # names of only separators go with nothing
         ("X.zip", {"c/x.zip", "c/x 2.7z"}, "C/X 3.zip"),
         ("X.zip", {"d/x.rar", "c/sub/x.rar"}, "C/X.zip"),  # other folders do not matter
         ("X.zip", {"c/x.part1.rar"}, "C/X 2.zip"),  # volumes are named after the pack
