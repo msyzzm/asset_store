@@ -4,6 +4,7 @@
 // Uses api, post, el and view from organize.js. Paths come from the NAS: text only.
 
 const move = { timer: 0, seq: 0, plan: null, state: null, wasBusy: false };
+const ROOT_WAIT_MS = 300;
 
 function when(epoch) {
   return epoch ? new Date(epoch * 1000).toLocaleString('zh-CN', { hour12: false }) : '';
@@ -19,12 +20,12 @@ function mountText(mount) {
 
 function moveJobText(job) {
   if (job.running) {
-    const what = job.action === 'undo' ? '正在撤销' : job.action === 'recover' ? '正在收尾上次中断的移动' : '正在移动';
+    const what = { undo: '正在撤销', recover: '正在收尾上次中断的移动', unpack: '正在解开带密码的包' }[job.action] ?? '正在移动';
     return job.total ? `${what} ${job.done}/${job.total}…` : `${what}…`;
   }
   if (job.requested) return job.waiting ? '已提交，等扫描或整理分析结束后开始…' : '已提交，mover 马上开始…';
   if (!job.finished) return '';
-  const what = job.action === 'undo' ? `撤销了 ${job.moved} 个包` : job.action === 'recover' ? '收尾完成' : `移动了 ${job.moved} 个包`;
+  const what = { undo: `撤销了 ${job.moved} 个包`, recover: '收尾完成', unpack: `解开了 ${job.moved} 个带密码的包，等扫描完再分析它们` }[job.action] ?? `移动了 ${job.moved} 个包`;
   const problems = job.problems.length ? `，${job.problems.length} 个没动（原因见下）` : '';
   const ending = job.error ? `。${job.error}` : job.stopped ? '，已手动停止。' : '。';
   return `上次（${when(job.finished)}）：${what}${problems}${ending}`;
@@ -45,6 +46,7 @@ function renderMoveState(data) {
   $('m-stop').hidden = !busy || job.action === 'recover';  // settling cannot be stopped halfway
   $('m-start').hidden = busy;
   $('m-start').disabled = !writable || !move.plan?.moves;
+  $('m-unpack').disabled = !writable || busy;
   $('m-recover').hidden = !data.unsettled || busy;
   const bar = $('m-bar');
   bar.hidden = !job.running || !job.total;
@@ -78,7 +80,7 @@ async function refreshMoves() {
     const finished = move.wasBusy && !(data.job.running || data.job.requested);
     if (finished) { move.plan = null; $('m-plan-view').hidden = true; }  // things moved: the plan is old
     busy = renderMoveState(data);
-    if (finished) afterChange();
+    if (finished) { afterChange(); refreshLocked(); }
     move.wasBusy = busy;
   } catch (err) {
     if (seq !== move.seq) return;
@@ -139,7 +141,30 @@ async function startApply() {
   }
 }
 
+async function refreshLocked() {
+  if (!view.root) { setTimeout(refreshLocked, ROOT_WAIT_MS); return; }  // the roots load after this script starts
+  try {
+    const locked = await api(`/api/organize/locked?${new URLSearchParams({ root: view.root })}`);
+    $('m-locked').hidden = !locked.count;
+    $('m-locked-summary').textContent = `有 ${locked.count} 个压缩包带密码（${(locked.size / 1e9).toFixed(1)} GB），扫描读不出里面的文件。`
+      + '解开后每个包变成同名文件夹，预览图放进去，原压缩包移到 _待删除，你在群晖里检查后删除。密码只用这一次，不保存。';
+  } catch (err) {
+    $('m-locked').hidden = false;
+    $('m-locked-summary').textContent = `带密码的包读取失败：${err.message}`;
+  }
+}
+
+async function startUnpack(event) {
+  event.preventDefault();
+  const password = $('m-password').value;
+  if (!password) return;
+  await startMove({ action: 'unpack', root: view.root, password },
+    '把带密码的压缩包全部解开成文件夹？原压缩包会移到 _待删除。密码不对的包会原样留着。');
+  $('m-password').value = '';
+}
+
 function initMoves() {
+  $('m-unpack-form').addEventListener('submit', startUnpack);
   $('m-plan').addEventListener('click', showPlan);
   $('m-start').addEventListener('click', startApply);
   $('m-recover').addEventListener('click', () => startMove({ action: 'recover', root: view.root }));
@@ -147,8 +172,9 @@ function initMoves() {
     try { await post('/api/organize/moves/stop', {}); } catch (err) { $('m-error').textContent = `没能停止：${err.message}`; }
     refreshMoves();
   });
-  $('o-form').root.addEventListener('change', () => { move.plan = null; $('m-plan-view').hidden = true; refreshMoves(); });
+  $('o-form').root.addEventListener('change', () => { move.plan = null; $('m-plan-view').hidden = true; refreshMoves(); refreshLocked(); });
   refreshMoves();
+  refreshLocked();
 }
 
 initMoves();

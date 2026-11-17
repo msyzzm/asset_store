@@ -385,7 +385,7 @@ def _run_move(settings: Settings, raw) -> None:
         except OSError as err:
             log.warning("cannot write move status: %r", err)
 
-    log.info("move job %r", raw)
+    log.info("move job %r", {k: v for k, v in raw.items() if k != "password"} if isinstance(raw, dict) else raw)
     conn = connect(settings.db_path)
     try:
         final = move_job.run(conn, settings, raw, should_stop=lambda: move_job.stop_requested(data_dir), report=report)

@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 IGNORED_DIRS: frozenset[str] = frozenset({
     "node_modules", ".git", ".svn", "__pycache__", "@eaDir", "#recycle",
 })
+UNPACKING_SUFFIX = ".unpacking"  # a folder assetindex/unpack.py is still writing: never a pack
 BATCH_SIZE = 2000
 # Past this many unreadable paths, something is broadly wrong: skip deletion entirely.
 MAX_PROTECTED_PREFIXES = 200
@@ -66,7 +67,7 @@ def _walk(root: Path, unreadable: list[str], should_stop: Callable[[], bool] = n
     for dirpath, dirnames, filenames in os.walk(root, onerror=on_error):
         if should_stop():
             raise ScanStopped(f"stopped while walking {root}")
-        dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS]
+        dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS and not d.endswith(UNPACKING_SUFFIX)]
         for filename in filenames:
             full = os.path.join(dirpath, filename)
             rel = rel_of(full)

@@ -49,6 +49,14 @@
         <details id="m-plan-problems-box" hidden><summary>先不动的包</summary><ul id="m-plan-problems" class="org-move-list"></ul></details>
         <details id="m-plan-sample-box" hidden><summary>要移动的包（前 200 个）</summary><ul id="m-plan-sample" class="org-move-list"></ul></details>
       </div>
+      <div id="m-locked" class="org-locked" hidden>
+        <h3>带密码的压缩包</h3>
+        <p id="m-locked-summary" class="hint"></p>
+        <form id="m-unpack-form" class="org-move-actions">
+          <label>解压密码 <input id="m-password" name="password" type="text" autocomplete="off" maxlength="200" required></label>
+          <button id="m-unpack" class="btn secondary" type="submit">全部解开</button>
+        </form>
+      </div>
       <h3>移动记录</h3>
       <p id="m-history-empty" class="hint">还没有移动过。</p>
       <ul id="m-history" class="org-move-list"></ul>

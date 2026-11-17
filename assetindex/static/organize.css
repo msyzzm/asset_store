@@ -126,3 +126,5 @@
   .org-side { grid-column: 1 / -1; justify-items: start; }
   .org-actions { justify-content: start; }
 }
+.org-locked { margin-top: 16px; }
+.org-locked input { min-width: 12em; }

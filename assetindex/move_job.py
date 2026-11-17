@@ -19,7 +19,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
-from assetindex import organize, organize_apply
+from assetindex import organize, organize_apply, scan_request, unpack
 from assetindex.config import Settings
 from assetindex.organize_move import build_plan
 from assetindex.scan_request import write_json_atomic
@@ -30,7 +30,9 @@ REQUEST_NAME = "move.request"
 STOP_NAME = "move.stop"
 STATUS_NAME = "move.status"
 LOCK_NAME = "move.lock"  # held by the mover for a whole job: "running" means this lock is held
-ACTIONS = ("apply", "undo", "recover")
+ACTIONS = ("apply", "undo", "recover", "unpack")
+MAX_PASSWORD = 200
+MAX_UNPACK_LIMIT = 100_000
 MAX_PROBLEMS = 200  # shown on the page; the journal has every detail
 MAX_HISTORY = 50
 MOUNT_STALE_SECONDS = 300  # the mover refreshes move.mount every ~90 s; older: it is not running
@@ -137,9 +139,17 @@ def read_status(data_dir: Path) -> MoveStatus:
 
 def parse(raw, settings: Settings) -> tuple[str, str, str | None]:
     """(action, root, journal name) from a request, validated."""
-    if not isinstance(raw, dict) or set(raw) - {"action", "root", "journal"}:
+    if not isinstance(raw, dict) or set(raw) - {"action", "root", "journal", "password", "limit"}:
         raise ValueError("请求格式不对")
     action, root, journal = raw.get("action"), raw.get("root"), raw.get("journal")
+    password = raw.get("password")
+    if action == "unpack" and not (isinstance(password, str) and 0 < len(password) <= MAX_PASSWORD):
+        raise ValueError("要填解压密码")
+    limit = raw.get("limit")
+    if action != "unpack" and (password is not None or limit is not None):
+        raise ValueError("请求格式不对")
+    if limit is not None and (type(limit) is not int or not 0 < limit <= MAX_UNPACK_LIMIT):
+        raise ValueError("要解开几个？")
     if action not in ACTIONS:
         raise ValueError("不认识的操作")
     if not isinstance(root, str) or root not in settings.roots:
@@ -175,6 +185,7 @@ def run(
     report: Callable[[MoveStatus], None] = lambda status: None,
     move: Callable[[str, str, bool], None] = organize_apply.move_no_replace,
     now: Callable[[], float] = time.time,
+    free_bytes: Callable[[Path], int] = unpack.free_bytes,
 ) -> MoveStatus:
     """One job; the caller holds the locks."""
     try:
@@ -197,6 +208,8 @@ def run(
     if action == "recover":
         organize.refresh_units(conn, root)
         return replace(status, running=False, finished=now())
+    if action == "unpack":
+        return _unpack(conn, settings, raw, status, should_stop, report, move, free_bytes, now)
     journals = settings.data_dir / organize_apply.JOURNAL_DIR
     progress = {"done": 0}
 
@@ -221,3 +234,25 @@ def run(
         problems=(status.problems + _problems(result.problems))[:MAX_PROBLEMS],
         error=result.error, stopped=result.stopped,
     )
+
+
+def _unpack(conn, settings: Settings, raw: dict, status: MoveStatus, should_stop, report, move, free_bytes, now) -> MoveStatus:
+    """Unpack the password-protected archives (see assetindex/unpack.py), all or the
+    first `limit`; a scan picks up the new folders."""
+    root, password = status.root, raw["password"]
+    base = settings.roots[root].resolve()
+    items = unpack.locked_archives(conn, root, base)[: raw.get("limit")]
+    status = replace(status, total=len(items))
+    report(status)
+    progress = {"done": 0}
+
+    def step(done: int) -> None:
+        progress["done"] = done
+        report(replace(status, done=done))
+
+    result = unpack.unpack_all(conn, base, root, password, items, should_stop, step,
+                               move=move, free=free_bytes)
+    if result.unpacked:
+        scan_request.request_scan(settings.data_dir)
+    return replace(status, running=False, finished=now(), moved=result.unpacked, done=progress["done"],
+                   problems=_problems(result.problems), error=result.error, stopped=result.stopped)
