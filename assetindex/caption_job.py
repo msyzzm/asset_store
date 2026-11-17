@@ -29,7 +29,6 @@ STOP_NAME = "caption.stop"
 STATUS_NAME = "caption.status"
 LOCK_NAME = "caption.lock"
 CAPTION_BOX = (512, 512)  # enough detail to tell what is drawn; a contact sheet stays legible
-MAX_CONSECUTIVE_FAILURES = 100  # every picture refused: the settings, not the pictures, are wrong
 EMBED_EVERY = 20  # refresh text vectors this often, so search improves while the job runs
 MAX_PREFIX_LENGTH = 500
 MAX_ERROR_CHARS = 300
@@ -183,7 +182,7 @@ def run_job(
             save_caption(conn, row, config.model, None, str(err))
             status = replace(status, failed=status.failed + 1)
             consecutive += 1
-            if consecutive >= MAX_CONSECUTIVE_FAILURES:
+            if consecutive >= config.max_failures:  # every picture refused: the settings are wrong
                 status = replace(status, error=f"连续 {consecutive} 张都失败，已停止，检查设置：{err}")
                 break
             continue

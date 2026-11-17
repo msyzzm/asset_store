@@ -1,4 +1,5 @@
 import io
+import json
 
 import pytest
 from PIL import Image
@@ -44,6 +45,26 @@ def test_settings_validate_and_keep_the_key_private(tmp_path):
     assert apply_update(config, {"model": "other"}).api_key == "k1"
 
 
+def test_job_limits_are_settings_with_defaults(tmp_path):
+    config = apply_update(CaptionConfig(), {"workers": 4, "retries": 0, "retry_wait": 30, "max_failures": 50})
+    assert (config.workers, config.retries, config.retry_wait, config.max_failures) == (4, 0, 30, 50)
+    save_config(tmp_path, config)
+    assert load_config(tmp_path) == config
+    assert public_view(config)["workers"] == 4
+    plain = CaptionConfig()
+    assert (plain.workers, plain.retries, plain.retry_wait, plain.max_failures) == (3, 3, 10, 100)
+
+
+@pytest.mark.parametrize(
+    "update",
+    [{"workers": 0}, {"workers": 9}, {"workers": "3"}, {"workers": True}, {"retries": -1},
+     {"retry_wait": 601}, {"max_failures": 0}, {"max_failures": 1.5}],
+)
+def test_job_limits_out_of_range_are_refused(update):
+    with pytest.raises(ValueError):
+        apply_update(CaptionConfig(), update)
+
+
 @pytest.mark.parametrize(
     "update",
     [
@@ -62,6 +83,17 @@ def test_bad_settings_are_refused(update):
 def test_unreadable_settings_fall_back_to_defaults(tmp_path):
     (tmp_path / "caption.json").write_text("{not json", encoding="utf-8")
     assert load_config(tmp_path) == CaptionConfig()
+
+
+def test_a_bad_stored_limit_falls_back_alone(tmp_path):
+    save_config(tmp_path, CaptionConfig(base_url="http://10.0.0.5:8080/v1", model="qwen", api_key="k", retries=5))
+    raw = json.loads((tmp_path / "caption.json").read_text(encoding="utf-8"))
+    (tmp_path / "caption.json").write_text(json.dumps({**raw, "workers": 99}), encoding="utf-8")
+
+    config = load_config(tmp_path)
+
+    assert config.base_url == "http://10.0.0.5:8080/v1" and config.api_key == "k"
+    assert config.workers == CaptionConfig().workers and config.retries == 5
 
 
 def test_clean_caption_strips_thinking_controls_and_length():

@@ -35,11 +35,24 @@ _THINKING = re.compile(r"<think>.*?</think>", re.DOTALL)
 _CONTROL = re.compile(r"[\x00-\x09\x0b-\x1f\x7f]")
 
 
+# Job limits, each (lowest, highest) and how the page names it in an error.
+LIMITS = {
+    "workers": (1, 8, "并行数量"),
+    "retries": (0, 20, "接口出错重试次数"),
+    "retry_wait": (0, 600, "重试前等待秒数"),
+    "max_failures": (1, 10000, "连续失败上限"),
+}
+
+
 @dataclass(frozen=True)
 class CaptionConfig:
     base_url: str = ""  # e.g. http://192.168.1.10:8080/v1; "/chat/completions" is appended
     model: str = ""  # Strata ignores it, OpenAI-style servers need it
     api_key: str = ""
+    workers: int = 3  # questions open at once in the organize analysis
+    retries: int = 3  # API errors on one pack before it counts as failed (it may be what chokes the model)
+    retry_wait: int = 10  # seconds without new questions after an API error (model restarting...)
+    max_failures: int = 100  # failures in a row (bad answers or API errors) before a job stops
 
     @property
     def active(self) -> bool:
@@ -51,20 +64,38 @@ def apply_update(current: CaptionConfig, update: dict) -> CaptionConfig:
     unknown = set(update) - {f.name for f in fields(CaptionConfig)}
     if unknown:
         raise ValueError(f"未知设置项：{', '.join(sorted(unknown))}")
-    if not all(isinstance(v, str) for v in update.values()):
+    if not all(isinstance(v, str) for k, v in update.items() if k not in LIMITS):
         raise ValueError("设置项的类型不对")
     base_url = check_url(update.get("base_url", current.base_url))
     model = update.get("model", current.model).strip()
     if len(model) > MAX_MODEL_LENGTH:
         raise ValueError("模型名太长")
     api_key = next_key(update, current.api_key, base_url == current.base_url)
-    return CaptionConfig(base_url=base_url, model=model, api_key=api_key)
+    limits = {name: _limit(name, update.get(name, getattr(current, name))) for name in LIMITS}
+    return CaptionConfig(base_url=base_url, model=model, api_key=api_key, **limits)
+
+
+def _valid_limit(name: str, value: object) -> bool:
+    try:
+        _limit(name, value)
+    except ValueError:
+        return False
+    return True
+
+
+def _limit(name: str, value: object) -> int:
+    low, high, label = LIMITS[name]
+    if type(value) is not int or not low <= value <= high:  # bool is an int subclass: refused too
+        raise ValueError(f"「{label}」要是 {low} 到 {high} 之间的整数")
+    return value
 
 
 def load_config(data_dir: Path) -> CaptionConfig:
     try:
         raw = json.loads((data_dir / CONFIG_NAME).read_text(encoding="utf-8"))
-        return apply_update(CaptionConfig(), raw if isinstance(raw, dict) else {})
+        raw = raw if isinstance(raw, dict) else {}
+        # A bad limit (hand-edited...) falls back alone: the address and key must survive it.
+        return apply_update(CaptionConfig(), {k: v for k, v in raw.items() if k not in LIMITS or _valid_limit(k, v)})
     except (OSError, ValueError):
         return CaptionConfig()
 

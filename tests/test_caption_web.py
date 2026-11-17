@@ -41,6 +41,14 @@ def test_settings_round_trip_without_leaking_the_key(client, server):
     assert client.put("/api/settings/caption", headers=PAGE, json={"base_url": "nope"}).status_code == 422
 
 
+def test_job_limits_are_saved_from_the_page(client, server):
+    saved = client.put("/api/settings/caption", headers=PAGE, json={"workers": 2, "max_failures": 7})
+
+    assert saved.status_code == 200 and saved.json()["workers"] == 2
+    assert client.get("/api/settings/caption").json()["max_failures"] == 7
+    assert client.put("/api/settings/caption", headers=PAGE, json={"workers": 99}).status_code == 422
+
+
 def test_connection_test_describes_a_sample_picture(client, settings, server):
     assert client.post("/api/settings/caption/test", headers=PAGE).status_code == 409
     _configure(settings, server)

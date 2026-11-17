@@ -3,6 +3,7 @@
 // "设置" dialog: the vision model that "看图描述" and "素材整理" both use. Loaded after app.js.
 
 const PAGE_HEADERS = { 'X-Requested-With': 'fetch', 'Content-Type': 'application/json' };
+const JOB_LIMITS = ['workers', 'retries', 'retry_wait', 'max_failures'];
 
 async function errorText(resp) {
   try {
@@ -24,6 +25,7 @@ function applyModelSettings(s) {
   form.model.value = s.model;
   form.api_key.value = '';
   form.api_key.placeholder = s.has_key ? '已保存（留空则不改）' : '没有可以不填';
+  for (const name of JOB_LIMITS) form[name].value = s[name];
 }
 
 async function saveModelSettings(event) {
@@ -31,6 +33,7 @@ async function saveModelSettings(event) {
   const form = $('c-form');
   const update = { base_url: form.base_url.value.trim(), model: form.model.value.trim() };
   if (form.api_key.value.trim()) update.api_key = form.api_key.value.trim();
+  for (const name of JOB_LIMITS) update[name] = Number(form[name].value);
   $('c-setup-status').textContent = '保存中…';
   try {
     applyModelSettings(await modelFetch('/api/settings/caption', {

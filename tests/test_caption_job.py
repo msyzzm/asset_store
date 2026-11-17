@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 
 import pytest
 from PIL import Image
@@ -6,7 +7,6 @@ from PIL import Image
 from assetindex import caption_job
 from assetindex.caption import CaptionConfig
 from assetindex.caption_job import (
-    MAX_CONSECUTIVE_FAILURES,
     Scope,
     list_folders,
     parse_scope,
@@ -115,11 +115,10 @@ def test_server_down_stops_without_recording_anything(scanned, settings, server)
     assert _captions(scanned) == {} and len(server.requests) == 1
 
 
-def test_rejected_pictures_are_recorded_and_retried_next_run(scanned, settings, server, monkeypatch):
-    monkeypatch.setattr(caption_job, "MAX_CONSECUTIVE_FAILURES", 2)
+def test_rejected_pictures_are_recorded_and_retried_next_run(scanned, settings, server):
     server.fail_status = 400
 
-    final = run_job(scanned, settings, Scope("art"), _config(server))
+    final = run_job(scanned, settings, Scope("art"), replace(_config(server), max_failures=2))
 
     assert final.failed == 2 and "连续" in final.error  # the settings are probably wrong: stop
     assert all(err for _, err in _captions(scanned).values())
@@ -133,7 +132,6 @@ def test_unreadable_picture_is_skipped(scanned, settings, server, asset_root):
     final = run_job(scanned, settings, Scope("art", "2D/Ice"), _config(server))
 
     assert final.done == 1 and final.failed == 1
-    assert MAX_CONSECUTIVE_FAILURES > 1
 
 
 def test_deleted_file_takes_its_caption_out_of_search(scanned, settings, server, asset_root):

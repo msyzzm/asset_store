@@ -452,6 +452,8 @@ body {
 }
 .settings-form input:focus-visible, .settings-form select:focus-visible { outline: 2px solid var(--select); outline-offset: -1px; }
 .settings .hint { margin: 0; color: var(--muted); font-size: 13px; }
+.settings-limits { display: grid; gap: 8px; margin: 4px 0 0; padding: 10px 12px 12px; border: 1px solid var(--border); border-radius: var(--radius); }
+.settings-limits legend { padding: 0 4px; font-weight: 600; }
 .settings-status { min-height: 1.5em; margin: 12px 0 4px; overflow-wrap: anywhere; }
 
 .caption-bar { width: 100%; margin-top: 12px; }

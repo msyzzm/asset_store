@@ -93,6 +93,17 @@
       <label>模型名 <input name="model" placeholder="Strata 随便填，其他服务填真实模型名" autocomplete="off"></label>
       <label>API key <input name="api_key" type="password" autocomplete="new-password"></label>
       <p class="hint">key 只保存在服务器上，不会再显示出来。改了接口地址要重新填 key。</p>
+      <fieldset class="settings-limits">
+        <legend>任务参数（下次开始任务时生效）</legend>
+        <label>并行数量 <input name="workers" type="number" min="1" max="8" step="1" required></label>
+        <p class="hint">素材整理同时发给模型几个问题。模型服务器本身开了并行才会更快，否则只是排队。</p>
+        <label>接口出错重试次数 <input name="retries" type="number" min="0" max="20" step="1" required></label>
+        <p class="hint">接口连不上、超时时，同一个包最多再问几次，之后记为失败（素材整理）。</p>
+        <label>重试前等待（秒） <input name="retry_wait" type="number" min="0" max="600" step="1" required></label>
+        <p class="hint">接口出错后，等多久再给模型发新问题（素材整理）。</p>
+        <label>连续失败上限 <input name="max_failures" type="number" min="1" max="10000" step="1" required></label>
+        <p class="hint">连续失败这么多次（答不出或接口出错）就停止任务，看图描述和素材整理都用。</p>
+      </fieldset>
       <div class="viewer-actions">
         <button class="btn" type="submit">保存</button>
         <button id="c-test" class="btn secondary" type="button">测试（描述一张示例图）</button>

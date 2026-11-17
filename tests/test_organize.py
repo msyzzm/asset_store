@@ -42,8 +42,8 @@ def lib(tmp_path, conn):
     return conn, settings, root
 
 
-def _config(server):
-    return CaptionConfig(base_url=server.base_url, model="qwen")
+def _config(server, **limits):
+    return CaptionConfig(base_url=server.base_url, model="qwen", **limits)
 
 
 def _rows(conn):
@@ -133,11 +133,9 @@ def test_split_turns_a_folder_into_several_packs(lib):
 
 def test_api_down_stops_without_proposals(lib, server, monkeypatch):
     conn, settings, _ = lib
-    monkeypatch.setattr(organize, "MAX_CONSECUTIVE_FAILURES", 3)
-    monkeypatch.setattr(organize, "API_RETRY_SECONDS", 0)
     server.fail_status = 503
 
-    final = run_analysis(conn, settings, Scope("lib"), _config(server))
+    final = run_analysis(conn, settings, Scope("lib"), _config(server, max_failures=3, retry_wait=0))
 
     assert "503" in final.error and "连续 3 次" in final.error and final.done == 0 and final.failed == 0
     assert all(r["category"] is None for r in _rows(conn).values() if r["dup_of"] is None)
@@ -145,10 +143,9 @@ def test_api_down_stops_without_proposals(lib, server, monkeypatch):
 
 def test_unusable_answers_are_recorded_per_pack(lib, server, monkeypatch):
     conn, settings, _ = lib
-    monkeypatch.setattr(organize, "MAX_CONSECUTIVE_FAILURES", 2)
     server.chat_reply = "说不清"
 
-    final = run_analysis(conn, settings, Scope("lib"), _config(server))
+    final = run_analysis(conn, settings, Scope("lib"), _config(server, max_failures=2))
 
     assert final.failed >= 2 and "连续" in final.error  # questions already asked still finish
     assert sum(1 for r in _rows(conn).values() if r["error"]) == final.failed
@@ -319,10 +316,7 @@ def test_api_going_down_stops_asking_but_keeps_answers_already_given(lib, server
         return real(prompt, jpeg, max_tokens)
 
     client.ask = ask
-    monkeypatch.setattr(organize, "MODEL_WORKERS", 2)
-    monkeypatch.setattr(organize, "MAX_CONSECUTIVE_FAILURES", 1)
-
-    final = run_analysis(conn, settings, Scope("lib"), _config(server), client=client)
+    final = run_analysis(conn, settings, Scope("lib"), _config(server, workers=2, max_failures=1), client=client)
 
     assert "503" in final.error and final.done == 1 and len(calls) == 2  # the third is never asked
     assert sum(1 for r in _rows(conn).values() if r["status"] == "proposed" and r["dup_of"] is None) == 1
@@ -353,10 +347,9 @@ def _refusing(server, refusals):
 
 def test_a_pack_the_api_failed_on_is_asked_again_after_a_pause(lib, server, monkeypatch):
     conn, settings, _ = lib
-    monkeypatch.setattr(organize, "API_RETRY_SECONDS", 0.2)
     client = _refusing(server, lambda n, prompt: n <= 2)
 
-    final = run_analysis(conn, settings, Scope("lib"), _config(server), client=client)
+    final = run_analysis(conn, settings, Scope("lib"), _config(server, retry_wait=0), client=client)
 
     assert final.error is None and final.done == 3 and final.failed == 0 and client.calls == 5
     assert all(r["error"] is None for r in _rows(conn).values())
@@ -364,25 +357,22 @@ def test_a_pack_the_api_failed_on_is_asked_again_after_a_pause(lib, server, monk
 
 def test_a_pack_the_api_always_fails_on_is_given_up_without_stopping_the_rest(lib, server, monkeypatch):
     conn, settings, _ = lib
-    monkeypatch.setattr(organize, "API_RETRY_SECONDS", 0)
     client = _refusing(server, lambda n, prompt: "boom.wav" in prompt)
 
-    final = run_analysis(conn, settings, Scope("lib"), _config(server), client=client)
+    final = run_analysis(conn, settings, Scope("lib"), _config(server, retry_wait=0, retries=1), client=client)
 
     assert final.error is None and final.done == 2 and final.failed == 1
-    assert "4 次都出错" in _rows(conn)["Audio/boom.wav"]["error"]
+    assert "2 次都出错" in _rows(conn)["Audio/boom.wav"]["error"]
 
 
 def test_stop_during_the_pause_after_an_api_error(lib, server, monkeypatch):
     import time
 
     conn, settings, _ = lib
-    monkeypatch.setattr(organize, "API_RETRY_SECONDS", 30)
-    monkeypatch.setattr(organize, "MODEL_WORKERS", 1)
     client = _refusing(server, lambda n, prompt: True)
 
     started = time.monotonic()
-    final = run_analysis(conn, settings, Scope("lib"), _config(server), client=client,
+    final = run_analysis(conn, settings, Scope("lib"), _config(server, retry_wait=30, workers=1), client=client,
                          should_stop=lambda: client.calls > 0)
 
     assert final.stopped and final.done == 0 and final.failed == 0

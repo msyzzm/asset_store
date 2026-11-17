@@ -42,10 +42,6 @@ STOP_NAME = "organize.stop"
 STATUS_NAME = "organize.status"
 REPORT_NAME = "organize.report.json"
 LOCK_NAME = caption_job.LOCK_NAME  # the same model, one job at a time
-MAX_CONSECUTIVE_FAILURES = 100  # failures in a row (bad answers or API errors) before the job stops
-API_RETRY_SECONDS = 10  # after an API error (model restarting...), wait before asking again
-MODEL_WORKERS = 3  # questions open at once: one being answered while the next ones wait ready
-MAX_API_RETRIES = 3  # API errors on one pack before it counts as failed (it may be what chokes the model)
 POLL_SECONDS = 1.0  # how often a stop is noticed while waiting for answers
 MAX_ERROR_CHARS = 300
 STATUSES = ("todo", "proposed", "accepted", "rejected")
@@ -292,7 +288,7 @@ def run_analysis(
                        error=f"「{scope.prefix}」里没有找到素材包：检查路径（不用写 {scope.root}:/），或先扫描")
     status = replace(status, phase="classifying", total=len(rows), done=0)
     report(status)
-    status = _classify(_Run(conn, scope.root, config.model, status), settings, client, rows, should_stop, report)
+    status = _classify(_Run(conn, scope.root, config, status), settings, client, rows, should_stop, report)
     return replace(status, running=False, current=None, finished=time.time())
 
 
@@ -304,15 +300,15 @@ def _classify(
     should_stop: Callable[[], bool],
     report: Callable[[OrganizeStatus], None],
 ) -> OrganizeStatus:
-    """Ask about every row, MODEL_WORKERS questions at once: the next question is made
+    """Ask about every row, config.workers questions at once: the next question is made
     (from the database and cached pictures) while the model answers the ones before.
     Only the model calls run in threads; the database stays on this one. After an API
     error no new question goes out for a while, but answers still come in."""
     queue = deque(rows)
     asked: dict[Future, tuple[sqlite3.Row, Question]] = {}
-    with ThreadPoolExecutor(MODEL_WORKERS) as pool:
+    with ThreadPoolExecutor(run.config.workers) as pool:
         while queue or asked:
-            while queue and len(asked) < MODEL_WORKERS and not run.halted and not run.paused:
+            while queue and len(asked) < run.config.workers and not run.halted and not run.paused:
                 if should_stop():
                     run.status = replace(run.status, stopped=True)
                     break
@@ -346,8 +342,8 @@ def _classify(
 class _Run:
     """The classifying loop's running count, and when it must stop asking."""
 
-    def __init__(self, conn: sqlite3.Connection, root: str, model: str, status: OrganizeStatus) -> None:
-        self.conn, self.root, self.model = conn, root, model
+    def __init__(self, conn: sqlite3.Connection, root: str, config: CaptionConfig, status: OrganizeStatus) -> None:
+        self.conn, self.root, self.config = conn, root, config
         self.status = status
         self.consecutive = 0  # failures in a row, of either kind
         self.resume_at = 0.0  # monotonic time before which no new question goes out
@@ -364,15 +360,15 @@ class _Run:
     def settle(self, path: str, question: Question, future: Future) -> bool:
         """Record one answer. True: the API failed, so the pack should be asked again."""
         try:
-            proposal = read_answer(self.conn, self.model, question, future.result())
+            proposal = read_answer(self.conn, self.config.model, question, future.result())
         except EmbedError as err:
             self.consecutive += 1
             if not err.item_problem:
                 tries = self.api_errors[path] = self.api_errors.get(path, 0) + 1
                 log.warning("model API error on %r (%d in a row): %s", path, self.consecutive, err)
-                self.resume_at = time.monotonic() + API_RETRY_SECONDS
+                self.resume_at = time.monotonic() + self.config.retry_wait
                 self._stop_if_too_many(f"接口连续 {self.consecutive} 次出错，已停止：{err}")
-                if tries <= MAX_API_RETRIES or self.halted:
+                if tries <= self.config.retries or self.halted:
                     return not self.halted
                 err = EmbedError(f"接口 {tries} 次都出错：{err}", ITEM_PROBLEM)
             _save_error(self.conn, self.root, path, str(err))
@@ -382,7 +378,7 @@ class _Run:
         except Exception as err:
             self.failed(path, err)
             return False
-        save_proposal(self.conn, self.root, path, proposal.category, proposal.name, proposal.reason, self.model)
+        save_proposal(self.conn, self.root, path, proposal.category, proposal.name, proposal.reason, self.config.model)
         self.consecutive = 0
         self.status = replace(self.status, done=self.status.done + 1)
         return False
@@ -393,7 +389,7 @@ class _Run:
         self.status = replace(self.status, failed=self.status.failed + 1)
 
     def _stop_if_too_many(self, error: str) -> None:
-        if self.consecutive >= MAX_CONSECUTIVE_FAILURES:
+        if self.consecutive >= self.config.max_failures:
             self._stop(error)
 
     def _stop(self, error: str) -> None:
