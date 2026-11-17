@@ -27,7 +27,7 @@ from assetindex import caption_job
 from assetindex.caption import CaptionClient, CaptionConfig
 from assetindex.caption_job import Scope
 from assetindex.classify import (
-    CATEGORY_PATHS, DUPLICATES, Question, file_suffix, prepare_question, read_answer, strip_junk_source, target_for,
+    CATEGORY_PATHS, DUPLICATES, ITEM_PROBLEM, Question, file_suffix, prepare_question, read_answer, strip_junk_source, target_for,
 )
 from assetindex.config import Settings
 from assetindex.dupes import UnitFile, duplicate_units, file_duplicates, hash_pending, signature, unit_files
@@ -42,8 +42,11 @@ STOP_NAME = "organize.stop"
 STATUS_NAME = "organize.status"
 REPORT_NAME = "organize.report.json"
 LOCK_NAME = caption_job.LOCK_NAME  # the same model, one job at a time
-MAX_CONSECUTIVE_FAILURES = 5
+MAX_CONSECUTIVE_FAILURES = 100  # failures in a row (bad answers or API errors) before the job stops
+API_RETRY_SECONDS = 10  # after an API error (model restarting...), wait before asking again
 MODEL_WORKERS = 3  # questions open at once: one being answered while the next ones wait ready
+MAX_API_RETRIES = 3  # API errors on one pack before it counts as failed (it may be what chokes the model)
+POLL_SECONDS = 1.0  # how often a stop is noticed while waiting for answers
 MAX_ERROR_CHARS = 300
 STATUSES = ("todo", "proposed", "accepted", "rejected")
 DECIDED = ("accepted", "rejected")
@@ -303,33 +306,40 @@ def _classify(
 ) -> OrganizeStatus:
     """Ask about every row, MODEL_WORKERS questions at once: the next question is made
     (from the database and cached pictures) while the model answers the ones before.
-    Only the model calls run in threads; the database stays on this one."""
+    Only the model calls run in threads; the database stays on this one. After an API
+    error no new question goes out for a while, but answers still come in."""
     queue = deque(rows)
-    asked: dict[Future, tuple[str, Question]] = {}
+    asked: dict[Future, tuple[sqlite3.Row, Question]] = {}
     with ThreadPoolExecutor(MODEL_WORKERS) as pool:
         while queue or asked:
-            while queue and len(asked) < MODEL_WORKERS and not run.halted:
+            while queue and len(asked) < MODEL_WORKERS and not run.halted and not run.paused:
                 if should_stop():
                     run.status = replace(run.status, stopped=True)
                     break
                 row = queue.popleft()
-                path = row["path"]
-                report(replace(run.status, current=path))
+                report(replace(run.status, current=row["path"]))
                 try:  # reads only the database and cached pictures: no API errors here
-                    question = prepare_question(run.conn, settings, run.root, path, bool(row["is_dir"]))
+                    question = prepare_question(run.conn, settings, run.root, row["path"], bool(row["is_dir"]))
                 except Exception as err:  # an odd pack (unreadable picture...) must not end the job
-                    run.failed(path, err)
+                    run.failed(row["path"], err)
                     continue
-                asked[pool.submit(client.ask, question.prompt, question.jpeg, question.tokens)] = (path, question)
-            if not asked:
-                break
-            finished, _ = wait(asked, return_when=FIRST_COMPLETED)
-            for future in finished:
-                path, question = asked.pop(future)
-                run.settle(path, question, future)
-            report(run.status)
+                asked[pool.submit(client.ask, question.prompt, question.jpeg, question.tokens)] = (row, question)
             if run.halted:
                 queue.clear()  # the ones already asked still finish and are kept
+            if asked:
+                finished, _ = wait(asked, timeout=POLL_SECONDS, return_when=FIRST_COMPLETED)
+            else:
+                finished = set()
+                if queue:  # pausing after an API error, nothing in flight
+                    time.sleep(max(0.0, min(run.resume_at - time.monotonic(), POLL_SECONDS)))
+            for future in finished:
+                row, question = asked.pop(future)
+                if run.settle(row["path"], question, future):
+                    queue.append(row)  # the API failed, not the pack: ask again later
+            if finished:
+                report(run.status)
+            elif not run.halted and should_stop():
+                run.status = replace(run.status, stopped=True)
     return run.status
 
 
@@ -339,36 +349,52 @@ class _Run:
     def __init__(self, conn: sqlite3.Connection, root: str, model: str, status: OrganizeStatus) -> None:
         self.conn, self.root, self.model = conn, root, model
         self.status = status
-        self.consecutive = 0
+        self.consecutive = 0  # failures in a row, of either kind
+        self.resume_at = 0.0  # monotonic time before which no new question goes out
+        self.api_errors: dict[str, int] = {}  # per pack, so one pack the API chokes on can't hold up the rest
 
     @property
     def halted(self) -> bool:
         return self.status.stopped or self.status.error is not None
 
-    def settle(self, path: str, question: Question, future: Future) -> None:
+    @property
+    def paused(self) -> bool:
+        return time.monotonic() < self.resume_at
+
+    def settle(self, path: str, question: Question, future: Future) -> bool:
+        """Record one answer. True: the API failed, so the pack should be asked again."""
         try:
             proposal = read_answer(self.conn, self.model, question, future.result())
         except EmbedError as err:
+            self.consecutive += 1
             if not err.item_problem:
-                self._stop(f"接口出错，已停止：{err}")
-                return
+                tries = self.api_errors[path] = self.api_errors.get(path, 0) + 1
+                log.warning("model API error on %r (%d in a row): %s", path, self.consecutive, err)
+                self.resume_at = time.monotonic() + API_RETRY_SECONDS
+                self._stop_if_too_many(f"接口连续 {self.consecutive} 次出错，已停止：{err}")
+                if tries <= MAX_API_RETRIES or self.halted:
+                    return not self.halted
+                err = EmbedError(f"接口 {tries} 次都出错：{err}", ITEM_PROBLEM)
             _save_error(self.conn, self.root, path, str(err))
             self.status = replace(self.status, failed=self.status.failed + 1)
-            self.consecutive += 1
-            if self.consecutive >= MAX_CONSECUTIVE_FAILURES:
-                self._stop(f"连续 {self.consecutive} 个都失败，已停止，检查设置：{err}")
-            return
+            self._stop_if_too_many(f"连续 {self.consecutive} 个都失败，已停止，检查设置：{err}")
+            return False
         except Exception as err:
             self.failed(path, err)
-            return
+            return False
         save_proposal(self.conn, self.root, path, proposal.category, proposal.name, proposal.reason, self.model)
         self.consecutive = 0
         self.status = replace(self.status, done=self.status.done + 1)
+        return False
 
     def failed(self, path: str, err: Exception) -> None:
         log.error("classifying %r failed", path, exc_info=err)
         _save_error(self.conn, self.root, path, f"{type(err).__name__}: {err}")
         self.status = replace(self.status, failed=self.status.failed + 1)
+
+    def _stop_if_too_many(self, error: str) -> None:
+        if self.consecutive >= MAX_CONSECUTIVE_FAILURES:
+            self._stop(error)
 
     def _stop(self, error: str) -> None:
         if self.status.error is None:  # the first reason is the one to show
