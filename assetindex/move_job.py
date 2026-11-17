@@ -19,7 +19,8 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
-from assetindex import organize, organize_apply, purge, scan_request, unpack, verify
+from assetindex import organize, organize_apply, purge, repair, scan_request, unpack, verify
+from assetindex.units import companions_by_unit, stored_layout
 from assetindex.config import Settings
 from assetindex.organize_move import build_plan
 from assetindex.scan_request import write_json_atomic
@@ -30,7 +31,8 @@ REQUEST_NAME = "move.request"
 STOP_NAME = "move.stop"
 STATUS_NAME = "move.status"
 LOCK_NAME = "move.lock"  # held by the mover for a whole job: "running" means this lock is held
-ACTIONS = ("apply", "undo", "recover", "unpack", "verify", "purge")
+ACTIONS = ("apply", "undo", "recover", "unpack", "verify", "purge", "repair")
+WITH_PATHS = ("verify", "repair")  # these need `paths`; unpack may take them
 MAX_VERIFY = 200  # each archive gets a line in the status (MAX_PROBLEMS)
 MAX_PASSWORD = 200
 MAX_UNPACK_LIMIT = 100_000
@@ -152,10 +154,12 @@ def parse(raw, settings: Settings) -> tuple[str, str, str | None]:
     if limit is not None and (type(limit) is not int or not 0 < limit <= MAX_UNPACK_LIMIT):
         raise ValueError("要解开几个？")
     paths = raw.get("paths")
-    if (action == "verify") != (paths is not None):
+    if (action in WITH_PATHS and paths is None) or (action not in (*WITH_PATHS, "unpack") and paths is not None):
         raise ValueError("请求格式不对")
     if paths is not None and not _relative_paths(paths):
-        raise ValueError(f"要校验哪些文件？（1 到 {MAX_VERIFY} 个根目录下的路径）")
+        raise ValueError(f"要处理哪些文件？（1 到 {MAX_VERIFY} 个根目录下的路径）")
+    if action == "repair" and len(paths) < 2:
+        raise ValueError("修复要两份以上的副本")
     if action not in ACTIONS:
         raise ValueError("不认识的操作")
     if not isinstance(root, str) or root not in settings.roots:
@@ -229,6 +233,8 @@ def run(
         return _verify(settings, raw["paths"], status, should_stop, report, test_archive, now)
     if action == "unpack":
         return _unpack(conn, settings, raw, status, should_stop, report, move, free_bytes, now)
+    if action == "repair":
+        return _repair(conn, settings, raw["paths"], status, should_stop, report, move, free_bytes, now)
     journals = settings.data_dir / organize_apply.JOURNAL_DIR
     progress = {"done": 0}
 
@@ -256,11 +262,15 @@ def run(
 
 
 def _unpack(conn, settings: Settings, raw: dict, status: MoveStatus, should_stop, report, move, free_bytes, now) -> MoveStatus:
-    """Unpack the password-protected archives (see assetindex/unpack.py), all or the
-    first `limit`; a scan picks up the new folders."""
+    """Unpack the password-protected archives (see assetindex/unpack.py): the `paths`
+    asked for (rar the index cannot tell locked), else all locked 7z or the first
+    `limit`; a scan picks up the new folders."""
     root, password = status.root, raw["password"]
     base = settings.roots[root].resolve()
-    items = unpack.locked_archives(conn, root, base)[: raw.get("limit")]
+    if raw.get("paths"):
+        items = [unpack.Locked(p, (base / p).stat().st_size if (base / p).is_file() else 0) for p in raw["paths"]]
+    else:
+        items = unpack.locked_archives(conn, root, base)[: raw.get("limit")]
     status = replace(status, total=len(items))
     report(status)
     progress = {"done": 0}
@@ -275,6 +285,35 @@ def _unpack(conn, settings: Settings, raw: dict, status: MoveStatus, should_stop
         scan_request.request_scan(settings.data_dir)
     return replace(status, running=False, finished=now(), moved=result.unpacked, done=progress["done"],
                    problems=_problems(result.problems), error=result.error, stopped=result.stopped)
+
+
+def _repair(conn, settings: Settings, paths: list[str], status: MoveStatus, should_stop, report, move, free_bytes,
+            now) -> MoveStatus:
+    """One pack rebuilt from damaged copies (see assetindex/repair.py); a scan picks it up."""
+    base = settings.roots[status.root].resolve()
+    companions = companions_by_unit(*stored_layout(conn, status.root))
+    progress = {"done": 0, "total": 0}
+
+    def step(done: int, total: int) -> None:
+        progress.update(done=done, total=total)
+        report(replace(status, done=done, total=total))
+
+    moved, error, stopped = 0, None, False
+    try:
+        repair.repair_one(base, paths, companions, move=move, free=free_bytes, should_stop=should_stop, report=step)
+        moved = 1
+    except repair.Stopped:
+        stopped = True
+    except repair.HalfDone as err:  # the folder is there: the index should learn of it
+        moved, error = 1, str(err)
+    except repair.RepairError as err:
+        error = str(err)
+    except OSError as err:
+        error = f"修复时出错：{err!r}"
+    if moved:
+        scan_request.request_scan(settings.data_dir)
+    return replace(status, running=False, finished=now(), moved=moved, done=progress["done"],
+                   total=progress["total"], error=error, stopped=stopped)
 
 
 def _verify(settings: Settings, paths: list[str], status: MoveStatus, should_stop, report, test_archive, now) -> MoveStatus:

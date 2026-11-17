@@ -10,14 +10,17 @@ archive itself goes to _待删除/ for the user to delete. Nothing visible chang
 the rename; a crash leaves only the hidden folder, cleared on the next try.
 """
 
+import re
 import shutil
 import sqlite3
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import py7zr
 
+from assetindex import verify
 from assetindex.categories import DUPLICATES, TO_DELETE
 from assetindex.organize_apply import _taken, move_no_replace
 from assetindex.organize_move import Problem
@@ -26,6 +29,10 @@ from assetindex.units import companions_by_unit, stored_layout
 
 MIN_FREE_BYTES = 20 * 1024**3  # left free on the NAS after an archive is unpacked
 LOCKED_ERROR = "%Password%"  # how py7zr's PasswordRequired is recorded by the scanner
+VOLUME = re.compile(r"\.part\d+\.rar$", re.IGNORECASE)
+MULTIVOLUME = re.compile(r"^(Multivolume = \+|Volumes = ([2-9]|\d{2,}))", re.MULTILINE)  # old style: x.rar + x.r00
+RAR_TIMEOUT_SECONDS = 6 * 3600  # a 10 GB pack over slow NFS
+OUTPUT_CHARS = 200
 
 Mover = Callable[[str, str, bool], None]
 
@@ -74,6 +81,58 @@ def locked_archives(conn: sqlite3.Connection, root: str, base: Path | None = Non
     ]
 
 
+def run_7zz(args: list[str]) -> subprocess.CompletedProcess:
+    """7-Zip with these arguments. Errors never carry the command line: it holds the password."""
+    tool = verify.sevenzip()
+    if not tool:
+        raise UnpackError("没有 7zz，解不了 rar")
+    try:
+        return subprocess.run([tool, *args], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, timeout=RAR_TIMEOUT_SECONDS, check=False)
+    except subprocess.TimeoutExpired:
+        raise UnpackError("7zz 跑了太久，没解完") from None
+    except OSError as err:
+        raise UnpackError(f"没法运行 7zz：{err.strerror}") from None
+
+
+def _said(done: subprocess.CompletedProcess, password: str) -> str:
+    text = (done.stdout + b"\n" + done.stderr).decode("utf-8", "replace").replace(password, "***")
+    return " ".join(line.strip() for line in text.splitlines() if line.strip())[-OUTPUT_CHARS:]
+
+
+def parse_listing(text: str) -> tuple[int, int]:
+    """(files, bytes) from `7zz l -slt`: the blocks after the "----------" line, one per
+    member, as "Key = value" lines."""
+    _, _, members = text.replace("\r\n", "\n").partition("\n----------\n")
+    files = sizes = 0
+    for block in members.split("\n\n"):
+        fields = dict(line.split(" = ", 1) for line in block.splitlines() if " = " in line)
+        if "Path" in fields and fields.get("Folder") != "+":
+            files += 1
+            sizes += int(fields.get("Size") or 0)
+    return files, sizes
+
+
+def rar_contents(src: Path, password: str) -> tuple[int, int]:
+    done = run_7zz(["l", "-slt", "-bd", f"-p{password}", "--", str(src)])
+    if done.returncode != 0:
+        raise UnpackError(f"列不出包里的文件：{_said(done, password)}")
+    text = done.stdout.decode("utf-8", "replace")
+    if MULTIVOLUME.search(text):
+        raise UnpackError("分卷的 rar 不解（几个分卷要一起解）")
+    listed = parse_listing(text)
+    if listed[0] == 0:  # an empty pack, or output we cannot read: never swap it for an empty folder
+        raise UnpackError("7zz 没列出任何文件")
+    return listed
+
+
+def extract_rar(src: Path, out: Path, password: str) -> None:
+    """Exit code 0 or nothing: with a wrong password the names and sizes still list fine."""
+    done = run_7zz(["x", "-bd", "-y", f"-p{password}", f"-o{out}", "--", str(src)])
+    if done.returncode != 0:
+        raise UnpackError(f"密码不对，或者包坏了：{_said(done, password)}")
+
+
 def contents(src: Path, password: str) -> tuple[int, int]:
     """(files, bytes) the archive says it holds."""
     with py7zr.SevenZipFile(src, password=password) as z:
@@ -114,18 +173,25 @@ def _unpacked_into(tmp: Path, src: Path, password: str, expected: tuple[int, int
 
 def unpack_one(
     base: Path, rel: str, password: str, companions: list[str],
-    move: Mover = move_no_replace, extract=extract_7z, free=free_bytes,
+    move: Mover = move_no_replace, extract=None, free=free_bytes,
 ) -> str:
-    """Unpack the archive at `rel` into a folder of its name; that folder's path. A run
-    cut short after the folder got its name is finished: the folder holds what the
-    archive does (its previews aside), the previews and the archive still have to move."""
+    """Unpack the archive at `rel` (7z, or rar with 7zz) into a folder of its name; that
+    folder's path. A run cut short after the folder got its name is finished: the folder
+    holds what the archive does (its previews aside), the previews and the archive still
+    have to move."""
+    if VOLUME.search(rel):
+        raise UnpackError("分卷的 rar 不解（几个分卷要一起解）")
     src = base / rel
     if not src.is_file():
         raise UnpackError("压缩包已经不在了（可能已经解开，等扫描更新）")
+    is_rar = rel.lower().endswith(".rar")
+    extract = extract or (extract_rar if is_rar else extract_7z)
     folder_rel = rel.rpartition(".")[0]
     dest = base / folder_rel
     try:
-        expected = contents(src, password)
+        expected = rar_contents(src, password) if is_rar else contents(src, password)
+    except UnpackError:
+        raise
     except Exception as err:  # py7zr has no single error for a wrong password
         raise UnpackError(f"密码不对，或者包坏了（{type(err).__name__}）") from None
     previews = frozenset(c.rpartition("/")[2] for c in companions)
