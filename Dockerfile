@@ -15,7 +15,8 @@ ARG SEVENZIP_VERSION=2409
 RUN arch="$(dpkg --print-architecture | sed 's/^amd64$/x64/')" \
     && python -c "import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], '/tmp/7z.tar.xz')" \
         "https://github.com/ip7z/7zip/releases/download/${SEVENZIP_TAG}/7z${SEVENZIP_VERSION}-linux-${arch}.tar.xz" \
-    && bsdtar -xf /tmp/7z.tar.xz -C /tmp 7zzs \n    && mv /tmp/7zzs /usr/local/bin/7zz \
+    && bsdtar -xf /tmp/7z.tar.xz -C /tmp 7zzs \
+    && mv /tmp/7zzs /usr/local/bin/7zz \
     && rm /tmp/7z.tar.xz \
     && 7zz i > /dev/null
 
