@@ -263,3 +263,19 @@ def test_command_line_analysis(env, monkeypatch):
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     assert cli.main(["organize", "--root", "lib", "--prefix", "2D"]) == 0
     assert _units(client, "proposed")
+
+
+def test_redo_sends_a_pack_back_to_the_model_but_not_a_decided_one(env):
+    client, settings = env
+    _analyze(client, settings)
+    client.post("/api/organize/units/decide", headers=PAGE, json={"root": "lib", "paths": ["2D/Fire Pack"], "action": "accept"})
+
+    done = client.post("/api/organize/units/decide", headers=PAGE,
+                       json={"root": "lib", "paths": ["2D/Ice Pack", "2D/Fire Pack", "2D/Fire Pack (1)"], "action": "redo"})
+
+    assert done.json() == {"changed": 1}  # the accepted one and the duplicate stay as they are
+    units = _units(client)
+    assert units["2D/Ice Pack"]["status"] == "todo" and units["2D/Ice Pack"]["target"] is None
+    assert units["2D/Fire Pack"]["status"] == "accepted" and units["2D/Fire Pack (1)"]["dup_of"]
+    _analyze(client, settings)
+    assert _units(client)["2D/Ice Pack"]["status"] == "proposed"

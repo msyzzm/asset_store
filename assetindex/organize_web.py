@@ -44,6 +44,9 @@ _DECIDE_SQL = {
     "reject": "UPDATE organize_units SET status = 'rejected' WHERE root = ? AND path = ? AND target IS NOT NULL",
     "reset": "UPDATE organize_units SET status = CASE WHEN target IS NULL THEN 'todo' ELSE 'proposed' END"
     " WHERE root = ? AND path = ?",
+    # Ask the model again (after the scheme or the prompt changed): not a decided pack or a duplicate.
+    "redo": "UPDATE organize_units SET status = 'todo', category = NULL, name = NULL, target = NULL, reason = NULL,"
+    " error = NULL WHERE root = ? AND path = ? AND status != 'accepted' AND dup_of IS NULL",
 }
 
 
@@ -57,7 +60,7 @@ def organize_state(data_dir) -> dict:
 class Decide(BaseModel):
     root: str
     paths: list[str] = Field(max_length=MAX_BATCH)
-    action: Literal["accept", "reject", "reset"]
+    action: Literal["accept", "reject", "reset", "redo"]
 
 
 class Retarget(BaseModel):
@@ -203,7 +206,7 @@ def add_organize_routes(app: FastAPI, settings: Settings, get_conn: Callable, pa
         root_or_422(body.root)
         with conn:
             changed = sum(conn.execute(_DECIDE_SQL[body.action], (body.root, p)).rowcount for p in body.paths)
-            if body.action != "reset":
+            if body.action in ("accept", "reject"):
                 _keep_folders_whole(conn, body.root, body.paths)
         return {"changed": changed}
 

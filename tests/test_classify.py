@@ -120,6 +120,13 @@ def test_numbered_target_keeps_a_compound_extension():
     assert target_for("01_2D/UI", "x.tar.gz", False, {"01_2d/ui/x.tar.gz"}) == "01_2D/UI/x (2).tar.gz"
 
 
+def test_engine_effects_have_a_3d_category_and_download_sites_are_no_source():
+    from assetindex.classify import CATEGORY_PATHS, strip_junk_source
+
+    assert "02_3D/VFX" in CATEGORY_PATHS and "02_3D/VFX" in build_prompt("facts")
+    assert strip_junk_source("UnrealDojo - Sword Animset Pro") == "Sword Animset Pro"
+
+
 def test_classify_unit_end_to_end(library, settings, server):
     client = CaptionClient(CaptionConfig(base_url=server.base_url, model="m"))
 

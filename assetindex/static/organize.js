@@ -176,6 +176,7 @@ function row(item) {
   if (item.target && item.status !== 'accepted') actions.push(actionButton('确认', () => decide([item.path], 'accept'), true));
   if (item.target && item.status !== 'rejected') actions.push(actionButton('拒绝', () => decide([item.path], 'reject')));
   if (item.status === 'accepted' || item.status === 'rejected') actions.push(actionButton('撤回', () => decide([item.path], 'reset')));
+  if ((item.target || item.error) && item.status !== 'accepted' && !item.dup_of) actions.push(actionButton('重新分析', () => decide([item.path], 'redo')));
   if (item.dup_of) actions.push(actionButton('改为保留这份', async () => { await post('/api/organize/units/keep', { root: view.root, path: item.path }); afterChange(); }));
   if (item.is_dir) actions.push(actionButton('拆开', async () => { await post('/api/organize/split', { root: view.root, path: item.path }); afterChange(); }));
   const parent = dir.replace(/\/$/, '');
@@ -268,6 +269,7 @@ function init() {
   });
   $('o-accept').addEventListener('click', () => decide(selectedPaths(), 'accept').catch((err) => alert(err.message)));
   $('o-reject').addEventListener('click', () => decide(selectedPaths(), 'reject').catch((err) => alert(err.message)));
+  $('o-redo').addEventListener('click', () => decide(selectedPaths(), 'redo').catch((err) => alert(err.message)));
   $('o-more').addEventListener('click', () => load(false));
   refresh();
 }

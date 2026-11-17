@@ -235,6 +235,23 @@ def to_classify(conn: sqlite3.Connection, scope: Scope) -> list[sqlite3.Row]:
     return [r for r in rows if not _is_note(r)]
 
 
+def forget_note_proposals(conn: sqlite3.Connection, root: str) -> int:
+    """Notes (a password, a read-me) proposed before they were left out: they stay where
+    they are, so their proposal goes. Decided ones are left as they are."""
+    rows = conn.execute(
+        "SELECT path, is_dir, size FROM organize_units WHERE root = ? AND status = 'proposed' AND dup_of IS NULL",
+        (root,),
+    ).fetchall()
+    notes = [(root, r["path"]) for r in rows if _is_note(r)]
+    with conn:
+        conn.executemany(
+            "UPDATE organize_units SET status = 'todo', category = NULL, name = NULL, target = NULL, reason = NULL"
+            " WHERE root = ? AND path = ?",
+            notes,
+        )
+    return len(notes)
+
+
 def clean_proposed_names(conn: sqlite3.Connection, root: str) -> int:
     """Names proposed before junk "sources" were dropped ("UE - x", "ansucai - x"): drop
     them now, without asking the model again. Decided proposals are left as they are."""
@@ -280,6 +297,7 @@ def run_analysis(
     units = current_units(conn, scope.root)
     groups = apply_duplicates(conn, scope.root, units)
     clean_proposed_names(conn, scope.root)
+    forget_note_proposals(conn, scope.root)
     write_report(settings.data_dir, scope.root, groups, units)
 
     rows = to_classify(conn, scope)

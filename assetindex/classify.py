@@ -42,7 +42,7 @@ _NUMBERED = re.compile(r"^[\W\d_]+$")
 # "Sources" that name no author: engines, download sites, the library's own folders.
 _JUNK_SOURCE = re.compile(
     r"^\s*(ue\s*[45]?|unreal(\s*engine)?\s*[45]?|unity(3d)?|ue\s*角色|虚幻\s*[45]?(引擎)?|虚幻\s*[45]?\s*资源站|"
-    r"ansucai(\.com)?|unsorted|素材|资源|未分类|待分类|_unsorted)\s*[-–—:：]\s*",
+    r"ansucai(\.com)?|unreal\s*dojo|unsorted|素材|资源|未分类|待分类|_unsorted)\s*[-–—:：]\s*",
     re.IGNORECASE,
 )  # "127327921", "(12)": says nothing about the content
 

@@ -256,7 +256,7 @@ sudo deploy/updater/install.sh
 | 目录 | 放什么 |
 |---|---|
 | `01_2D/Characters` `Environments` `Props` `UI` `VFX` `Textures` | 2D 角色、场景、道具、界面图标字体、特效、贴图 |
-| `02_3D/Characters` `Environments` `Props` `Vehicles` `Vegetation` `Animations` | 3D 角色、场景、道具、载具、植物、动作 |
+| `02_3D/Characters` `Environments` `Props` `Vehicles` `Vegetation` `VFX` `Animations` | 3D 角色、场景、道具、载具、植物、特效（UE Niagara、Unity 粒子等引擎特效）、动作 |
 | `03_Audio/Music` `SFX` `Ambient` `Voice` | 音乐、音效、环境音、语音 |
 | `04_Tools/Shaders` `Plugins` `Templates` | Shader、引擎插件和工具、项目模板 |
 | `05_Reference` | 设定集、原画、照片、教程 |
@@ -269,6 +269,7 @@ sudo deploy/updater/install.sh
 - 按状态查看（待确认、重复、已确认、已拒绝、未分析、失败），按分类筛选；
 - 逐条或批量确认、拒绝，点「改」手动修改目标路径；
 - 在重复的几份里点「改为保留这份」；
+- 点「重新分析」（或勾选后点「重新分析选中」）清掉建议，下次开始分析时重新问模型，适合改了分类方案或提示词之后。已确认的包和重复包不受影响。
 - 点「拆开」把一个文件夹包拆成几个包；点「合并」把一个包所在的文件夹整个当成一个包（里面有确认或拒绝过的包时不让合并，先撤回）。
 
 说明：

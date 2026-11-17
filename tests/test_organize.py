@@ -377,3 +377,16 @@ def test_stop_during_the_pause_after_an_api_error(lib, server, monkeypatch):
 
     assert final.stopped and final.done == 0 and final.failed == 0
     assert time.monotonic() - started < 10  # left the 30 s pause at once
+
+
+def test_an_old_proposal_for_a_note_is_dropped(lib, server):
+    conn, settings, root = lib
+    (root / "2D" / "解压密码.txt").write_text("1234", encoding="utf-8")
+    scan_root(conn, "lib", root)
+    refresh_units(conn, "lib")
+    organize.save_proposal(conn, "lib", "2D/解压密码.txt", "_Unsorted", "解压密码说明", "r", "m")
+
+    run_analysis(conn, settings, Scope("lib"), _config(server))
+
+    row = _rows(conn)["2D/解压密码.txt"]
+    assert row["status"] == "todo" and row["target"] is None and row["category"] is None
