@@ -7,12 +7,15 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # 7-Zip (the official 7zz) tests archives whole for the "verify" move job, RAR included:
-# libarchive cannot decode some RAR methods. bsdtar unpacks the download (no xz needed).
+# libarchive cannot decode some RAR methods. From 7-Zip's own GitHub releases (the server
+# reaches GitHub for updates anyway); bsdtar unpacks the download (no xz needed);
+# 7zzs is the static build (the slim image may lack libstdc++).
+ARG SEVENZIP_TAG=24.09
 ARG SEVENZIP_VERSION=2409
 RUN arch="$(dpkg --print-architecture | sed 's/^amd64$/x64/')" \
     && python -c "import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], '/tmp/7z.tar.xz')" \
-        "https://www.7-zip.org/a/7z${SEVENZIP_VERSION}-linux-${arch}.tar.xz" \
-    && bsdtar -xf /tmp/7z.tar.xz -C /usr/local/bin 7zz \
+        "https://github.com/ip7z/7zip/releases/download/${SEVENZIP_TAG}/7z${SEVENZIP_VERSION}-linux-${arch}.tar.xz" \
+    && bsdtar -xf /tmp/7z.tar.xz -C /tmp 7zzs \n    && mv /tmp/7zzs /usr/local/bin/7zz \
     && rm /tmp/7z.tar.xz \
     && 7zz i > /dev/null
 

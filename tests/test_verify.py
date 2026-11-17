@@ -49,6 +49,9 @@ def test_7zz_comes_first_and_tells_damage_from_what_it_cannot_test(env, monkeypa
     said("ERROR: Wrong password : a.txt", 2)
     with pytest.raises(verify.Untested, match="密码"):
         verify.test_archive(good)
+    said("ERROR: Data Error in encrypted file. Wrong password? : a.txt", 2)
+    with pytest.raises(verify.Untested, match="密码"):
+        verify.test_archive(good)
     said("ERROR: Unsupported Method : a.txt", 2)
     with pytest.raises(verify.Untested):
         verify.test_archive(good)

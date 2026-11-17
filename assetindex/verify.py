@@ -63,11 +63,11 @@ def _with_7zz(tool: str, path: Path, size: int) -> str | None:
     if done.returncode == 0:
         return None
     said = _said(done)
+    if PASSWORD_7Z.search(said):  # "Data Error in encrypted file. Wrong password?" is no damage
+        raise Untested("有密码")
     damage = [line for line in said.splitlines() if DAMAGE_7Z.search(line)]
     if damage:
         return "\n".join(damage)[-ERROR_CHARS:]
-    if PASSWORD_7Z.search(said):
-        raise Untested("有密码")
     raise Untested(f"7-Zip 读不了：{said[-ERROR_CHARS:]}")
 
 
