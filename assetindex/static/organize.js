@@ -184,9 +184,12 @@ function row(item) {
   const dir = item.path.slice(0, item.path.length - name.length);
   const check = el('input', { type: 'checkbox', className: 'org-check', 'aria-label': `选中 ${item.path}` });
   check.dataset.path = item.path;
-  const thumb = item.thumb
-    ? el('img', { src: item.thumb, alt: '', loading: 'lazy', className: 'org-thumb' })
-    : el('div', { className: 'org-thumb empty', text: item.is_dir ? '📁' : '📄' });
+  let thumb = el('div', { className: 'org-thumb empty', text: item.is_dir ? '📁' : '📄' });
+  if (item.thumb) {
+    thumb = el('button', { type: 'button', className: 'org-thumb-btn', title: '看大图', 'aria-label': `看大图：${item.path}` },
+      [el('img', { src: item.thumb, alt: '', loading: 'lazy', className: 'org-thumb' })]);
+    thumb.addEventListener('click', () => openPictures(item));
+  }
   const target = el('div', { className: 'org-target-line' });
   target.replaceChildren(...targetView(item, target));
   const actions = [];
@@ -276,6 +279,58 @@ async function acceptAll() {
   afterChange();
 }
 
+// ---- large view ----
+
+let picturesSeq = 0;
+
+function showPicture(picture, button) {
+  const img = el('img', { src: picture.large, alt: picture.name });
+  img.addEventListener('error', () => {  // a .uasset or .eps without a picture inside, an undecodable file
+    $('ov-main').replaceChildren(el('span', { className: 'muted', text: '无法预览这个文件' }));
+  });
+  $('ov-main').replaceChildren(img);
+  $('ov-name').textContent = picture.name;
+  $('ov-open').href = picture.large;
+  document.querySelectorAll('#ov-strip button').forEach((b) => {
+    b.classList.toggle('active', b === button);
+    b.setAttribute('aria-pressed', String(b === button));
+  });
+}
+
+async function openPictures(item) {
+  const seq = ++picturesSeq;
+  $('ov-title').textContent = item.path;
+  $('ov-info').textContent = item.target ? `→ ${item.target}${item.reason ? `　${item.reason}` : ''}` : (item.reason ?? '');
+  $('ov-main').replaceChildren(el('span', { className: 'muted', text: '读取中…' }));
+  $('ov-strip').replaceChildren();
+  $('ov-name').textContent = '';
+  $('ov-open').hidden = true;
+  if (!$('o-viewer').open) $('o-viewer').showModal();
+  let pictures;
+  try {
+    pictures = (await api(`/api/organize/units/pictures?${new URLSearchParams({ root: view.root, path: item.path })}`)).pictures;
+  } catch (err) {
+    if (seq === picturesSeq) $('ov-main').replaceChildren(el('span', { className: 'muted', text: `读取失败：${err.message}` }));
+    return;
+  }
+  if (seq !== picturesSeq) return;
+  if (!pictures.length) {
+    $('ov-main').replaceChildren(el('span', { className: 'muted', text: '这个包里没有能显示的图片' }));
+    return;
+  }
+  $('ov-open').hidden = false;
+  const buttons = pictures.map((picture) => {
+    const thumb = el('img', { src: picture.thumb, alt: '', loading: 'lazy' });
+    const button = el('button', { type: 'button', title: picture.name, 'aria-label': picture.name }, [thumb]);
+    thumb.addEventListener('error', () => button.classList.add('broken'));
+    button.addEventListener('click', () => showPicture(picture, button));
+    return button;
+  });
+  $('ov-strip').hidden = pictures.length < 2;
+  $('ov-strip').replaceChildren(...buttons);
+  showPicture(pictures[0], buttons[0]);
+}
+
 function selectedPaths() {
   return [...document.querySelectorAll('.org-check:checked')].map((c) => c.dataset.path);
 }
@@ -306,6 +361,8 @@ function init() {
   $('o-reject').addEventListener('click', () => decide(selectedPaths(), 'reject').catch((err) => alert(err.message)));
   $('o-redo').addEventListener('click', () => decide(selectedPaths(), 'redo').catch((err) => alert(err.message)));
   $('o-accept-all').addEventListener('click', () => acceptAll().catch((err) => alert(err.message)));
+  $('ov-close').addEventListener('click', () => $('o-viewer').close());
+  $('o-viewer').addEventListener('close', () => { picturesSeq += 1; $('ov-main').replaceChildren(); });
   $('o-more').addEventListener('click', () => load(false));
   refresh();
 }

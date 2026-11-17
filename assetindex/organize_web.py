@@ -113,6 +113,52 @@ def check_target(target: str) -> tuple[str, str]:
     return category, name
 
 
+PICTURE_LIMIT = 24  # pictures shown for one pack in the large view
+RAW_PICTURE_MAX_BYTES = 20 * 2**20  # bigger ones are shown by their thumbnail: a huge PNG can stall the page
+_PICTURE_EXTS = sorted(THUMBNAIL_EXTS | EMBEDDED_PREVIEW_EXTS | LISTABLE_ARCHIVE_EXTS)
+_BROWSER_IMAGE_EXTS = frozenset({"png", "jpg", "jpeg", "gif", "webp", "bmp"})  # shown as they are
+
+
+def _showable(row: sqlite3.Row) -> bool:
+    if row["ext"] in LISTABLE_ARCHIVE_EXTS:
+        return row["preview_state"] == 1  # its contact sheet
+    return row["ext"] in THUMBNAIL_EXTS or row["ext"] in EMBEDDED_PREVIEW_EXTS
+
+
+def _pictures(conn: sqlite3.Connection, root: str, path: str, is_dir: bool, companions: list[str]) -> list[dict]:
+    """The pack's pictures for the large view: the file and its previews, or the folder's
+    pictures (and archives with a contact sheet), at most PICTURE_LIMIT."""
+    select = (
+        "SELECT f.id, f.rel_path, f.ext, f.size, a.preview_state FROM files f LEFT JOIN archives a ON a.file_id = f.id"
+        f" WHERE f.root = ? AND (f.seq_frames IS NULL OR f.seq_frames > 0) AND f.ext IN ({','.join('?' * len(_PICTURE_EXTS))})"
+    )
+    if is_dir:
+        rows = list(conn.execute(
+            f"{select} AND f.rel_path >= ? AND f.rel_path < ? ORDER BY f.rel_path LIMIT ?",
+            (root, *_PICTURE_EXTS, *under(path), PICTURE_LIMIT * 4),  # some archives may have no sheet
+        ))
+        base = path + "/"
+    else:
+        members = [path, *companions]
+        rows = conn.execute(f"{select} AND f.rel_path IN ({','.join('?' * len(members))})", (root, *_PICTURE_EXTS, *members))
+        rows = sorted(rows, key=lambda r: members.index(r["rel_path"]))
+        base = path.rpartition("/")[0] + "/" if "/" in path else ""
+    pictures = []
+    for row in rows:
+        if not _showable(row):
+            continue
+        url = f"/api/files/{row['id']}"
+        pictures.append({
+            "id": row["id"], "name": row["rel_path"].removeprefix(base),
+            "large": f"{url}/raw" if row["ext"] in _BROWSER_IMAGE_EXTS and row["size"] <= RAW_PICTURE_MAX_BYTES
+            else f"{url}/thumb",
+            "thumb": f"{url}/thumb",
+        })
+        if len(pictures) >= PICTURE_LIMIT:
+            break
+    return pictures
+
+
 def _thumb_id(conn: sqlite3.Connection, root: str, path: str, is_dir: bool, companions: dict[str, list[str]]) -> int | None:
     """A file whose thumbnail stands for the unit (`companions`: file unit -> its companions)."""
     if not is_dir:  # the file's own picture, else a preview next to it
@@ -221,6 +267,17 @@ def add_organize_routes(app: FastAPI, settings: Settings, get_conn: Callable, pa
                 "thumb": f"/api/files/{thumb}/thumb" if thumb else None,
             })
         return {"total": total, "items": items}
+
+    @app.get("/api/organize/units/pictures")
+    def api_unit_pictures(
+        root: str, path: str = Query(max_length=MAX_PATH), conn: sqlite3.Connection = Depends(get_conn)
+    ) -> dict:
+        root_or_422(root)
+        unit = conn.execute("SELECT is_dir FROM organize_units WHERE root = ? AND path = ?", (root, path)).fetchone()
+        if unit is None:
+            raise HTTPException(404, "没有这个包，可能已经变了，刷新一下")
+        companions = [] if unit["is_dir"] else companions_by_unit(*organize.stored_layout(conn, root)).get(path, [])
+        return {"pictures": _pictures(conn, root, path, bool(unit["is_dir"]), companions)}
 
     @app.post("/api/organize/units/decide", dependencies=guarded)
     def api_decide(body: Annotated[Decide, Body()], conn: sqlite3.Connection = Depends(get_conn)) -> dict:

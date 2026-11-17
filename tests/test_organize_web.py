@@ -324,3 +324,29 @@ def test_accept_all_takes_only_what_the_list_shows(env):
 
     assert nothing.json() == {"changed": 0} and by_search.json() == {"changed": 0}
     assert _units(client)["2D/Ice Pack"]["status"] == "rejected"
+
+
+def test_a_pack_lists_its_pictures_for_the_large_view(env):
+    client, settings = env
+    _analyze(client, settings)
+
+    folder = client.get("/api/organize/units/pictures", params={"root": "lib", "path": "2D/Ice Pack"}).json()
+    missing = client.get("/api/organize/units/pictures", params={"root": "lib", "path": "2D/Nope"})
+
+    assert [p["name"] for p in folder["pictures"]] == ["a/ice.png", "b/frost.png"]
+    first = folder["pictures"][0]
+    assert first["large"] == f"/api/files/{first['id']}/raw" and first["thumb"] == f"/api/files/{first['id']}/thumb"
+    assert client.get(first["large"]).status_code == 200
+    assert missing.status_code == 404
+
+
+def test_a_huge_picture_is_shown_by_its_thumbnail(env, monkeypatch):
+    from assetindex import organize_web
+
+    client, settings = env
+    _analyze(client, settings)
+    monkeypatch.setattr(organize_web, "RAW_PICTURE_MAX_BYTES", 10)  # every test png is bigger
+
+    first = client.get("/api/organize/units/pictures", params={"root": "lib", "path": "2D/Ice Pack"}).json()["pictures"][0]
+
+    assert first["large"] == first["thumb"]

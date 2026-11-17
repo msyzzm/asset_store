@@ -73,6 +73,19 @@
     <ul id="o-list" class="org-list"></ul>
     <button id="o-more" class="more" type="button" hidden>加载更多</button>
   </main>
+  <dialog id="o-viewer" class="viewer org-viewer" aria-labelledby="ov-title">
+    <div class="viewer-head">
+      <h2 id="ov-title"></h2>
+      <button id="ov-close" class="icon-btn" type="button" aria-label="关闭">✕</button>
+    </div>
+    <div id="ov-main" class="viewer-preview"></div>
+    <div class="org-viewer-line">
+      <span id="ov-name" class="muted"></span>
+      <a id="ov-open" target="_blank" rel="noopener" hidden>新标签页打开</a>
+    </div>
+    <div id="ov-strip" class="org-viewer-strip" hidden></div>
+    <p id="ov-info" class="hint"></p>
+  </dialog>
   <script src="organize.js"></script>
   <script src="organize-move.js"></script>
 </body>
