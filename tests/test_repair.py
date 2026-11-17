@@ -1,10 +1,11 @@
 """Repairing a pack from copies each damaged in a different member."""
 import os
+import subprocess
 import zipfile
 
 import pytest
 
-from assetindex import move_job, repair, scan_request
+from assetindex import move_job, repair, scan_request, unpack
 from assetindex.config import Settings
 from assetindex.db import connect
 
@@ -147,4 +148,122 @@ def test_a_failed_job_says_why(lib, tmp_path):
     done = move_job.run(conn, settings, {"action": "repair", "root": "lib", "paths": PATHS}, move=fake_move)
 
     assert done.moved == 0 and "每一份都坏了" in done.error
+    conn.close()
+
+
+# Locked RAR: 7zz writes every member, a bad one too, and names the bad ones.
+PASSWORD = "虚幻4资源站"
+RAR_MEMBERS = {"Kyoto/a.uasset": b"a" * 10, "Kyoto/b.uasset": b"bb"}
+RAR_LISTING = "\n----------\n" + "\n\n".join(
+    f"Path = {name}\nFolder = -\nSize = {len(data)}" for name, data in RAR_MEMBERS.items()) + "\n"
+
+
+class FakeRar7zz:
+    """`bad`: archive name -> the member it holds damaged."""
+
+    def __init__(self, bad):
+        self.bad = bad
+
+    def __call__(self, args):
+        src = next(a for a in args if a.endswith(".rar"))
+        name = src.replace("\\", "/").rpartition("/")[2]
+        if args[0] == "l":
+            return subprocess.CompletedProcess(args, 0, RAR_LISTING.encode(), b"")
+        out = next(a[2:] for a in args if a.startswith("-o"))
+        wanted = args[args.index(src) + 1 :] or list(RAR_MEMBERS)
+        broken = [m for m in wanted if m == self.bad.get(name)]
+        for member in wanted:
+            target = os.path.join(out, member)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as f:
+                f.write(b"?" * len(RAR_MEMBERS[member]) if member in broken else RAR_MEMBERS[member])
+        if not broken:
+            return subprocess.CompletedProcess(args, 0, b"Everything is Ok", b"")
+        said = "".join(f"ERROR: CRC Failed : {m}\n" for m in broken) + f"Sub items Errors: {len(broken)}\n"
+        return subprocess.CompletedProcess(args, 2, said.encode(), b"")
+
+
+@pytest.fixture
+def rars(tmp_path, monkeypatch):
+    root = tmp_path / "lib"
+    for name in ("Kyoto - 京都.rar", "Kyoto - 日式.rar"):
+        (root / "E").mkdir(parents=True, exist_ok=True)
+        (root / "E" / name).write_bytes(b"rar")
+    monkeypatch.setattr(unpack, "run_7zz", FakeRar7zz({"Kyoto - 京都.rar": "Kyoto/a.uasset", "Kyoto - 日式.rar": "Kyoto/b.uasset"}))
+    return root
+
+
+RARS = ["E/Kyoto - 京都.rar", "E/Kyoto - 日式.rar"]
+
+
+def test_a_locked_rar_is_rebuilt_from_its_copies(rars):
+    new = repair.repair_one(rars, RARS, {}, move=fake_move, password=PASSWORD)
+
+    assert new == "E/Kyoto - 京都"
+    assert (rars / new / "a.uasset").read_bytes() == b"a" * 10 and (rars / new / "b.uasset").read_bytes() == b"bb"
+    assert sorted(os.listdir(rars / "E")) == ["Kyoto - 京都"]
+    assert sorted(os.listdir(rars / "_待删除")) == sorted(["Kyoto - 京都.rar", "Kyoto - 日式.rar"])
+
+
+def test_a_rar_member_bad_in_every_copy_changes_nothing(rars, monkeypatch):
+    monkeypatch.setattr(unpack, "run_7zz", FakeRar7zz({"Kyoto - 京都.rar": "Kyoto/a.uasset", "Kyoto - 日式.rar": "Kyoto/a.uasset"}))
+
+    with pytest.raises(repair.RepairError, match="每一份都坏了"):
+        repair.repair_one(rars, RARS, {}, move=fake_move, password=PASSWORD)
+
+    assert sorted(os.listdir(rars / "E")) == sorted(["Kyoto - 京都.rar", "Kyoto - 日式.rar"])
+
+
+def test_errors_7zz_does_not_name_are_not_guessed_at(rars, monkeypatch):
+    def vague(args):
+        if args[0] == "l":
+            return subprocess.CompletedProcess(args, 0, RAR_LISTING.encode(), b"")
+        return subprocess.CompletedProcess(args, 2, b"ERROR: Headers Error\nSub items Errors: 3", b"")
+
+    monkeypatch.setattr(unpack, "run_7zz", vague)
+
+    with pytest.raises(repair.RepairError, match="解不开"):
+        repair.repair_one(rars, RARS, {}, move=fake_move, password=PASSWORD)
+    assert sorted(os.listdir(rars / "E")) == sorted(["Kyoto - 京都.rar", "Kyoto - 日式.rar"])
+
+
+def test_7zz_failing_midway_leaves_nothing_behind(rars, monkeypatch):
+    fake = FakeRar7zz({"Kyoto - 京都.rar": "Kyoto/a.uasset", "Kyoto - 日式.rar": "Kyoto/b.uasset"})
+
+    def dies_on_the_second_copy(args):
+        if args[0] == "x" and any(a.endswith("日式.rar") for a in args):
+            raise unpack.UnpackError("7zz 跑了太久，没解完")
+        return fake(args)
+
+    monkeypatch.setattr(unpack, "run_7zz", dies_on_the_second_copy)
+
+    with pytest.raises(repair.RepairError, match="太久"):
+        repair.repair_one(rars, RARS, {}, move=fake_move, password=PASSWORD)
+    assert sorted(os.listdir(rars / "E")) == sorted(["Kyoto - 京都.rar", "Kyoto - 日式.rar"])
+
+
+def test_every_member_failing_means_a_wrong_password(rars, monkeypatch):
+    def all_bad(args):
+        if args[0] == "l":
+            return subprocess.CompletedProcess(args, 0, RAR_LISTING.encode(), b"")
+        said = "".join(f"ERROR: CRC Failed in encrypted file. Wrong password? : {m}\n" for m in RAR_MEMBERS)
+        return subprocess.CompletedProcess(args, 2, (said + "Sub items Errors: 2\n").encode(), b"")
+
+    monkeypatch.setattr(unpack, "run_7zz", all_bad)
+
+    with pytest.raises(repair.RepairError, match="密码"):
+        repair.repair_one(rars, RARS, {}, move=fake_move, password="nope")
+    with pytest.raises(repair.RepairError, match="密码"):
+        repair.repair_one(rars, RARS, {}, move=fake_move)
+
+
+def test_a_rar_repair_job_takes_the_password(rars, tmp_path):
+    settings = Settings(roots={"lib": rars}, data_dir=tmp_path / "data")
+    conn = connect(settings.db_path)
+    request = {"action": "repair", "root": "lib", "paths": RARS, "password": PASSWORD}
+
+    assert move_job.parse(request, settings) == ("repair", "lib", None)
+    done = move_job.run(conn, settings, request, move=fake_move)
+
+    assert done.moved == 1 and done.error is None and (rars / "E/Kyoto - 京都/b.uasset").read_bytes() == b"bb"
     conn.close()

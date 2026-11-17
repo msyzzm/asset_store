@@ -149,7 +149,9 @@ def parse(raw, settings: Settings) -> tuple[str, str, str | None]:
     if action == "unpack" and not (isinstance(password, str) and 0 < len(password) <= MAX_PASSWORD):
         raise ValueError("要填解压密码")
     limit = raw.get("limit")
-    if action != "unpack" and (password is not None or limit is not None):
+    if (action != "unpack" and limit is not None) or (action not in ("unpack", "repair") and password is not None):
+        raise ValueError("请求格式不对")
+    if password is not None and not (isinstance(password, str) and 0 < len(password) <= MAX_PASSWORD):
         raise ValueError("请求格式不对")
     if limit is not None and (type(limit) is not int or not 0 < limit <= MAX_UNPACK_LIMIT):
         raise ValueError("要解开几个？")
@@ -234,7 +236,7 @@ def run(
     if action == "unpack":
         return _unpack(conn, settings, raw, status, should_stop, report, move, free_bytes, now)
     if action == "repair":
-        return _repair(conn, settings, raw["paths"], status, should_stop, report, move, free_bytes, now)
+        return _repair(conn, settings, raw, status, should_stop, report, move, free_bytes, now)
     journals = settings.data_dir / organize_apply.JOURNAL_DIR
     progress = {"done": 0}
 
@@ -287,7 +289,7 @@ def _unpack(conn, settings: Settings, raw: dict, status: MoveStatus, should_stop
                    problems=_problems(result.problems), error=result.error, stopped=result.stopped)
 
 
-def _repair(conn, settings: Settings, paths: list[str], status: MoveStatus, should_stop, report, move, free_bytes,
+def _repair(conn, settings: Settings, raw: dict, status: MoveStatus, should_stop, report, move, free_bytes,
             now) -> MoveStatus:
     """One pack rebuilt from damaged copies (see assetindex/repair.py); a scan picks it up."""
     base = settings.roots[status.root].resolve()
@@ -300,7 +302,8 @@ def _repair(conn, settings: Settings, paths: list[str], status: MoveStatus, shou
 
     moved, error, stopped = 0, None, False
     try:
-        repair.repair_one(base, paths, companions, move=move, free=free_bytes, should_stop=should_stop, report=step)
+        repair.repair_one(base, raw["paths"], companions, move=move, free=free_bytes, should_stop=should_stop,
+                          report=step, password=raw.get("password"))
         moved = 1
     except repair.Stopped:
         stopped = True

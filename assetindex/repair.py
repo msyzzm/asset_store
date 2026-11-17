@@ -10,6 +10,8 @@ first copy's previews move into it; all copies and the other previews go to _待
 """
 
 import lzma
+import os
+import re
 import shutil
 import subprocess
 import zipfile
@@ -25,6 +27,8 @@ from assetindex.organize_apply import _taken, move_no_replace
 from assetindex.scanner import UNPACKING_SUFFIX
 
 CHUNK = 1 << 20
+BAD_MEMBER = re.compile(r"^ERROR: (?:CRC Failed|Data Error)(?: in encrypted file\. Wrong password\?)? : (.+)$", re.MULTILINE)
+ERROR_COUNT = re.compile(r"Sub items Errors: (\d+)")
 Mover = Callable[[str, str, bool], None]
 Copies = list[tuple[Path, zipfile.ZipFile]]
 
@@ -137,21 +141,101 @@ def _build(base: Path, srcs: list[Path], tmp: Path, should_stop, report, free) -
             raise
 
 
+def _bad_members(said: str) -> list[str] | None:
+    """The members 7zz named as damaged, or None unless it named every error it counted."""
+    names = sorted({m.rstrip("\r") for m in BAD_MEMBER.findall(said)})
+    counted = ERROR_COUNT.search(said)
+    if not names or not counted or int(counted.group(1)) != len(names):
+        return None
+    return names
+
+
+def _said(done: subprocess.CompletedProcess) -> str:
+    return (done.stdout + b"\n" + done.stderr).decode("utf-8", "replace")
+
+
+def _take_from_others(srcs: list[Path], names: list[str], tmp: Path, password: str, should_stop) -> list[str]:
+    """The damaged members taken whole from the other copies into `tmp`, one 7zz run per
+    copy; those no copy holds whole. Their scratch folder is hidden from the scanner too."""
+    scratch = tmp.parent / (tmp.name.removesuffix(UNPACKING_SUFFIX) + ".one" + UNPACKING_SUFFIX)
+    left = list(names)
+    try:
+        for src in srcs:
+            if not left:
+                break
+            if should_stop():
+                raise Stopped("手动停止了，什么都没改")
+            shutil.rmtree(scratch, ignore_errors=True)
+            scratch.mkdir()
+            done = unpack.run_7zz(["x", "-bd", "-y", "-spd", f"-p{password}", f"-o{scratch}", "--", str(src), *left])
+            still_bad = set() if done.returncode == 0 else set(_bad_members(_said(done)) or left)
+            for name in [n for n in left if n not in still_bad and (scratch / _safe(n)).is_file()]:
+                target = tmp / _safe(name)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(scratch / _safe(name), target)
+                left.remove(name)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    return left
+
+
+def _build_rar(base: Path, srcs: list[Path], tmp: Path, password: str, should_stop, report, free) -> None:
+    """The first copy unpacked whole (7zz writes a damaged member too, and names it), each
+    damaged member then taken from another copy. On any failure `tmp` is gone again."""
+    expected = unpack.rar_contents(srcs[0], password)  # also refuses volume sets
+    if any(unpack.rar_contents(src, password) != expected for src in srcs[1:]):
+        raise RepairError("几份包里的文件不一样，不能拼成一份")
+    if free(base) < expected[1] + unpack.MIN_FREE_BYTES:
+        raise RepairError(f"NAS 剩余空间不够：要 {expected[1] / 1e9:.1f} GB，还要留 {unpack.MIN_FREE_BYTES / 1e9:.0f} GB")
+    shutil.rmtree(tmp, ignore_errors=True)  # ours, left by a crash
+    tmp.mkdir()
+    try:
+        report(0, expected[0])
+        done = unpack.run_7zz(["x", "-bd", "-y", f"-p{password}", f"-o{tmp}", "--", str(srcs[0])])
+        bad = [] if done.returncode == 0 else _bad_members(_said(done))
+        if bad is None:
+            raise RepairError(f"第一份解不开：{unpack._said(done, password)}")
+        if bad and len(bad) >= expected[0]:
+            raise RepairError("每个文件都报错，多半是密码不对")
+        for name in bad:
+            _safe(name)
+        left = _take_from_others(srcs[1:], bad, tmp, password, should_stop)
+        if left:
+            raise RepairError(f"「{left[0]}」每一份都坏了，修不了")
+        got = unpack._counted(tmp)
+        if got != expected:
+            raise RepairError(f"拼出来的文件对不上：应有 {expected[0]} 个、{expected[1]} 字节，实际 {got[0]} 个、{got[1]} 字节")
+        report(expected[0], expected[0])
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+
+
 def repair_one(
     base: Path, rels: list[str], companions: dict[str, list[str]], move: Mover = move_no_replace,
     free=unpack.free_bytes, should_stop: Callable[[], bool] = lambda: False,
-    report: Callable[[int, int], None] = lambda done, total: None,
+    report: Callable[[int, int], None] = lambda done, total: None, password: str | None = None,
 ) -> str:
-    """The rebuilt folder's path (the first copy's name without ".zip")."""
+    """The rebuilt folder's path (the first copy's name without its suffix). Copies are all
+    zip, or all rar (locked ones need `password`)."""
     srcs = [base / rel for rel in rels]
-    if len(srcs) < 2 or any(not src.is_file() or src.suffix.lower() != ".zip" for src in srcs):
-        raise RepairError("要两份以上还在的 zip")
+    suffixes = {src.suffix.lower() for src in srcs}
+    if len(srcs) < 2 or any(not src.is_file() for src in srcs) or suffixes not in ({".zip"}, {".rar"}):
+        raise RepairError("要两份以上还在的 zip，或两份以上还在的 rar")
     folder_rel = rels[0].rpartition(".")[0]
     dest = base / folder_rel
     if _taken(dest):
         raise RepairError(f"「{folder_rel}」已经有了，不往里面写")
     tmp = dest.parent / f".{dest.name}{UNPACKING_SUFFIX}"
-    _build(base, srcs, tmp, should_stop, report, free)  # the zips are closed again: they can move
+    if suffixes == {".rar"}:
+        if not password:
+            raise RepairError("修复 rar 要带密码（没加密的包，7-Zip 会忽略它）")
+        try:
+            _build_rar(base, srcs, tmp, password, should_stop, report, free)
+        except unpack.UnpackError as err:
+            raise RepairError(str(err)) from None
+    else:
+        _build(base, srcs, tmp, should_stop, report, free)  # the zips are closed again: they can move
     top = list(tmp.iterdir())
     keep = top[0] if len(top) == 1 and top[0].is_dir() else tmp
     move(str(keep), str(dest), True)
