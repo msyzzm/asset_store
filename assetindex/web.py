@@ -42,7 +42,8 @@ from assetindex.scan_request import is_requested, read_status, request_scan, sto
 from assetindex.scan_request import request_stop as request_scan_stop
 from assetindex.scanlock import is_scan_running
 from assetindex.search import MAX_LIMIT, MAX_QUERY_LENGTH, parse_terms, search
-from assetindex.semantic import NoVectors, VectorIndex, semantic_search
+from assetindex.packs import search_packs
+from assetindex.semantic import NoVectors, VectorIndex, ranked_ids, semantic_search
 from assetindex.sequences import frames_of
 from assetindex.updater import add_update_routes
 from assetindex.thumbs import (
@@ -345,7 +346,30 @@ def create_app(settings: Settings) -> FastAPI:
                 note = f"语义搜索不可用（{err.detail}），已改用关键词搜索"
         return search(conn, q, kind=kind, limit=limit, offset=offset), "text", note
 
-    add_agent_routes(app, settings, get_conn, resolve, agent_search, scan_state)
+    def meaning_ids(conn: sqlite3.Connection, q: str) -> list[int]:
+        """Semantic search's file ids for `q`, best first. HTTPException if unavailable."""
+        config = load_config(settings.data_dir)
+        if not config.active:
+            raise HTTPException(409, "语义搜索还没启用")
+        with slot(semantic_busy, SEMANTIC_SLOTS, "语义搜索正忙，稍后再试"):
+            try:
+                return ranked_ids(conn, vectors, config.model, query_vector(config, q))
+            except EmbedError as err:
+                raise HTTPException(502, f"向量接口出错：{err}") from None
+            except NoVectors:
+                raise HTTPException(409, "还没有可用的向量") from None
+
+    def agent_packs(conn: sqlite3.Connection, q: str, category: str, limit: int, offset: int, mode: str):
+        """Packs for agents: words first, then (unless mode is "text") what the meaning adds."""
+        meaning, used, note = None, "text", None
+        if mode != "text":
+            try:
+                meaning, used = meaning_ids(conn, q), "text+semantic"
+            except HTTPException as err:
+                note = f"语义搜索不可用（{err.detail}），只用了关键词"
+        return search_packs(conn, q, category, limit, offset, meaning), used, note
+
+    add_agent_routes(app, settings, get_conn, resolve, agent_search, scan_state, agent_packs)
     add_update_routes(app, settings.data_dir, page_request)
     add_organize_routes(app, settings, get_conn, page_request)
     add_move_routes(app, settings, get_conn, page_request)

@@ -129,6 +129,19 @@ def _visible(conn: sqlite3.Connection, ids: list[int]) -> list[int]:
     return [i for i in ids if i in shown]
 
 
+def ranked_ids(
+    conn: sqlite3.Connection, index: VectorIndex, model: str, query_vector: list[float], kind: str | None = None
+) -> list[int]:
+    """Card ids closest in meaning, best first (at most MAX_RESULTS). Raises NoVectors."""
+    matrices = index.get(conn, model)
+    if not matrices:
+        raise NoVectors(model)
+    vector = _unit(query_vector)
+    if all(m.vectors.shape[1] != vector.shape[0] for m in matrices.values()):
+        raise NoVectors(model)  # stored vectors came from a model with another dimension
+    return _visible(conn, rank(matrices, vector, kind))
+
+
 def semantic_search(
     conn: sqlite3.Connection,
     index: VectorIndex,

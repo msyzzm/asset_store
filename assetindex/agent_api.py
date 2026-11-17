@@ -95,8 +95,22 @@ def add_agent_routes(
     resolve: Callable,
     run_search: Callable,
     scan_state: Callable[[], dict],
+    pack_search: Callable,
 ) -> None:
     entry_slots = threading.BoundedSemaphore(ENTRY_SLOTS)
+
+    @app.get("/api/agent/packs")
+    def agent_packs(
+        q: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH),
+        category: str = Query("", max_length=100),
+        mode: Literal["auto", "text"] = "auto",
+        limit: int = Query(20, ge=1, le=MAX_AGENT_LIMIT),
+        offset: int = Query(0, ge=0),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> dict:
+        """Packs (folders, archives with their previews), one result each, best first."""
+        result, used, note = pack_search(conn, q, category.strip("/"), limit, offset, mode)
+        return {"total": result.total, "mode": used, "note": note, "packs": result.packs}
 
     def item_or_404(conn: sqlite3.Connection, file_id: int) -> dict:
         items = fetch_items(conn, [file_id], [])

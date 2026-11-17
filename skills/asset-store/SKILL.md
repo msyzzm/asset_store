@@ -19,7 +19,14 @@ python scripts/asset_store.py tasks
 
 ## 典型流程
 
-1. **搜**：`python scripts/asset_store.py search 火焰 爆炸 --limit 10`
+0. **先按包找**（找"做某种游戏用的素材"时从这里开始）：`python scripts/asset_store.py packs 蒸汽朋克 --limit 20`
+   - 一个素材包（文件夹，或压缩包加它的预览图）只占一条，不会被包里几百个文件刷屏。
+   - 排序：包名里有全部搜索词的在前（`match: name`），其次是包里文件命中的（`match: inside`，`hit_count` 多的在前），最后是按意思找到的（`match: meaning`）。
+   - 每条有 `category`（分类路径）、`dim`（2D/3D/audio）、`engine`（unreal/unity，不知道时为空）、`caption`（画面描述）、`files`、`size`、`hits`（命中的几个文件）、`links`。
+   - `--category 02_3D/Environments` 只看某个分类；分类有 `01_2D/*`、`02_3D/*`、`03_Audio/*`、`04_Tools/*`、`05_Reference`。
+   - 视角（俯视、横版、等距）一般写不进包名：3D 场景和道具大多能俯视使用，不要因为名字里没有"俯视"就排除。用 `thumb` 看预览图再判断。
+   - 想看文件夹包里有什么，用 `search 包名的一段 --mode text`。
+1. **搜文件**：`python scripts/asset_store.py search 火焰 爆炸 --limit 10`
    - 多个词之间是"并且"的关系，中英文都可以，例如 `sword icon`、`剑`。
    - 用 `--kind` 限定类型，取值有 `image audio video model archive unreal other`。
    - `--mode auto`（默认）：语义搜索可用时按意思排序，不可用时自动退回关键词搜索。返回里的 `mode` 是实际用了哪种，`note` 说明为什么退回。
@@ -72,7 +79,8 @@ GET 请求不需要认证。POST 请求要带请求头 `X-Requested-With: anythi
 
 | 用途 | 请求 |
 |---|---|
-| 搜索 | `GET /api/agent/search?q=&kind=&mode=auto&limit=20&offset=0` |
+| 按包搜索 | `GET /api/agent/packs?q=&category=&mode=auto&limit=20&offset=0` |
+| 搜索文件 | `GET /api/agent/search?q=&kind=&mode=auto&limit=20&offset=0` |
 | 详情 | `GET /api/agent/files/{id}` |
 | 包内文件 | `GET /api/agent/files/{id}/entries?q=&limit=&offset=` |
 | 取包内单个文件 | `GET /api/agent/files/{id}/entries/{entry_id}/download` |
