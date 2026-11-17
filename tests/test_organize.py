@@ -390,3 +390,15 @@ def test_an_old_proposal_for_a_note_is_dropped(lib, server):
 
     row = _rows(conn)["2D/解压密码.txt"]
     assert row["status"] == "todo" and row["target"] is None and row["category"] is None
+
+
+def test_packs_already_set_aside_are_not_sorted_again(lib, server):
+    conn, settings, root = lib
+    _png(root / "_待删除" / "Old Pack" / "a.png", (9, 9, 9))
+    _png(root / "_Duplicates" / "Copy Pack" / "b.png", (8, 8, 8))
+    scan_root(conn, "lib", root)
+
+    run_analysis(conn, settings, Scope("lib"), _config(server))
+
+    rows = _rows(conn)
+    assert rows["_待删除/Old Pack"]["status"] == "todo" and rows["_Duplicates/Copy Pack"]["status"] == "todo"

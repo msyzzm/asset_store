@@ -146,7 +146,7 @@ function initRoots(data) {
   view.root = data.roots[0] ?? '';
   $('o-cats').replaceChildren(...data.categories.map((c) => el('li', {}, [el('code', { text: c.path }), ` ${c.description}`])));
   $('o-category').append(...data.categories.map((c) => el('option', { value: c.path, text: c.path })),
-    el('option', { value: '_Unsorted', text: '_Unsorted' }), el('option', { value: '_Duplicates', text: '_Duplicates' }));
+    ...data.targets.map((t) => el('option', { value: t, text: t })));
   select.addEventListener('change', () => { view.root = select.value; refresh(); reload(); });
   reload();
 }
@@ -197,6 +197,12 @@ function row(item) {
   if (item.target && item.status !== 'rejected') actions.push(actionButton('拒绝', () => decide([item.path], 'reject')));
   if (item.status === 'accepted' || item.status === 'rejected') actions.push(actionButton('撤回', () => decide([item.path], 'reset')));
   if ((item.target || item.error) && item.status !== 'accepted' && !item.dup_of) actions.push(actionButton('重新分析', () => decide([item.path], 'redo')));
+  const setAside = item.path.startsWith('_待删除/') || (item.status === 'accepted' && item.category === '_待删除');
+  if (!setAside) actions.push(actionButton('标为待删除', async () => {
+    if (!window.confirm(`把「${item.path}」标为待删除？执行整理时会移到 _待删除/，你在群晖 File Station 里检查后再删（那样能进回收站）。`)) return;
+    await post('/api/organize/units/target', { root: view.root, path: item.path, target: `_待删除/${name}` });
+    afterChange();
+  }));
   if (item.dup_of) actions.push(actionButton('改为保留这份', async () => { await post('/api/organize/units/keep', { root: view.root, path: item.path }); afterChange(); }));
   if (item.is_dir) actions.push(actionButton('拆开', async () => { await post('/api/organize/split', { root: view.root, path: item.path }); afterChange(); }));
   const parent = dir.replace(/\/$/, '');

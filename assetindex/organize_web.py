@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from assetindex import caption_job, organize
 from assetindex.caption import load_config
-from assetindex.classify import CATEGORIES, DUPLICATES, UNSORTED, file_suffix, under
+from assetindex.classify import CATEGORIES, DUPLICATES, TO_DELETE, UNSORTED, file_suffix, target_for, under
 from assetindex.config import Settings
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.scanlock import is_scan_running
@@ -106,7 +106,7 @@ def check_target(target: str) -> tuple[str, str]:
     """A typed-in target: "<category>/<name>" with a known category and a safe name."""
     target = target.strip().replace("\\", "/").strip("/")
     category, _, name = target.rpartition("/")
-    if category not in {c for c, _ in CATEGORIES} | {UNSORTED, DUPLICATES}:
+    if category not in {c for c, _ in CATEGORIES} | {UNSORTED, DUPLICATES, TO_DELETE}:
         raise ValueError("目标要以分类开头，例如 01_2D/UI/包名")
     if not name or name in (".", "..") or _UNSAFE_PART.search(name) or name != name.strip(" ."):
         raise ValueError("名字里不能有 \\ : * ? \" < > | 这些字符，也不能以点或空格开头结尾")
@@ -235,6 +235,7 @@ def add_organize_routes(app: FastAPI, settings: Settings, get_conn: Callable, pa
             "counts": _counts(conn),
             "roots": sorted(settings.roots),
             "categories": [{"path": p, "description": d} for p, d in CATEGORIES],
+            "targets": [UNSORTED, DUPLICATES, TO_DELETE],  # folders outside the scheme a pack can go to
             "model_ready": load_config(data_dir).active,
         }
 
@@ -313,6 +314,9 @@ def add_organize_routes(app: FastAPI, settings: Settings, get_conn: Callable, pa
         if not row["is_dir"] and suffix and not name.lower().endswith(suffix.lower()):
             name += suffix  # renaming "pack.zip" to "图标包" must not lose the ".zip"
         target = f"{category}/{name}"
+        if category == TO_DELETE:  # same names from different folders are common: number them
+            target = target_for(TO_DELETE, name, bool(row["is_dir"]), organize._taken(conn, body.root, body.path))
+            name = target.split("/", 1)[1]
         if target != row["target"] and target.lower() in organize._taken(conn, body.root, body.path):
             raise HTTPException(409, f"「{target}」已经有了，或者被别的包占用")
         with conn:

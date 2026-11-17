@@ -214,3 +214,19 @@ def test_an_archive_with_its_preview_is_compared_by_the_archive(tmp_path, conn):
 
     assert [(g.keep, g.others) for g in groups] == [("UE/A/Castle.rar", ("UE/B/Castle.rar",))]
     assert {f.rel for f in units[("UE/A/Castle.rar", False)]} == {"", "Castle.png"}
+
+
+def test_copies_set_aside_are_never_kept_and_never_counted():
+    from assetindex.dupes import UnitFile
+
+    def pack(sample):
+        return [UnitFile("", 1000, 1.0, "h", sample)]
+
+    groups = duplicate_units({
+        ("_待删除/A.zip", False): pack("s"),
+        ("_Duplicates/A.zip", False): pack("s"),
+        ("01_2D/UI/deep/A.zip", False): pack("s"),
+    })
+
+    assert len(groups) == 1 and groups[0].keep == "01_2D/UI/deep/A.zip"
+    assert groups[0].others == ("_Duplicates/A.zip",)  # what is set aside for deleting stays out

@@ -208,6 +208,19 @@ def test_renaming_a_file_keeps_its_extension(env, conn):
     assert done.json()["target"] == "01_2D/UI/图标包.zip"
 
 
+def test_a_pack_can_be_set_aside_for_deleting(env):
+    client, settings = env
+    _analyze(client, settings)
+
+    done = client.post("/api/organize/units/target", headers=PAGE,
+                       json={"root": "lib", "path": "2D/Ice Pack", "target": "_待删除/Ice Pack"})
+
+    assert done.json()["target"] == "_待删除/Ice Pack"
+    unit = _units(client)["2D/Ice Pack"]
+    assert unit["status"] == "accepted" and unit["category"] == "_待删除"
+    assert any(c == "_待删除" for c in client.get("/api/organize").json()["targets"])
+
+
 @pytest.mark.parametrize("target", ["01_2D/UI", "Nope/x", "01_2D/UI/a:b", "01_2D/UI/ x", "01_2D/UI/.."])
 def test_bad_targets(target):
     with pytest.raises(ValueError):
@@ -350,3 +363,14 @@ def test_a_huge_picture_is_shown_by_its_thumbnail(env, monkeypatch):
     first = client.get("/api/organize/units/pictures", params={"root": "lib", "path": "2D/Ice Pack"}).json()["pictures"][0]
 
     assert first["large"] == first["thumb"]
+
+
+def test_set_aside_names_are_numbered(env):
+    client, settings = env
+    _analyze(client, settings)
+    first = client.post("/api/organize/units/target", headers=PAGE,
+                        json={"root": "lib", "path": "2D/Ice Pack", "target": "_待删除/Pack"})
+    second = client.post("/api/organize/units/target", headers=PAGE,
+                         json={"root": "lib", "path": "2D/Fire Pack", "target": "_待删除/Pack"})
+
+    assert first.json()["target"] == "_待删除/Pack" and second.json()["target"] == "_待删除/Pack (2)"

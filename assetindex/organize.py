@@ -27,7 +27,7 @@ from assetindex import caption_job
 from assetindex.caption import CaptionClient, CaptionConfig
 from assetindex.caption_job import Scope
 from assetindex.classify import (
-    CATEGORY_PATHS, DUPLICATES, ITEM_PROBLEM, Question, file_suffix, prepare_question, read_answer, strip_junk_source, target_for,
+    CATEGORY_PATHS, DUPLICATES, ITEM_PROBLEM, TO_DELETE, Question, file_suffix, prepare_question, read_answer, strip_junk_source, target_for,
 )
 from assetindex.config import Settings
 from assetindex.dupes import UnitFile, duplicate_units, file_duplicates, hash_pending, signature, unit_files
@@ -232,7 +232,9 @@ def to_classify(conn: sqlite3.Connection, scope: Scope) -> list[sqlite3.Row]:
         f"SELECT path, is_dir, size FROM organize_units WHERE {where} AND dup_of IS NULL AND status IN {statuses} ORDER BY path",
         params,
     ).fetchall()
-    return [r for r in rows if not _is_note(r)]
+    # Packs already set aside (moved to _Duplicates or _待删除) are not sorted again.
+    aside = (DUPLICATES + "/", TO_DELETE + "/")
+    return [r for r in rows if not _is_note(r) and not r["path"].startswith(aside)]
 
 
 def forget_note_proposals(conn: sqlite3.Connection, root: str) -> int:

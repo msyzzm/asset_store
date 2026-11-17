@@ -21,6 +21,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from assetindex.categories import DUPLICATES, TO_DELETE
 from assetindex.config import Settings
 from assetindex.units import Layout, layout
 
@@ -293,7 +294,8 @@ def content_key(is_dir: bool, files: list[UnitFile]) -> tuple[str, bool] | None:
 
 def _keep_rank(path: str, preferred: frozenset[str] = frozenset()) -> tuple:
     name = path.rsplit("/", 1)[-1]
-    return (path not in preferred, bool(_COPY_MARK.search(name)), path.count("/"), len(path), path)
+    set_aside = path.startswith(DUPLICATES + "/")  # a copy moved away before: keep the one in use
+    return (path not in preferred, set_aside, bool(_COPY_MARK.search(name)), path.count("/"), len(path), path)
 
 
 def duplicate_units(
@@ -305,6 +307,8 @@ def duplicate_units(
     preferred = frozenset(preferred)
     groups: dict[str, list[tuple[str, int, int, bool]]] = defaultdict(list)
     for (path, is_dir), files in units.items():
+        if path.startswith(TO_DELETE + "/"):  # on its way out: neither a copy to keep nor one to set aside
+            continue
         key = content_key(is_dir, files)
         if key:
             groups[key[0]].append((path, sum(f.size for f in files), len(files), key[1]))

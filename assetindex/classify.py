@@ -19,7 +19,7 @@ from PIL import Image
 from assetindex.archive_previews import choose_candidates
 from assetindex.caption import CaptionClient, clean_caption
 from assetindex.caption_job import save_caption
-from assetindex.categories import CATEGORIES, CATEGORY_PATHS, DUPLICATES, UNSORTED  # noqa: F401 (re-exported)
+from assetindex.categories import CATEGORIES, CATEGORY_PATHS, DUPLICATES, TO_DELETE, UNSORTED  # noqa: F401 (re-exported)
 from assetindex.config import Settings
 from assetindex.embed_stage import BACKGROUND, JPEG_QUALITY, _has_image, card_jpeg
 from assetindex.embedding import EmbedError
