@@ -6,6 +6,7 @@ user (see the move job's action "verify").
 Three outcomes: whole, damaged (bsdtar complained), or not tested (no bsdtar, too slow,
 an empty file): never call a copy damaged because the test itself could not run."""
 
+import re
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -20,6 +21,8 @@ UNTESTED = "无法校验："
 BASE_TIMEOUT_SECONDS = 1800
 READ_BYTES_PER_SECOND = 5_000_000  # slow NFS: a 5 GB archive gets ~47 minutes
 ERROR_CHARS = 200
+NAME_WARNING = re.compile(r"multibyte or wide character|Pathname can't be converted", re.IGNORECASE)
+UNSUPPORTED = re.compile(r"Can't decompress|unsupported|not supported|Unknown (compression|filter)", re.IGNORECASE)
 WINDOWS_TAR = Path(r"C:\Windows\System32\tar.exe")  # bsdtar too; a "tar" on PATH may be GNU tar
 
 
@@ -47,7 +50,11 @@ def test_archive(path: Path) -> str | None:
         raise Untested("读了太久，没读完") from None
     except OSError as err:
         raise Untested(f"没法运行 bsdtar：{err}") from None
-    said = done.stderr.decode("utf-8", "replace").strip()
+    lines = [line for line in done.stderr.decode("utf-8", "replace").splitlines()
+             if line.strip() and not NAME_WARNING.search(line)]
+    said = "\n".join(lines)
+    if UNSUPPORTED.search(said):  # e.g. newer RAR methods libarchive cannot decode
+        raise Untested(f"bsdtar 读不了这种压缩：{said[-ERROR_CHARS:]}")
     if done.returncode == 0 and not said:  # some versions only warn on a bad CRC: a warning counts
         return None
     return said[-ERROR_CHARS:] or f"bsdtar 退出码 {done.returncode}"

@@ -51,6 +51,25 @@ def test_a_test_that_cannot_run_never_calls_a_copy_damaged(env, monkeypatch):
         verify.test_archive(settings.roots["lib"] / "empty.zip")
 
 
+def test_what_bsdtar_cannot_decode_is_not_tested_and_name_warnings_are_ignored(env, monkeypatch):
+    import subprocess
+
+    _, settings = env
+    good = settings.roots["lib"] / "good.zip"
+    monkeypatch.setattr(verify, "bsdtar", lambda: "bsdtar")
+
+    def said(text, code=1):
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, code, b"", text.encode()))
+
+    said("x: Can't decompress an entry marked as a solid entry\nPathname contains incomplete multibyte or wide character")
+    with pytest.raises(verify.Untested, match="读不了"):
+        verify.test_archive(good)
+    said("bsdtar: Pathname contains incomplete multibyte or wide character", code=0)
+    assert verify.test_archive(good) is None
+    said("a.txt: ZIP bad CRC")
+    assert "bad CRC" in verify.test_archive(good)
+
+
 def test_parse_wants_paths_only_for_verifying(env):
     _, settings = env
     assert move_job.parse({"action": "verify", "root": "lib", "paths": ["a.zip"]}, settings) == ("verify", "lib", None)
