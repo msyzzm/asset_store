@@ -226,6 +226,7 @@ async function load(reset) {
   if (!view.root) return;
   if (reset) view.offset = 0;
   const seq = ++view.seq;
+  if (reset) { view.total = null; showAcceptAll(); }  // no stale count while the new list loads
   const params = new URLSearchParams({ root: view.root, show: view.show, category: view.category, q: view.q, limit: PAGE_SIZE, offset: view.offset });
   try {
     const data = await api(`/api/organize/units?${params}`);
@@ -234,6 +235,8 @@ async function load(reset) {
     if (reset) $('o-list').replaceChildren(...rows); else $('o-list').append(...rows);
     view.offset += data.items.length;
     $('o-count').textContent = `${data.total} 个`;
+    view.total = data.total;
+    showAcceptAll();
     $('o-more').hidden = view.offset >= data.total;
     $('o-all').checked = false;
   } catch (err) {
@@ -255,6 +258,21 @@ async function decide(paths, action) {
   for (let i = 0; i < paths.length; i += DECIDE_BATCH) {
     await post('/api/organize/units/decide', { root: view.root, paths: paths.slice(i, i + DECIDE_BATCH), action });
   }
+  afterChange();
+}
+
+// "确认这个分类全部": only for one category's suggestions or duplicates, never the whole list.
+function showAcceptAll() {
+  const button = $('o-accept-all');
+  button.hidden = !view.category || view.category === '_Unsorted' || !['proposed', 'duplicates'].includes(view.show) || !view.total;
+  button.textContent = `确认这个分类全部（${view.total ?? 0} 个）`;
+}
+
+async function acceptAll() {
+  const what = view.q ? `「${view.category}」里路径或目标含「${view.q}」的` : `「${view.category}」里`;
+  if (!confirm(`确认${what}全部 ${view.total} 个包？确认后在「执行整理」里才会真正移动，确认前可以撤回。`)) return;
+  const r = await post('/api/organize/units/accept-all', { root: view.root, show: view.show, category: view.category, q: view.q });
+  $('o-count').textContent = `已确认 ${r.changed} 个`;
   afterChange();
 }
 
@@ -287,6 +305,7 @@ function init() {
   $('o-accept').addEventListener('click', () => decide(selectedPaths(), 'accept').catch((err) => alert(err.message)));
   $('o-reject').addEventListener('click', () => decide(selectedPaths(), 'reject').catch((err) => alert(err.message)));
   $('o-redo').addEventListener('click', () => decide(selectedPaths(), 'redo').catch((err) => alert(err.message)));
+  $('o-accept-all').addEventListener('click', () => acceptAll().catch((err) => alert(err.message)));
   $('o-more').addEventListener('click', () => load(false));
   refresh();
 }

@@ -279,3 +279,48 @@ def test_redo_sends_a_pack_back_to_the_model_but_not_a_decided_one(env):
     assert units["2D/Fire Pack"]["status"] == "accepted" and units["2D/Fire Pack (1)"]["dup_of"]
     _analyze(client, settings)
     assert _units(client)["2D/Ice Pack"]["status"] == "proposed"
+
+
+def test_accept_a_whole_category_as_listed(env):
+    client, settings = env
+    _analyze(client, settings)
+    proposed = _units(client, "proposed")
+    vfx = [p for p, u in proposed.items() if u["category"] == "01_2D/VFX"]
+    assert vfx and len(vfx) < len(proposed)
+
+    done = client.post("/api/organize/units/accept-all", headers=PAGE,
+                       json={"root": "lib", "show": "proposed", "category": "01_2D/VFX"})
+
+    assert done.json() == {"changed": len(vfx)}
+    after = _units(client)
+    assert all(after[p]["status"] == "accepted" for p in vfx)
+    assert all(after[p]["status"] == "proposed" for p in proposed if p not in vfx)
+
+
+def test_accept_all_needs_a_category_and_a_list_of_suggestions(env):
+    client, settings = env
+    _analyze(client, settings)
+    assert client.post("/api/organize/units/accept-all", headers=PAGE,
+                       json={"root": "lib", "show": "proposed", "category": ""}).status_code == 422
+    assert client.post("/api/organize/units/accept-all", headers=PAGE,
+                       json={"root": "lib", "show": "accepted", "category": "01_2D/VFX"}).status_code == 422
+    assert client.post("/api/organize/units/accept-all",
+                       json={"root": "lib", "show": "proposed", "category": "01_2D/VFX"}).status_code == 403
+    assert client.post("/api/organize/units/accept-all", headers=PAGE,  # the model could not tell: one by one
+                       json={"root": "lib", "show": "proposed", "category": "_Unsorted"}).status_code == 422
+
+
+def test_accept_all_takes_only_what_the_list_shows(env):
+    client, settings = env
+    _analyze(client, settings)
+    proposed = _units(client, "proposed")
+    category = proposed["2D/Ice Pack"]["category"]
+    client.post("/api/organize/units/decide", headers=PAGE, json={"root": "lib", "paths": ["2D/Ice Pack"], "action": "reject"})
+
+    nothing = client.post("/api/organize/units/accept-all", headers=PAGE,
+                          json={"root": "lib", "show": "proposed", "category": category})
+    by_search = client.post("/api/organize/units/accept-all", headers=PAGE,
+                            json={"root": "lib", "show": "proposed", "category": "01_2D/VFX", "q": "no such text"})
+
+    assert nothing.json() == {"changed": 0} and by_search.json() == {"changed": 0}
+    assert _units(client)["2D/Ice Pack"]["status"] == "rejected"

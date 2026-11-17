@@ -12,7 +12,7 @@ from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from assetindex import caption_job, organize
 from assetindex.caption import load_config
@@ -61,6 +61,34 @@ class Decide(BaseModel):
     root: str
     paths: list[str] = Field(max_length=MAX_BATCH)
     action: Literal["accept", "reject", "reset", "redo"]
+
+
+class AcceptAll(BaseModel):
+    """Accept every pack the list shows for one category (and its search text)."""
+
+    root: str
+    show: Literal["proposed", "duplicates"]
+    category: str = Field(min_length=1, max_length=100)
+    q: str = Field("", max_length=200)
+
+    @field_validator("category")
+    @classmethod
+    def _not_unsorted(cls, value: str) -> str:
+        if value == UNSORTED:
+            raise ValueError("模型没能归类的包要一个个看，不能整批确认")
+        return value
+
+
+def _unit_filter(root: str, show: str, category: str, q: str) -> tuple[str, list]:
+    """The list's WHERE clause, shared by the list and by accepting it whole."""
+    where, params = ["root = ?", _SHOW_SQL[show]], [root]
+    if category:
+        where.append("category = ?")
+        params.append(category)
+    if q.strip():
+        where.append("(instr(lower(path), lower(?)) > 0 OR instr(lower(coalesce(target, '')), lower(?)) > 0)")
+        params += [q.strip(), q.strip()]
+    return " AND ".join(where), params
 
 
 class Retarget(BaseModel):
@@ -175,14 +203,7 @@ def add_organize_routes(app: FastAPI, settings: Settings, get_conn: Callable, pa
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> dict:
         root_or_422(root)
-        where, params = ["root = ?", _SHOW_SQL[show]], [root]
-        if category:
-            where.append("category = ?")
-            params.append(category)
-        if q.strip():
-            where.append("(instr(lower(path), lower(?)) > 0 OR instr(lower(coalesce(target, '')), lower(?)) > 0)")
-            params += [q.strip(), q.strip()]
-        clause = " AND ".join(where)
+        clause, params = _unit_filter(root, show, category, q)
         total = conn.execute(f"SELECT COUNT(*) FROM organize_units WHERE {clause}", params).fetchone()[0]
         rows = conn.execute(
             f"SELECT * FROM organize_units WHERE {clause} ORDER BY path LIMIT ? OFFSET ?", (*params, limit, offset)
@@ -209,6 +230,19 @@ def add_organize_routes(app: FastAPI, settings: Settings, get_conn: Callable, pa
             if body.action in ("accept", "reject"):
                 _keep_folders_whole(conn, body.root, body.paths)
         return {"changed": changed}
+
+    @app.post("/api/organize/units/accept-all", dependencies=guarded)
+    def api_accept_all(body: Annotated[AcceptAll, Body()], conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+        root_or_422(body.root)
+        clause, params = _unit_filter(body.root, body.show, body.category, body.q)
+        with conn:  # one statement: a pack decided meanwhile no longer matches the list's filter
+            rows = conn.execute(
+                f"UPDATE organize_units SET status = 'accepted' WHERE {clause} AND target IS NOT NULL RETURNING path",
+                params,
+            ).fetchall()
+            paths = [r["path"] for r in rows]
+            _keep_folders_whole(conn, body.root, paths)
+        return {"changed": len(paths)}
 
     @app.post("/api/organize/units/target", dependencies=guarded)
     def api_retarget(body: Annotated[Retarget, Body()], conn: sqlite3.Connection = Depends(get_conn)) -> dict:
