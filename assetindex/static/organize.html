@@ -57,6 +57,13 @@
           <button id="m-unpack" class="btn secondary" type="submit">全部解开</button>
         </form>
       </div>
+      <div id="m-trash" class="org-locked" hidden>
+        <h3>待删除</h3>
+        <p id="m-trash-summary" class="hint"></p>
+        <div class="org-move-actions">
+          <button id="m-purge" class="btn secondary danger" type="button">永久删除</button>
+        </div>
+      </div>
       <h3>移动记录</h3>
       <p id="m-history-empty" class="hint">还没有移动过。</p>
       <ul id="m-history" class="org-move-list"></ul>

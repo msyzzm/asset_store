@@ -128,3 +128,4 @@
 }
 .org-locked { margin-top: 16px; }
 .org-locked input { min-width: 12em; }
+.btn.danger { color: var(--danger, #b42318); border-color: currentColor; }

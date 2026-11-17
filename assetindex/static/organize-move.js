@@ -3,7 +3,7 @@
 // Organize page, "执行整理": the move plan, moving the confirmed packs, undoing a run.
 // Uses api, post, el and view from organize.js. Paths come from the NAS: text only.
 
-const move = { timer: 0, seq: 0, plan: null, state: null, wasBusy: false };
+const move = { timer: 0, seq: 0, plan: null, state: null, wasBusy: false, trash: null, trashSeq: 0 };
 const ROOT_WAIT_MS = 300;
 
 function when(epoch) {
@@ -20,12 +20,15 @@ function mountText(mount) {
 
 function moveJobText(job) {
   if (job.running) {
-    const what = { undo: '正在撤销', recover: '正在收尾上次中断的移动', unpack: '正在解开带密码的包' }[job.action] ?? '正在移动';
+    const what = { undo: '正在撤销', recover: '正在收尾上次中断的移动', unpack: '正在解开带密码的包', verify: '正在校验压缩包', purge: '正在删除待删除里的文件' }[job.action] ?? '正在移动';
     return job.total ? `${what} ${job.done}/${job.total}…` : `${what}…`;
   }
   if (job.requested) return job.waiting ? '已提交，等扫描或整理分析结束后开始…' : '已提交，mover 马上开始…';
   if (!job.finished) return '';
-  const what = { undo: `撤销了 ${job.moved} 个包`, recover: '收尾完成', unpack: `解开了 ${job.moved} 个带密码的包，等扫描完再分析它们` }[job.action] ?? `移动了 ${job.moved} 个包`;
+  const what = {
+    undo: `撤销了 ${job.moved} 个包`, recover: '收尾完成', unpack: `解开了 ${job.moved} 个带密码的包，等扫描完再分析它们`,
+    verify: `校验了 ${job.total} 个压缩包，${job.moved} 个完好`, purge: `永久删除了 ${job.moved} 个文件`,
+  }[job.action] ?? `移动了 ${job.moved} 个包`;
   const problems = job.problems.length ? `，${job.problems.length} 个没动（原因见下）` : '';
   const ending = job.error ? `。${job.error}` : job.stopped ? '，已手动停止。' : '。';
   return `上次（${when(job.finished)}）：${what}${problems}${ending}`;
@@ -47,6 +50,7 @@ function renderMoveState(data) {
   $('m-start').hidden = busy;
   $('m-start').disabled = !writable || !move.plan?.moves;
   $('m-unpack').disabled = !writable || busy;
+  $('m-purge').disabled = !writable || busy;
   $('m-recover').hidden = !data.unsettled || busy;
   const bar = $('m-bar');
   bar.hidden = !job.running || !job.total;
@@ -80,7 +84,7 @@ async function refreshMoves() {
     const finished = move.wasBusy && !(data.job.running || data.job.requested);
     if (finished) { move.plan = null; $('m-plan-view').hidden = true; }  // things moved: the plan is old
     busy = renderMoveState(data);
-    if (finished) { afterChange(); refreshLocked(); }
+    if (finished) { afterChange(); refreshLocked(); refreshTrash(); }
     move.wasBusy = busy;
   } catch (err) {
     if (seq !== move.seq) return;
@@ -154,6 +158,34 @@ async function refreshLocked() {
   }
 }
 
+async function refreshTrash() {
+  if (!view.root) { setTimeout(refreshTrash, ROOT_WAIT_MS); return; }
+  const seq = ++move.trashSeq;
+  move.trash = null;  // never ask about another root's numbers
+  try {
+    const trash = await api(`/api/organize/trash?${new URLSearchParams({ root: view.root })}`);
+    if (seq !== move.trashSeq) return;
+    move.trash = trash;
+    $('m-trash').hidden = !trash.files;
+    $('m-trash-summary').textContent = `${trash.folder} 里有 ${trash.files} 个文件（${(trash.size / 1e9).toFixed(1)} GB）。`
+      + '可以先在群晖 File Station 里检查，在那里删除会进回收站。在这里删除是通过 NFS 直接删，不进回收站，删了就找不回来。';
+  } catch (err) {
+    if (seq !== move.trashSeq) return;
+    $('m-trash').hidden = false;
+    $('m-trash-summary').textContent = `待删除读取失败：${err.message}`;
+  }
+}
+
+async function startPurge() {
+  const trash = move.trash;
+  if (!trash?.files) return;
+  const typed = window.prompt(`永久删除 ${trash.folder} 里的 ${trash.files} 个文件（${(trash.size / 1e9).toFixed(1)} GB）？`
+    + '不进群晖回收站，删了找不回来。确定的话请输入「删除」两个字：');
+  if (typed === null) return;
+  if (typed.trim() !== '删除') { $('m-error').textContent = '没有输入「删除」，没有删除任何文件。'; return; }
+  await startMove({ action: 'purge', root: view.root });
+}
+
 async function startUnpack(event) {
   event.preventDefault();
   const password = $('m-password').value;
@@ -165,6 +197,7 @@ async function startUnpack(event) {
 
 function initMoves() {
   $('m-unpack-form').addEventListener('submit', startUnpack);
+  $('m-purge').addEventListener('click', startPurge);
   $('m-plan').addEventListener('click', showPlan);
   $('m-start').addEventListener('click', startApply);
   $('m-recover').addEventListener('click', () => startMove({ action: 'recover', root: view.root }));
@@ -172,9 +205,10 @@ function initMoves() {
     try { await post('/api/organize/moves/stop', {}); } catch (err) { $('m-error').textContent = `没能停止：${err.message}`; }
     refreshMoves();
   });
-  $('o-form').root.addEventListener('change', () => { move.plan = null; $('m-plan-view').hidden = true; refreshMoves(); refreshLocked(); });
+  $('o-form').root.addEventListener('change', () => { move.plan = null; $('m-plan-view').hidden = true; refreshMoves(); refreshLocked(); refreshTrash(); });
   refreshMoves();
   refreshLocked();
+  refreshTrash();
 }
 
 initMoves();

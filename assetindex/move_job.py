@@ -19,7 +19,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
-from assetindex import organize, organize_apply, scan_request, unpack, verify
+from assetindex import organize, organize_apply, purge, scan_request, unpack, verify
 from assetindex.config import Settings
 from assetindex.organize_move import build_plan
 from assetindex.scan_request import write_json_atomic
@@ -30,7 +30,7 @@ REQUEST_NAME = "move.request"
 STOP_NAME = "move.stop"
 STATUS_NAME = "move.status"
 LOCK_NAME = "move.lock"  # held by the mover for a whole job: "running" means this lock is held
-ACTIONS = ("apply", "undo", "recover", "unpack", "verify")
+ACTIONS = ("apply", "undo", "recover", "unpack", "verify", "purge")
 MAX_VERIFY = 200  # each archive gets a line in the status (MAX_PROBLEMS)
 MAX_PASSWORD = 200
 MAX_UNPACK_LIMIT = 100_000
@@ -200,6 +200,7 @@ def run(
     now: Callable[[], float] = time.time,
     free_bytes: Callable[[Path], int] = unpack.free_bytes,
     test_archive: Callable[[Path], str | None] = verify.test_archive,
+    remove: Callable[[str], None] = purge.remove,
 ) -> MoveStatus:
     """One job; the caller holds the locks."""
     try:
@@ -222,6 +223,8 @@ def run(
     if action == "recover":
         organize.refresh_units(conn, root)
         return replace(status, running=False, finished=now())
+    if action == "purge":
+        return _purge(settings, status, should_stop, report, remove, now)
     if action == "verify":
         return _verify(settings, raw["paths"], status, should_stop, report, test_archive, now)
     if action == "unpack":
@@ -288,3 +291,24 @@ def _verify(settings: Settings, paths: list[str], status: MoveStatus, should_sto
     results, whole, stopped = verify.verify_all(settings.roots[status.root].resolve(), paths, should_stop, step, test=test_archive)
     return replace(status, running=False, finished=now(), moved=whole, done=progress["done"],
                    problems=_problems(results), stopped=stopped)
+
+
+def _purge(settings: Settings, status: MoveStatus, should_stop, report, remove, now) -> MoveStatus:
+    """Delete what is in _待删除 for good (see assetindex/purge.py); a scan forgets it."""
+    base = settings.roots[status.root].resolve()
+    try:
+        status = replace(status, total=purge.contents(base)[0])
+    except purge.Refused as err:
+        return replace(status, running=False, finished=now(), error=str(err))
+    report(status)
+    progress = {"done": 0}
+
+    def step(done: int) -> None:
+        progress["done"] = done
+        report(replace(status, done=done))
+
+    removed, problems, stopped = purge.purge(base, should_stop, step, remove=remove)
+    if removed:
+        scan_request.request_scan(settings.data_dir)
+    return replace(status, running=False, finished=now(), moved=removed, done=progress["done"],
+                   problems=_problems(problems), stopped=stopped)

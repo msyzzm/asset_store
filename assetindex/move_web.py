@@ -9,7 +9,8 @@ from typing import Annotated
 
 from fastapi import Body, Depends, FastAPI, HTTPException
 
-from assetindex import move_job, organize, organize_apply, unpack
+from assetindex import move_job, organize, organize_apply, purge, unpack
+from assetindex.categories import TO_DELETE
 from assetindex.config import Settings
 from assetindex.organize_move import build_plan
 from assetindex.scanlock import is_scan_running
@@ -54,6 +55,17 @@ def add_move_routes(app: FastAPI, settings: Settings, get_conn: Callable, page_r
                 for m in plan.moves[:PLAN_SAMPLE]
             ],
         }
+
+    @app.get("/api/organize/trash")
+    def api_trash(root: str) -> dict:
+        """What emptying _待删除 (action "purge") would delete."""
+        if root not in settings.roots:
+            raise HTTPException(422, "没有这个根目录")
+        try:
+            files, size = purge.contents(settings.roots[root])
+        except purge.Refused as err:
+            raise HTTPException(409, str(err)) from None
+        return {"files": files, "size": size, "folder": TO_DELETE}
 
     @app.get("/api/organize/locked")
     def api_locked(root: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
