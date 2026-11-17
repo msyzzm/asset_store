@@ -6,6 +6,16 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libarchive-tools \
     && rm -rf /var/lib/apt/lists/*
 
+# 7-Zip (the official 7zz) tests archives whole for the "verify" move job, RAR included:
+# libarchive cannot decode some RAR methods. bsdtar unpacks the download (no xz needed).
+ARG SEVENZIP_VERSION=2409
+RUN arch="$(dpkg --print-architecture | sed 's/^amd64$/x64/')" \
+    && python -c "import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], '/tmp/7z.tar.xz')" \
+        "https://www.7-zip.org/a/7z${SEVENZIP_VERSION}-linux-${arch}.tar.xz" \
+    && bsdtar -xf /tmp/7z.tar.xz -C /usr/local/bin 7zz \
+    && rm /tmp/7z.tar.xz \
+    && 7zz i > /dev/null
+
 COPY --from=ghcr.io/astral-sh/uv:0.7.20 /uv /usr/local/bin/uv
 
 # C.UTF-8: without it libarchive can't match non-ASCII member names (Chinese, Japanese).

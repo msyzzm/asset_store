@@ -23,6 +23,37 @@ def env(tmp_path):
     conn.close()
 
 
+@pytest.fixture(autouse=True)
+def no_7zz(monkeypatch):
+    monkeypatch.setattr(verify, "sevenzip", lambda: None)  # the bsdtar tests; 7zz ones set it
+
+
+def test_7zz_comes_first_and_tells_damage_from_what_it_cannot_test(env, monkeypatch):
+    import subprocess
+
+    _, settings = env
+    good = settings.roots["lib"] / "good.zip"
+    calls = []
+    monkeypatch.setattr(verify, "sevenzip", lambda: "7zz")
+
+    def said(text, code):
+        def run(cmd, **kwargs):
+            calls.append(cmd[0])
+            return subprocess.CompletedProcess(cmd, code, text.encode(), b"")
+        monkeypatch.setattr(subprocess, "run", run)
+
+    said("Everything is Ok", 0)
+    assert verify.test_archive(good) is None and calls == ["7zz"]
+    said("ERROR: CRC Failed : Maps/MAP_Demo.umap\nSub items Errors: 1", 2)
+    assert "CRC Failed" in verify.test_archive(good)
+    said("ERROR: Wrong password : a.txt", 2)
+    with pytest.raises(verify.Untested, match="密码"):
+        verify.test_archive(good)
+    said("ERROR: Unsupported Method : a.txt", 2)
+    with pytest.raises(verify.Untested):
+        verify.test_archive(good)
+
+
 def fake_test(path):
     return "CRC 不对" if path.name.startswith("bad") else None
 
@@ -44,7 +75,7 @@ def test_a_test_that_cannot_run_never_calls_a_copy_damaged(env, monkeypatch):
     monkeypatch.setattr(verify, "bsdtar", lambda: None)
 
     done = move_job.run(conn, settings, {"action": "verify", "root": "lib", "paths": ["good.zip"]})
-    assert done.moved == 0 and done.problems[0]["reason"] == "无法校验：没有 bsdtar（libarchive-tools）"
+    assert done.moved == 0 and done.problems[0]["reason"] == "无法校验：没有 7zz 或 bsdtar"
 
     monkeypatch.setattr(verify, "bsdtar", lambda: "bsdtar")
     with pytest.raises(verify.Untested, match="空文件"):
