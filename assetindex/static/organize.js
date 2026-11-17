@@ -64,14 +64,31 @@ function renderSummary(data) {
     cards.push(card('组重复的包', String(report.dup_groups), `多出 ${report.dup_copies} 份，可省 ${size(report.dup_wasted)}`));
     cards.push(card('处跨包重复文件', String(report.files.groups), `可省 ${size(report.files.wasted)}，只提示，不建议移动`));
     cards.push(card('处包内重复文件', String(report.files.inner_groups), `${size(report.files.inner_wasted)}，多数是正常的（如 fbx 自带贴图）`));
+    const damaged = report.files.damaged ?? [];
+    if (damaged.length) cards.push(card('组疑似损坏的副本', String(damaged.length), '大小和抽样相同、内容不同，见下方列表'));
   }
   cards.push(card('条待确认', String((counts.proposed ?? 0) + (counts.duplicates ?? 0)), `已确认 ${counts.accepted ?? 0}，已拒绝 ${counts.rejected ?? 0}`));
   $('o-summary').replaceChildren(...cards);
+  renderDamaged(report?.files.damaged ?? []);
   $('o-tabs').replaceChildren(...TABS.map(([key, label]) => {
     const button = el('button', { type: 'button', className: key === view.show ? 'tab active' : 'tab', text: `${label} ${counts[key] ?? 0}` });
     button.addEventListener('click', () => { view.show = key; renderSummary(data); reload(); });
     return button;
   }));
+}
+
+function renderDamaged(groups) {
+  const box = $('o-damaged');
+  box.hidden = !groups.length;
+  if (!groups.length) return;
+  box.replaceChildren(
+    el('summary', { text: `${groups.length} 组疑似损坏的副本：大小和抽样都一样，整个读出来却不同` }),
+    el('p', { className: 'org-damaged-hint', text: '可能是拷贝时某一份坏了几个字节，也可能是不同版本。不算重复，不会被移动。用 7z t 文件名（或 unrar t）测试，报错的那份是坏的。' }),
+    el('ul', {}, groups.map((g) => el('li', {}, [
+      el('span', { className: 'org-damaged-size', text: size(g.size) }),
+      ...g.paths.map((p) => el('code', { text: p })),
+    ]))),
+  );
 }
 
 function jobText(job) {

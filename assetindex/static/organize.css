@@ -12,6 +12,12 @@
   border-radius: var(--radius);
 }
 
+.org-damaged { margin: 0 0 16px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius); }
+.org-damaged summary { cursor: pointer; font-weight: 600; }
+.org-damaged ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 6px; }
+.org-damaged li { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.org-damaged code { overflow-wrap: anywhere; }
+.org-damaged-hint, .org-damaged-size { color: var(--muted); font-size: 13px; }
 .org-summary { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
 .org-card { padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .org-card-value { font-size: 26px; font-weight: 700; line-height: 1.1; }

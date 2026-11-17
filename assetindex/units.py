@@ -103,18 +103,35 @@ def archive_stem(name: str) -> str | None:
     return stem if dot and stem and ext.lower() in ARCHIVE_EXTS else None
 
 
+_VOLUME_FORMAT = {"p": "rar", "r": "rar", "z": "zip", "7": "7z"}  # by the volume suffix's first letter
+
+
+def _archive_key(name: str) -> tuple[str, str] | None:
+    """(pack name, format) of an archive or archive volume, else None: "X.part2.rar" and
+    "X.r00" are volumes of a rar, "X.z01" and "X.zip.001" of a zip, "X.7z.001" of a 7z."""
+    volume = _VOLUME.match(name)
+    if volume:
+        return volume["stem"], _VOLUME_FORMAT[name[len(volume["stem"]) + 1].lower()]
+    stem, dot, ext = name.rpartition(".")
+    return (stem, ext.lower()) if dot and stem and ext.lower() in ARCHIVE_EXTS else None
+
+
 def pair_companions(names: Iterable[str]) -> dict[str, str]:
     """Within one folder: each file that goes with an archive -> that archive's name. The
     other volumes go with the first one; a non-archive goes with the archive of the same
     name, else the shortest one whose name starts like it (separators and case ignored)."""
     names = list(names)
-    groups: dict[str, list[str]] = defaultdict(list)
+    # Volumes follow the first one of their own format; "X.rar" and "X.zip" are two packs (often a copy).
+    groups: dict[tuple[str, str], list[str]] = defaultdict(list)
     for name in names:
-        stem = archive_stem(name)
-        if stem is not None:
-            groups[stem].append(name)
-    main = {stem: min(group, key=lambda n: (bool(_VOLUME.match(n)), n)) for stem, group in groups.items()}
-    pairs = {name: main[stem] for stem, group in groups.items() for name in group if name != main[stem]}
+        key = _archive_key(name)
+        if key is not None:
+            groups[key].append(name)
+    lead = {key: min(group, key=lambda n: (bool(_VOLUME.match(n)), n)) for key, group in groups.items()}
+    pairs = {name: lead[key] for key, group in groups.items() for name in group if name != lead[key]}
+    main: dict[str, str] = {}  # pack name -> the archive its previews go with (7z, then rar, then zip...)
+    for (stem, _), first in sorted(lead.items()):
+        main.setdefault(stem, first)
     exact: dict[str, str] = {}
     for stem in sorted(main):
         exact.setdefault(_squash(stem), stem)

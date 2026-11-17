@@ -106,6 +106,37 @@ def test_files_repeated_across_packs_are_only_reported(library):
     assert report["top"][0]["paths"] == ["2D/Knight Pack/sprites/a.png", "2D/Other Pack/shared.png"]
 
 
+def test_same_sample_but_different_whole_content_is_reported_as_damaged():
+    from assetindex.dupes import UnitFile
+
+    units = {
+        ("A/city.rar", False): [UnitFile("", 1000, 1.0, "h1", "s1")],
+        ("B/city.rar", False): [UnitFile("", 1000, 2.0, "h2", "s1")],
+        ("C/other.rar", False): [UnitFile("", 500, 1.0, None, "s2")],
+        ("D/other.rar", False): [UnitFile("", 500, 1.0, None, "s2")],
+    }
+
+    report = file_duplicates(units, set())
+
+    assert report["damaged"] == [{"size": 1000, "paths": ["A/city.rar", "B/city.rar"]}]
+    assert report["groups"] == 1 and report["top"][0]["paths"] == ["C/other.rar", "D/other.rar"]
+
+
+def test_identical_copies_next_to_a_damaged_one_still_count_as_copies():
+    from assetindex.dupes import UnitFile
+
+    units = {
+        ("A/city.rar", False): [UnitFile("", 1000, 1.0, "h1", "s1")],
+        ("B/city.rar", False): [UnitFile("", 1000, 1.0, "h1", "s1")],
+        ("C/city.rar", False): [UnitFile("", 1000, 1.0, "h2", "s1")],
+    }
+
+    report = file_duplicates(units, set())
+
+    assert report["damaged"][0]["paths"] == ["A/city.rar", "B/city.rar", "C/city.rar"]
+    assert report["groups"] == 1 and report["top"][0]["paths"] == ["A/city.rar", "B/city.rar"]
+
+
 def test_copies_inside_one_pack_are_counted_apart(library, tmp_path):
     conn, settings = library
     _put(tmp_path / "lib", "2D/Other Pack/again/own.png", b"O" * 300)

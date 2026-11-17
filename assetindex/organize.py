@@ -292,6 +292,8 @@ def run_analysis(
         conn, settings, scope.root, unit_layout(conn, scope.root), should_stop,
         lambda stage, done, total: report(replace(status, phase=stage, done=done, total=total)),
     )
+    if hashed.failed:
+        log.warning("%s: %d files could not be read for the duplicate check", scope.root, hashed.failed)
     if hashed.stopped:
         return replace(status, running=False, stopped=True, finished=time.time())
     units = current_units(conn, scope.root)

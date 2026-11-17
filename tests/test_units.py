@@ -110,6 +110,18 @@ def test_pairing_rules():
     assert pairs == {"A.r00": "A.rar", "A.png": "A.rar", "Big Pack.jpg": "Big Pack Deluxe.zip"}
 
 
+def test_archives_of_the_same_name_but_different_types_are_packs_of_their_own():
+    pairs = pair_companions(["X.rar", "X.zip", "X.png", "Y.7z", "Y.7z.001", "Y.7z.002"])
+    # Two archives are two packs (one may be a copy found elsewhere); only volumes follow.
+    assert "X.zip" not in pairs and "X.rar" not in pairs
+    assert pairs["Y.7z.001"] == "Y.7z" and pairs["Y.7z.002"] == "Y.7z" and pairs["X.png"] == "X.rar"
+
+
+def test_volumes_follow_the_archive_of_their_own_format():
+    pairs = pair_companions(["X.part1.rar", "X.part2.rar", "X.zip", "Z.rar", "Z.zip", "Z.zip.001", "Z.r00"])
+    assert pairs == {"X.part2.rar": "X.part1.rar", "Z.zip.001": "Z.zip", "Z.r00": "Z.rar"}
+
+
 def test_only_previews_and_notes_pair_by_prefix_and_the_closest_name_wins():
     pairs = pair_companions(["Tree.zip", "Tree_Oak.fbx", "Warroom.rar", "Warroom Environment 2.rar", "Warroom Environment.png"])
     assert pairs == {"Warroom Environment.png": "Warroom Environment 2.rar"}  # the .fbx is an asset of its own

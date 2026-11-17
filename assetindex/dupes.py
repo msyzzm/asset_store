@@ -323,24 +323,37 @@ def file_duplicates(units: dict[tuple[str, bool], list[UnitFile]], skip: set[str
     """Files with the same content in different units (outside `skip`, the units already
     found identical as a whole). Report only, matched by sample (most were never read
     whole): the waste, and the worst groups."""
-    by_sample: dict[str, list[tuple[str, str, int]]] = defaultdict(list)
+    by_sample: dict[str, list[tuple[str, str, int, str | None]]] = defaultdict(list)
     for (unit, is_dir), files in units.items():
         if unit in skip:
             continue
         for f in files:
             if f.sample:
-                by_sample[f.sample].append((unit, member_path(unit, is_dir, f.rel), f.size))
-    groups, inner_groups, inner_wasted = [], 0, 0
+                by_sample[f.sample].append((unit, member_path(unit, is_dir, f.rel), f.size, f.hash))
+    groups, damaged, inner_groups, inner_wasted = [], [], 0, 0
     for members in by_sample.values():
         if len(members) < 2:
             continue
         size = members[0][2]
-        wasted = size * (len(members) - 1)
-        if len({unit for unit, _, _ in members}) > 1:
-            groups.append({"size": size, "wasted": wasted, "paths": sorted(p for _, p, _ in members)})
-        else:  # inside one pack: mostly on purpose (an .fbm next to textures/, per-engine copies)
-            inner_groups += 1
-            inner_wasted += wasted
+        by_hash: dict[str | None, list[tuple[str, str, int, str | None]]] = defaultdict(list)
+        for member in members:
+            by_hash[member[3]].append(member)
+        clusters = [members]
+        if len([h for h in by_hash if h]) > 1:
+            # Same size and samples, read whole and not the same: possibly a copy that got
+            # damaged (a flipped bit), possibly a real variant. Copies with equal content
+            # still count as copies; the rest is only listed, to be tested by hand.
+            damaged.append({"size": size, "paths": sorted(p for _, p, _, _ in members)})
+            clusters = [cluster for h, cluster in by_hash.items() if h]
+        for cluster in clusters:
+            if len(cluster) < 2:
+                continue
+            wasted = size * (len(cluster) - 1)
+            if len({unit for unit, _, _, _ in cluster}) > 1:
+                groups.append({"size": size, "wasted": wasted, "paths": sorted(p for _, p, _, _ in cluster)})
+            else:  # inside one pack: mostly on purpose (an .fbm next to textures/, per-engine copies)
+                inner_groups += 1
+                inner_wasted += wasted
     groups.sort(key=lambda g: -g["wasted"])
     return {
         "groups": len(groups),
@@ -348,4 +361,5 @@ def file_duplicates(units: dict[tuple[str, bool], list[UnitFile]], skip: set[str
         "top": groups[:TOP_FILE_GROUPS],
         "inner_groups": inner_groups,
         "inner_wasted": inner_wasted,
+        "damaged": sorted(damaged, key=lambda g: -g["size"])[:TOP_FILE_GROUPS],
     }
