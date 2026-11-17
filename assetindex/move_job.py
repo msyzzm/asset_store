@@ -19,7 +19,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
-from assetindex import organize, organize_apply, scan_request, unpack
+from assetindex import organize, organize_apply, scan_request, unpack, verify
 from assetindex.config import Settings
 from assetindex.organize_move import build_plan
 from assetindex.scan_request import write_json_atomic
@@ -30,7 +30,8 @@ REQUEST_NAME = "move.request"
 STOP_NAME = "move.stop"
 STATUS_NAME = "move.status"
 LOCK_NAME = "move.lock"  # held by the mover for a whole job: "running" means this lock is held
-ACTIONS = ("apply", "undo", "recover", "unpack")
+ACTIONS = ("apply", "undo", "recover", "unpack", "verify")
+MAX_VERIFY = 200  # each archive gets a line in the status (MAX_PROBLEMS)
 MAX_PASSWORD = 200
 MAX_UNPACK_LIMIT = 100_000
 MAX_PROBLEMS = 200  # shown on the page; the journal has every detail
@@ -139,7 +140,7 @@ def read_status(data_dir: Path) -> MoveStatus:
 
 def parse(raw, settings: Settings) -> tuple[str, str, str | None]:
     """(action, root, journal name) from a request, validated."""
-    if not isinstance(raw, dict) or set(raw) - {"action", "root", "journal", "password", "limit"}:
+    if not isinstance(raw, dict) or set(raw) - {"action", "root", "journal", "password", "limit", "paths"}:
         raise ValueError("请求格式不对")
     action, root, journal = raw.get("action"), raw.get("root"), raw.get("journal")
     password = raw.get("password")
@@ -150,6 +151,11 @@ def parse(raw, settings: Settings) -> tuple[str, str, str | None]:
         raise ValueError("请求格式不对")
     if limit is not None and (type(limit) is not int or not 0 < limit <= MAX_UNPACK_LIMIT):
         raise ValueError("要解开几个？")
+    paths = raw.get("paths")
+    if (action == "verify") != (paths is not None):
+        raise ValueError("请求格式不对")
+    if paths is not None and not _relative_paths(paths):
+        raise ValueError(f"要校验哪些文件？（1 到 {MAX_VERIFY} 个根目录下的路径）")
     if action not in ACTIONS:
         raise ValueError("不认识的操作")
     if not isinstance(root, str) or root not in settings.roots:
@@ -165,6 +171,13 @@ def parse(raw, settings: Settings) -> tuple[str, str, str | None]:
     elif journal is not None:
         raise ValueError("请求格式不对")
     return action, root, journal
+
+
+def _relative_paths(paths) -> bool:
+    return (
+        isinstance(paths, list) and 0 < len(paths) <= MAX_VERIFY
+        and all(isinstance(p, str) and p and not p.startswith("/") and ".." not in p.split("/") for p in paths)
+    )
 
 
 def history(data_dir: Path) -> list[dict]:
@@ -186,6 +199,7 @@ def run(
     move: Callable[[str, str, bool], None] = organize_apply.move_no_replace,
     now: Callable[[], float] = time.time,
     free_bytes: Callable[[Path], int] = unpack.free_bytes,
+    test_archive: Callable[[Path], str | None] = verify.test_archive,
 ) -> MoveStatus:
     """One job; the caller holds the locks."""
     try:
@@ -208,6 +222,8 @@ def run(
     if action == "recover":
         organize.refresh_units(conn, root)
         return replace(status, running=False, finished=now())
+    if action == "verify":
+        return _verify(settings, raw["paths"], status, should_stop, report, test_archive, now)
     if action == "unpack":
         return _unpack(conn, settings, raw, status, should_stop, report, move, free_bytes, now)
     journals = settings.data_dir / organize_apply.JOURNAL_DIR
@@ -256,3 +272,19 @@ def _unpack(conn, settings: Settings, raw: dict, status: MoveStatus, should_stop
         scan_request.request_scan(settings.data_dir)
     return replace(status, running=False, finished=now(), moved=result.unpacked, done=progress["done"],
                    problems=_problems(result.problems), error=result.error, stopped=result.stopped)
+
+
+def _verify(settings: Settings, paths: list[str], status: MoveStatus, should_stop, report, test_archive, now) -> MoveStatus:
+    """Read the archives whole (see assetindex/verify.py): a line each in `problems`,
+    `moved` counts the whole ones. Nothing on the NAS changes."""
+    status = replace(status, total=len(paths))
+    report(status)
+    progress = {"done": 0}
+
+    def step(done: int) -> None:
+        progress["done"] = done
+        report(replace(status, done=done))
+
+    results, whole, stopped = verify.verify_all(settings.roots[status.root].resolve(), paths, should_stop, step, test=test_archive)
+    return replace(status, running=False, finished=now(), moved=whole, done=progress["done"],
+                   problems=_problems(results), stopped=stopped)
