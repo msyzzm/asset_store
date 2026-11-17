@@ -55,3 +55,18 @@ def test_paging_is_stable_when_same_path_exists_in_two_roots(indexed, asset_root
 def test_percent_sign_is_not_a_wildcard(indexed):
     assert search(indexed, "%").total == 5
     assert search(indexed, "zz%zz").total == 0
+
+
+def test_short_terms_do_not_depend_on_the_trigram_index(indexed):
+    """SQLite 3.40 (the server's) answers a LIKE of under three characters on a trigram
+    index with no rows at all. Short terms must read the tables themselves."""
+    file_id = indexed.execute("SELECT id FROM files WHERE name = 'knight_sword.fbx'").fetchone()[0]
+    indexed.execute(
+        "INSERT INTO captions (file_id, model, mtime, text, created) VALUES (?, 'm', 0, '金属齿轮组件', 0)", (file_id,)
+    )
+    for table in ("files_fts", "captions_fts", "entries_fts"):
+        indexed.execute(f"DROP TABLE {table}")  # local SQLite scans instead; prove short terms never ask it
+
+    assert _names(search(indexed, "刀剑")) == ["刀剑特效.7z"]
+    assert _names(search(indexed, "齿轮")) == ["knight_sword.fbx"]
+    assert _names(search(indexed, "齿轮 kn")) == ["knight_sword.fbx"]

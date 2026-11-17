@@ -8,6 +8,7 @@ from assetindex.archive_queries import entry_hits
 MAX_LIMIT = 200
 MAX_TERMS = 8  # each term is a separate LIKE subquery; cap the cost per request
 MAX_QUERY_LENGTH = 200
+TRIGRAM = 3  # the index's token length: shorter terms cannot use it
 FILE_COLUMNS = (
     "f.id, f.root, f.rel_path, f.name, f.ext, f.kind, f.size, f.mtime, f.seq_frames AS frames,"
     " a.engine, a.engine_version, a.entry_count, a.preview_state AS sheet, c.text AS caption"
@@ -32,19 +33,25 @@ def _match(
     alias: str, terms: list[str], kind: str | None, with_entries: bool
 ) -> tuple[str, list[object]]:
     """A term matches a file's own path or picture description, or (with_entries) any
-    path inside it if it is an archive."""
-    own = (
-        f"{alias}.id IN (SELECT rowid FROM files_fts WHERE rel_path LIKE ?)"
-        f" OR {alias}.id IN (SELECT rowid FROM captions_fts WHERE text LIKE ?)"
-    )
-    inner = (
-        f"{alias}.id IN (SELECT e.file_id FROM archive_entries e"
-        " WHERE e.id IN (SELECT rowid FROM entries_fts WHERE path LIKE ?))"
-    )
-    clause = f"({own} OR {inner})" if with_entries else f"({own})"
-    per_term = 3 if with_entries else 2
-    clauses = [clause for _ in terms]
-    params: list[object] = [f"%{term}%" for term in terms for _ in range(per_term)]
+    path inside it if it is an archive. Terms shorter than a trigram read the tables
+    themselves: SQLite 3.40 (the server's) finds no rows for them through the index."""
+    clauses: list[str] = []
+    params: list[object] = []
+    for term in terms:
+        if len(term) >= TRIGRAM:
+            own = (
+                f"{alias}.id IN (SELECT rowid FROM files_fts WHERE rel_path LIKE ?)"
+                f" OR {alias}.id IN (SELECT rowid FROM captions_fts WHERE text LIKE ?)"
+            )
+            inner = (
+                f"{alias}.id IN (SELECT e.file_id FROM archive_entries e"
+                " WHERE e.id IN (SELECT rowid FROM entries_fts WHERE path LIKE ?))"
+            )
+        else:
+            own = f"{alias}.rel_path LIKE ? OR {alias}.id IN (SELECT file_id FROM captions WHERE text LIKE ?)"
+            inner = f"{alias}.id IN (SELECT file_id FROM archive_entries WHERE path LIKE ?)"
+        clauses.append(f"({own} OR {inner})" if with_entries else f"({own})")
+        params += [f"%{term}%"] * (3 if with_entries else 2)
     if kind:
         clauses.append(f"{alias}.kind = ?")
         params.append(kind)
