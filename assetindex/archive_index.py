@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from assetindex import attempts
+from assetindex import archives, attempts
 from assetindex.archives import ARCHIVE_EXTS, ArchiveError, ArchiveListing, list_archive
 from assetindex.scan_request import ScanStopped, never, no_progress
 
@@ -68,7 +68,7 @@ def index_archives(
     placeholders = ",".join("?" * len(ARCHIVE_EXTS))
     rows = conn.execute(
         f"""
-        SELECT f.id, f.rel_path, f.ext, f.size, f.mtime, a.size AS a_size, a.mtime AS a_mtime, a.status
+        SELECT f.id, f.rel_path, f.ext, f.size, f.mtime, a.size AS a_size, a.mtime AS a_mtime, a.status, a.error
         FROM files f LEFT JOIN archives a ON a.file_id = f.id
         WHERE f.root = ? AND f.ext IN ({placeholders})
         """,
@@ -78,8 +78,10 @@ def index_archives(
     counts = {"listed": 0, "failed": 0, "unreadable": 0, "unchanged": 0}
     for i, row in enumerate(rows):
         progress("archives", i, len(rows))
-        retry = retry_errors and row["status"] == "error"
-        if not retry and (row["a_size"], row["a_mtime"]) == (row["size"], row["mtime"]):
+        unchanged = (row["a_size"], row["a_mtime"]) == (row["size"], row["mtime"])
+        # A changed file is listed anyway; only an unchanged failed one is worth a look at its first bytes.
+        retry = unchanged and row["status"] == "error" and (retry_errors or _misnamed(root, row))
+        if unchanged and not retry:
             counts["unchanged"] += 1
             continue
         if should_stop():  # before attempts.begin: a stop is not a crash
@@ -97,6 +99,18 @@ def index_archives(
             attempts.finish(conn, row["id"], STAGE)
     progress("archives", len(rows), len(rows))
     return ArchiveStats(**counts)
+
+
+def _misnamed(root: Path, row: sqlite3.Row) -> bool:
+    """Failed when read by its name, and its first bytes say it is another format: worth
+    one more try (once read by content, its error says so and it is not retried again)."""
+    if row["ext"] == "unitypackage" or (row["error"] or "").startswith(archives.READ_AS):
+        return False
+    try:
+        fmt = archives.sniff_format(root / row["rel_path"])
+    except OSError:
+        return False
+    return fmt is not None and fmt != row["ext"]
 
 
 def _list_one(conn: sqlite3.Connection, root: Path, row: sqlite3.Row) -> str:

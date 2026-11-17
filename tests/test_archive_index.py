@@ -205,3 +205,20 @@ def test_listing_reports_progress(conn, pack_root):
     index_archives(conn, "art", pack_root, progress=lambda phase, done, total: seen.append((phase, done, total)))
 
     assert seen[-1] == ("archives", 3, 3)
+
+
+def test_an_archive_that_failed_under_the_wrong_name_is_read_again_once(conn, tmp_path, monkeypatch):
+    from assetindex import archives
+
+    root = tmp_path / "packs"
+    _zip(root / "renamed.rar", ["a/b.png"])
+    (root / "bad.rar").write_bytes(b"PK\x03\x04 not really a zip")
+    scan_root(conn, "art", root)
+    monkeypatch.setattr(archives, "sniff_format", lambda path: None)  # the old scanner: by extension only
+    first = index_archives(conn, "art", root)
+    monkeypatch.undo()
+
+    second = index_archives(conn, "art", root)
+    third = index_archives(conn, "art", root)
+
+    assert first.failed == 2 and (second.listed, second.failed) == (1, 1) and third.unchanged == 2

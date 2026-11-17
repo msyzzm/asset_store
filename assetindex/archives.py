@@ -184,6 +184,23 @@ def read_unity_previews(path: Path, guids: set[str], max_bytes_each: int) -> dic
     return found
 
 
+# The first bytes of each format: an archive is read by what it is, not by its name
+# ("十三机兵.zip" can be a RAR someone renamed).
+_SIGNATURES = (
+    (b"PK\x03\x04", "zip"), (b"PK\x05\x06", "zip"),
+    (b"Rar!\x1a\x07", "rar"),
+    (b"7z\xbc\xaf\x27\x1c", "7z"),
+)
+READ_AS = "(按内容读作 "  # starts the error of an archive read by its content, not its name
+
+
+def sniff_format(path: Path) -> str | None:
+    """zip, rar or 7z by the file's first bytes, else None. OSError if it can't be read."""
+    with path.open("rb") as f:
+        head = f.read(8)
+    return next((fmt for signature, fmt in _SIGNATURES if head.startswith(signature)), None)
+
+
 _LISTERS = {
     "zip": _zip_entries,
     "rar": _rar_entries,
@@ -225,11 +242,30 @@ def detect_engine(ext: str, paths: Iterable[str]) -> tuple[str | None, str | Non
 
 def list_archive(path: Path, ext: str) -> ArchiveListing:
     """Raise OSError if the file can't be read (retry later), ArchiveError if it's bad."""
-    lister = _LISTERS.get(ext)
+    fmt = ext if ext == "unitypackage" else (_sniff_or_none(path) or ext)
+    lister = _LISTERS.get(fmt)
     if lister is None:
         raise ArchiveError(f"unsupported archive type {ext!r}")
     try:
-        entries, truncated = _collect(lister(path))
+        entries, truncated = _read(lister, path)
+    except ArchiveError as err:
+        if fmt != ext:
+            raise ArchiveError(f"{READ_AS}{fmt}) {err}") from err
+        raise
+    engine, version = detect_engine(ext, (e.path for e in entries))
+    return ArchiveListing(tuple(entries), truncated, engine, version)
+
+
+def _sniff_or_none(path: Path) -> str | None:
+    try:
+        return sniff_format(path)
+    except OSError:  # the lister meets the same error and reports it
+        return None
+
+
+def _read(lister, path: Path) -> tuple[list[ArchiveEntry], bool]:
+    try:
+        return _collect(lister(path))
     except (ArchiveError, MemoryError):
         raise  # MemoryError is transient: the caller retries on the next scan
     except OSError as err:
@@ -239,5 +275,3 @@ def list_archive(path: Path, ext: str) -> ArchiveListing:
         raise
     except Exception as err:  # third-party parsers raise many types for malformed input
         raise ArchiveError(f"{type(err).__name__}: {err}") from err
-    engine, version = detect_engine(ext, (e.path for e in entries))
-    return ArchiveListing(tuple(entries), truncated, engine, version)

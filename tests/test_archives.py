@@ -171,3 +171,21 @@ def test_memory_error_is_not_an_archive_error(tmp_path, monkeypatch):
 
     with pytest.raises(MemoryError):
         list_archive(tmp_path / "a.zip", "zip")
+
+
+def test_a_renamed_archive_is_read_by_its_content(tmp_path):
+    zipped = _zip(tmp_path / "pack.rar", ["a/b.png"])  # a zip named .rar
+    seven = tmp_path / "pack.zip"
+    with py7zr.SevenZipFile(seven, "w") as z:
+        z.writestr(b"data", "c.png")
+
+    assert _paths(list_archive(zipped, "rar")) == ["a/b.png"]
+    assert _paths(list_archive(seven, "zip")) == ["c.png"]
+
+
+def test_a_renamed_archive_that_still_fails_says_how_it_was_read(tmp_path):
+    bad = tmp_path / "bad.rar"
+    bad.write_bytes(b"PK\x03\x04 not really a zip")
+
+    with pytest.raises(ArchiveError, match=r"^\(按内容读作 zip\)"):
+        list_archive(bad, "rar")
