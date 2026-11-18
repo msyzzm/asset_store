@@ -33,6 +33,7 @@ STYLES = ("写实", "卡通", "像素", "低多边形", "风格化", "手绘", "
 MAX_THEMES = 5
 MAX_THEME_CHARS = 12
 ANSWER_TOKENS = 200
+ANSWER_SHOWN = 80  # chars of an answer without JSON kept in its error: why it went wrong
 MAX_PATHS = 5000
 MAX_ERROR_CHARS = 300
 REQUEST_NAME = "tags.request"
