@@ -24,7 +24,7 @@
         <button id="view-packs" class="view-btn" type="button" aria-pressed="true" title="一个素材包一条，也按意思找">素材包</button>
         <button id="view-files" class="view-btn" type="button" aria-pressed="false" title="一个文件一条，只按文件名和路径找">文件</button>
       </div>
-      <button id="settings-btn" class="btn secondary" type="button" title="看图描述和素材整理用的模型">设置</button>
+      <button id="settings-btn" class="btn secondary" type="button" title="看图模型和语义搜索的接口">设置</button>
     </div>
     <nav id="kinds" class="kinds" aria-label="按类型筛选"></nav>
     <div id="pack-filters" class="filters" role="group" aria-label="按目录和标签筛选素材包" hidden>
@@ -109,9 +109,10 @@
 
   <dialog id="settings" class="viewer settings">
     <div class="viewer-head">
-      <h2>看图模型</h2>
+      <h2>设置</h2>
       <button id="s-close" class="icon-btn" type="button" aria-label="关闭">✕</button>
     </div>
+    <h3 class="settings-section">看图模型</h3>
     <p class="hint">一个能看图的模型（OpenAI 兼容的 chat 接口，比如 Strata 上的 Qwen）。「看图描述」和「素材整理」都用它。</p>
     <form id="c-form" class="settings-form">
       <label>接口地址 <input name="base_url" placeholder="http://192.168.1.10:8080/v1" autocomplete="off"></label>
@@ -135,6 +136,25 @@
       </div>
     </form>
     <p id="c-setup-status" class="settings-status" aria-live="polite"></p>
+
+    <h3 class="settings-section">语义搜索（向量模型）</h3>
+    <p class="hint">OpenAI 兼容的 embeddings 接口（比如 Ollama 的 bge-m3）。搜索框按意思找资源包就靠它。扫描时会把每个素材的路径和描述发给这个接口。</p>
+    <form id="e-form" class="settings-form">
+      <label class="check"><input name="enabled" type="checkbox"> 启用</label>
+      <label>接口地址 <input name="base_url" placeholder="http://192.168.1.10:11434/v1" autocomplete="off"></label>
+      <label>模型名 <input name="model" placeholder="bge-m3" autocomplete="off"></label>
+      <label>API key <input name="api_key" type="password" autocomplete="new-password"></label>
+      <label id="e-clear-key" class="check" hidden><input name="clear_key" type="checkbox"> 删除已保存的 key</label>
+      <p class="hint">key 只保存在服务器上，不会再显示出来。改了接口地址要重新填 key。换了模型，向量要全部重新算。</p>
+      <label>图片格式 <select name="image_format"></select></label>
+      <label>每批数量 <input name="batch_size" type="number" min="1" max="256" step="1" required></label>
+      <div class="viewer-actions">
+        <button class="btn" type="submit">保存</button>
+        <button id="e-test" class="btn secondary" type="button">测试连接</button>
+      </div>
+    </form>
+    <p id="e-status" class="settings-status" aria-live="polite"></p>
+    <p id="e-progress" class="hint"></p>
   </dialog>
 
   <dialog id="captions" class="viewer settings">

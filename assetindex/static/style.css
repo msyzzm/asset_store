@@ -514,6 +514,8 @@ body {
 .settings-limits { display: grid; gap: 8px; margin: 4px 0 0; padding: 10px 12px 12px; border: 1px solid var(--border); border-radius: var(--radius); }
 .settings-limits legend { padding: 0 4px; font-weight: 600; }
 .settings-status { min-height: 1.5em; margin: 12px 0 4px; overflow-wrap: anywhere; }
+.settings-section { margin: 16px 0 6px; font-size: 15px; }
+.settings-status + .settings-section { padding-top: 16px; border-top: 1px solid var(--border); }
 
 .caption-bar { width: 100%; margin-top: 12px; }
 
