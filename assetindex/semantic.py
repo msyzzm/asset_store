@@ -99,7 +99,7 @@ def _unit(vector: list[float]) -> np.ndarray:
     return arr / norm if norm > 0 else arr
 
 
-def rank(matrices: dict[str, _Matrix], query: np.ndarray, kind: str | None) -> list[int]:
+def rank(matrices: dict[str, _Matrix], query: np.ndarray, kind: str | None, limit: int = MAX_RESULTS) -> list[int]:
     best: dict[int, float] = {}
     for matrix in matrices.values():
         if matrix.vectors.shape[1] != query.shape[0]:
@@ -107,10 +107,10 @@ def rank(matrices: dict[str, _Matrix], query: np.ndarray, kind: str | None) -> l
         sims = matrix.vectors @ query
         scores = (sims - sims.mean()) / max(float(sims.std()), MIN_SPREAD)
         keep = np.flatnonzero(matrix.kinds == kind) if kind else np.arange(len(scores))
-        for row in keep[np.argsort(-scores[keep], kind="stable")[:MAX_RESULTS]]:
+        for row in keep[np.argsort(-scores[keep], kind="stable")[:limit]]:
             file_id = int(matrix.ids[row])
             best[file_id] = max(best.get(file_id, -np.inf), float(scores[row]))
-    return sorted(best, key=lambda i: -best[i])[:MAX_RESULTS]
+    return sorted(best, key=lambda i: -best[i])[:limit]
 
 
 def _visible(conn: sqlite3.Connection, ids: list[int]) -> list[int]:
@@ -130,16 +130,17 @@ def _visible(conn: sqlite3.Connection, ids: list[int]) -> list[int]:
 
 
 def ranked_ids(
-    conn: sqlite3.Connection, index: VectorIndex, model: str, query_vector: list[float], kind: str | None = None
+    conn: sqlite3.Connection, index: VectorIndex, model: str, query_vector: list[float], kind: str | None = None,
+    limit: int = MAX_RESULTS,
 ) -> list[int]:
-    """Card ids closest in meaning, best first (at most MAX_RESULTS). Raises NoVectors."""
+    """Card ids closest in meaning, best first (at most `limit`). Raises NoVectors."""
     matrices = index.get(conn, model)
     if not matrices:
         raise NoVectors(model)
     vector = _unit(query_vector)
     if all(m.vectors.shape[1] != vector.shape[0] for m in matrices.values()):
         raise NoVectors(model)  # stored vectors came from a model with another dimension
-    return _visible(conn, rank(matrices, vector, kind))
+    return _visible(conn, rank(matrices, vector, kind, limit))
 
 
 def semantic_search(

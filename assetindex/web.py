@@ -96,6 +96,7 @@ QUERY_VECTOR_CACHE_SIZE = 256  # "load more" asks for the same query again
 
 PROBE_SLOTS = 1  # connection tests at once
 SEMANTIC_SLOTS = 4  # semantic searches waiting on the API at once
+PACK_MEANING_CARDS = 3000  # cards semantic search hands to search by pack, before grouping
 
 
 class _Busy:
@@ -354,7 +355,8 @@ def create_app(settings: Settings) -> FastAPI:
             raise HTTPException(409, "语义搜索还没启用")
         with slot(semantic_busy, SEMANTIC_SLOTS, "语义搜索正忙，稍后再试"):
             try:
-                return ranked_ids(conn, vectors, config.model, query_vector(config, q))
+                # Many cards, then grouped: one unpacked pack's hundreds of cards must not fill the list.
+                return ranked_ids(conn, vectors, config.model, query_vector(config, q), limit=PACK_MEANING_CARDS)
             except EmbedError as err:
                 raise HTTPException(502, f"向量接口出错：{err}") from None
             except NoVectors:

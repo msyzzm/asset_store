@@ -4,7 +4,7 @@ from PIL import Image
 from assetindex.embed_stage import embed_pending
 from assetindex.embedding import EmbedClient, EmbedConfig
 from assetindex.scanner import scan_root
-from assetindex.semantic import VectorIndex, semantic_search
+from assetindex.semantic import VectorIndex, ranked_ids, semantic_search
 from tests.fake_embed import FakeEmbedServer
 
 
@@ -50,6 +50,15 @@ def test_finds_images_by_what_they_show(conn, settings, asset_root, config):
     embed_pending(conn, settings, config)
 
     assert _paths(_search(conn, config, "火焰"))[0] == "2D/Icons/sword_icon.png"
+
+
+def test_ranked_ids_can_hand_over_more_cards_than_a_page(indexed, config):
+    vector = EmbedClient(config).embed_texts(["剑"])[0]
+
+    few = ranked_ids(indexed, VectorIndex(), config.model, vector, limit=2)
+    many = ranked_ids(indexed, VectorIndex(), config.model, vector, limit=1000)
+
+    assert len(few) == 2 and len(many) == 5 and many[:2] == few
 
 
 def test_kind_filter_and_paging(indexed, config):
