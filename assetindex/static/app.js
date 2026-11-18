@@ -319,7 +319,8 @@ async function loadFacets() {
   const option = (value, text) => el('option', { value }, [text]);
   $('f-cat').append(...facets.categories.map((c) => {
     const depth = c.path.split('/').length - 1;
-    return option(c.path, `${'　'.repeat(depth)}${basename(c.path)}（${c.count}）`);
+    // The whole path: once chosen, "Environments" alone would not say 2D or 3D.
+    return option(c.path, `${'　'.repeat(depth)}${c.path}（${c.count}）`);
   }));
   $('f-view').append(...facets.views.map((v) => option(v.value, `${v.value}（${v.count}）`)));
   $('f-style').append(...facets.styles.map((s) => option(s.value, `${s.value}（${s.count}）`)));
