@@ -18,12 +18,10 @@ def download_state(conn: sqlite3.Connection, data_dir) -> dict:
     return {"mount": downloads.read_mount(data_dir), "counts": downloads.counts(conn), "items": items}
 
 
-def queue_download(conn: sqlite3.Connection, settings: Settings, raw) -> dict:
-    """Validate a request ({url, root?, title?, source?, md5?, size?}) and queue it; raises
-    HTTPException for the caller to pass on."""
-    if not isinstance(raw, dict) or set(raw) - {"url", "root", "title", "source", "md5", "size"}:
-        raise HTTPException(422, "请求格式不对")
-    root = raw.get("root") or next(iter(settings.roots))
+def writable_root(settings: Settings, root) -> str:
+    """The root to download into (the first one if none given), if the fetcher can write
+    it; raises HTTPException otherwise."""
+    root = root or next(iter(settings.roots))
     if root not in settings.roots:
         raise HTTPException(422, "没有这个根目录")
     mount = downloads.read_mount(settings.data_dir)
@@ -33,6 +31,15 @@ def queue_download(conn: sqlite3.Connection, settings: Settings, raw) -> dict:
         raise HTTPException(409, "fetcher 里没有 aria2：重新构建镜像（docker compose up -d --build）")
     if not mount["roots"].get(root):
         raise HTTPException(409, "NAS 现在对 fetcher 是只读的：在 .env 里设 ASSET_MOVER_ACCESS=rw，再 docker compose up -d")
+    return root
+
+
+def queue_download(conn: sqlite3.Connection, settings: Settings, raw) -> dict:
+    """Validate a request ({url, root?, title?, source?, md5?, size?}) and queue it; raises
+    HTTPException for the caller to pass on."""
+    if not isinstance(raw, dict) or set(raw) - {"url", "root", "title", "source", "md5", "size"}:
+        raise HTTPException(422, "请求格式不对")
+    root = writable_root(settings, raw.get("root"))
     try:
         download_id = downloads.add(conn, root, raw.get("url"), title=raw.get("title"), source=raw.get("source"),
                                     md5=raw.get("md5"), size=raw.get("size"))

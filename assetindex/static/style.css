@@ -540,6 +540,7 @@ body {
   .bar-main { flex-wrap: wrap; padding: 10px 16px 6px; gap: 8px 10px; }
   .bar h1 { flex: 1; }
   .bar #q { order: 3; flex-basis: 100%; }
+  .bar .btn { padding: 0 10px; }
   .kinds { padding: 0 10px; }
   .tasks { grid-template-columns: 8px minmax(0, 1fr) auto; margin: 10px 16px 0; padding: 8px 10px; }
   .task-dot { grid-column: 1; grid-row: 1; }

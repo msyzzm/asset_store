@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>外部素材</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="external.css">
+</head>
+<body>
+  <header class="bar">
+    <div class="bar-main">
+      <h1><a class="home" href="/">素材库</a> / 外部素材</h1>
+      <form id="x-form" class="x-form" role="search">
+        <input id="q" type="search" placeholder="英文关键词，比如 brick wall、forest floor、sky" autocomplete="off" autofocus>
+        <button class="btn" type="submit">搜索</button>
+      </form>
+    </div>
+    <div class="x-sources" role="group" aria-label="搜哪些网站">
+      <label><input type="checkbox" name="source" value="polyhaven" checked> Poly Haven</label>
+      <label><input type="checkbox" name="source" value="ambientcg" checked> ambientCG</label>
+      <span class="filters-note">都是 CC0 免费素材：HDRI、PBR 材质、模型。看中了点开，选规格下载到素材库的 <code>_下载</code>。</span>
+    </div>
+  </header>
+  <p id="x-hint" class="x-hint" hidden>这两个网站只认英文：试试 bricks、grass、rock、wood、sky、metal。</p>
+  <main id="x-results"></main>
+
+  <dialog id="x-viewer" class="viewer x-viewer">
+    <div class="viewer-head">
+      <h2 id="xv-title"></h2>
+      <button id="xv-close" class="icon-btn" type="button" aria-label="关闭">✕</button>
+    </div>
+    <div id="xv-preview" class="viewer-preview"></div>
+    <dl id="xv-meta" class="viewer-meta"></dl>
+    <h3 class="xv-sub">下载到素材库</h3>
+    <ul id="xv-options" class="xv-options"></ul>
+    <p id="xv-status" class="settings-status" aria-live="polite"></p>
+  </dialog>
+
+  <script src="external.js"></script>
+</body>
+</html>

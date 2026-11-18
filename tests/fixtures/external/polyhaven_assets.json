@@ -1,0 +1,324 @@
+{
+ "kloofendal_48d_partly_cloudy_puresky": {
+  "evs_cap": 21,
+  "type": 0,
+  "whitebalance": 5400,
+  "tags": [
+   "pure skies"
+  ],
+  "name": "Kloofendal 48d Partly Cloudy (Pure Sky)",
+  "categories": [
+   "outdoor",
+   "skies",
+   "nature",
+   "midday",
+   "partly cloudy",
+   "high contrast",
+   "natural light",
+   "pure skies"
+  ],
+  "coords": [
+   -26.14066228,
+   27.89984354
+  ],
+  "date_taken": 1553262240,
+  "info": "Edited sky-only version of [Kloofendal 48d Partly Cloudy](https://polyhaven.com/a/kloofendal_48d_partly_cloudy).",
+  "authors": {
+   "Greg Zaal": "Original",
+   "Jarod Guest": "Sky edits"
+  },
+  "date_published": 1668816000,
+  "files_hash": "4cce3bc9b9588036541551fe5ae8077af6b37e45",
+  "max_resolution": [
+   16384,
+   8192
+  ],
+  "sponsors": [
+   "45968783",
+   "77433244",
+   "76058381"
+  ],
+  "description": "Free 16K unclipped HDRI - midday partly-cloudy pure sky with bright sun, high-contrast natural light and crisp clouds for realistic outdoor lighting.",
+  "category_id": "61ac0f4c-0977-548f-b345-f34c2d9eff35",
+  "attributes": {
+   "time_of_day": "midday",
+   "weather": "partly_cloudy",
+   "light_type": "natural",
+   "contrast": "high",
+   "environment": "outdoor",
+   "sky_view": "open"
+  },
+  "category": "Pure Skies",
+  "img_version": "691edf4f",
+  "download_count": 894441,
+  "thumbnail_url": "https://cdn.polyhaven.com/asset_img/thumbs/kloofendal_48d_partly_cloudy_puresky.png?width=256&height=256&format=webp&v=691edf4f"
+ },
+ "brick_wall_001": {
+  "type": 1,
+  "tags": [
+   "red",
+   "rough",
+   "industrial",
+   "plain",
+   "baked"
+  ],
+  "date_published": 1615640913,
+  "name": "Brick Wall 001",
+  "categories": [
+   "brick",
+   "man made",
+   "outdoor",
+   "indoor",
+   "clean",
+   "wall"
+  ],
+  "authors": {
+   "Rob Tuytel": "Processing",
+   "Dimitrios Savva": "Photography"
+  },
+  "dimensions": [
+   3000,
+   3000
+  ],
+  "sponsors": [
+   "4714267",
+   "25436656",
+   "11167855"
+  ],
+  "max_resolution": [
+   8192,
+   8192
+  ],
+  "files_hash": "fd60577b22b011e4f5ae6ac5b2ffddd8dacf9b3d",
+  "description": "Free 8K texture of a red, rough industrial brick wall with baked-in grime, chipped edges, varied mortar tones and pronounced surface relief.",
+  "category_id": "9ef0955b-87fa-5826-aa87-98b047ad9143",
+  "category": "Brick & Block/Clay Brick/Running-Bond",
+  "attributes": {
+   "surface_use": "wall",
+   "condition": [
+    "weathered",
+    "worn",
+    "damaged"
+   ],
+   "origin": "man_made",
+   "setting": "either"
+  },
+  "img_version": "99965586",
+  "download_count": 116018,
+  "thumbnail_url": "https://cdn.polyhaven.com/asset_img/thumbs/brick_wall_001.png?width=256&height=256&format=webp&v=99965586"
+ },
+ "wooden_crate_01": {
+  "date_published": 1645747200,
+  "name": "Wooden Crate 01",
+  "type": 2,
+  "authors": {
+   "James Ray Cock": "All"
+  },
+  "categories": [
+   "containers",
+   "collection: smugglers_cove"
+  ],
+  "tags": [
+   "vintage",
+   "wood",
+   "old",
+   "wooden",
+   "fancy",
+   "colonial",
+   "chest",
+   "box",
+   "prop",
+   "antique",
+   "farmhouse",
+   "crate",
+   "maritime",
+   "commercial",
+   "container"
+  ],
+  "max_resolution": [
+   8192,
+   8192
+  ],
+  "polycount": 6576,
+  "texel_density": 4578.689151712849,
+  "dimensions": [
+   825.2729177474976,
+   408.9537411928177,
+   349.6182831004262
+  ],
+  "files_hash": "1ac5d053ce4c72e3fbb4c3065e7979522bf1908e",
+  "description": "Free 8K model of a vintage wooden crate - weathered colonial chest with rope handles, metal rivets and latch; ideal as maritime, farmhouse or prop container.",
+  "category_id": "7db08e6b-4676-50ac-8387-ecec2d7ffeb2",
+  "category": "Containers & Storage/Boxes & Crates/Wooden Crates",
+  "sponsors": [
+   "7934315"
+  ],
+  "collections": [
+   "smugglers_cove"
+  ],
+  "attributes": {
+   "condition": [
+    "worn"
+   ],
+   "material": [
+    "wood",
+    "metal"
+   ]
+  },
+  "img_version": "3b8df674",
+  "download_count": 26943,
+  "thumbnail_url": "https://cdn.polyhaven.com/asset_img/thumbs/wooden_crate_01.png?width=256&height=256&format=webp&v=3b8df674"
+ },
+ "brick_4": {
+  "type": 1,
+  "tags": [
+   "red",
+   "moss",
+   "urban",
+   "city",
+   "damp",
+   "wet"
+  ],
+  "date_published": 1529359200,
+  "name": "Brick 4",
+  "categories": [
+   "wall",
+   "man made",
+   "dirty",
+   "outdoor",
+   "brick"
+  ],
+  "authors": {
+   "Rob Tuytel": "All"
+  },
+  "dimensions": [
+   500,
+   500
+  ],
+  "max_resolution": [
+   8192,
+   8192
+  ],
+  "files_hash": "e38995ecc649eb71f1b8dde6b34c86f0f8005da3",
+  "description": "Free 8K texture of weathered red brick with damp, mossy mortar, chipped rough faces and subtle grime - aged urban outdoor wall material.",
+  "sponsors": [
+   "201346459"
+  ],
+  "category_id": "9ef0955b-87fa-5826-aa87-98b047ad9143",
+  "category": "Brick & Block/Clay Brick/Running-Bond",
+  "attributes": {
+   "surface_use": "wall",
+   "condition": [
+    "weathered",
+    "mossy"
+   ],
+   "origin": "man_made",
+   "setting": "outdoor"
+  },
+  "img_version": "c9dcb19e",
+  "download_count": 136842,
+  "thumbnail_url": "https://cdn.polyhaven.com/asset_img/thumbs/brick_4.png?width=256&height=256&format=webp&v=c9dcb19e"
+ },
+ "brick_crosswalk": {
+  "type": 1,
+  "name": "Brick Crosswalk",
+  "categories": [
+   "floor",
+   "brick"
+  ],
+  "tags": [
+   "brick",
+   "bricks",
+   "multicoloured",
+   "pedestrian crossing ",
+   "crosswalk",
+   "street",
+   "sidewalk",
+   "urban"
+  ],
+  "authors": {
+   "Charlotte Baglioni": "All"
+  },
+  "max_resolution": [
+   8192,
+   8192
+  ],
+  "dimensions": [
+   1899.9998569488525,
+   1899.9998569488525
+  ],
+  "date_published": 1747267200,
+  "files_hash": "6c472df509fcadc2397cad561e8b2130eb920f1a",
+  "description": "Free 8K brick texture showing multicoloured rectangular paving with worn white crosswalk stripes, rough concrete surface, visible grout and light moss.",
+  "category_id": "9ef0955b-87fa-5826-aa87-98b047ad9143",
+  "category": "Brick & Block/Clay Brick/Running-Bond",
+  "attributes": {
+   "surface_use": "paving",
+   "condition": [
+    "weathered",
+    "mossy"
+   ],
+   "origin": "man_made",
+   "setting": "outdoor"
+  },
+  "img_version": "a2dba021",
+  "download_count": 15250,
+  "thumbnail_url": "https://cdn.polyhaven.com/asset_img/thumbs/brick_crosswalk.png?width=256&height=256&format=webp&v=a2dba021"
+ },
+ "brick_factory_01": {
+  "evs_cap": 27,
+  "type": 0,
+  "whitebalance": 5450,
+  "date_published": 1609196400,
+  "name": "Brick Factory 01",
+  "categories": [
+   "outdoor",
+   "nature",
+   "morning-afternoon",
+   "clear",
+   "high contrast",
+   "natural light"
+  ],
+  "coords": [
+   50.852014,
+   34.90685
+  ],
+  "date_taken": 1596702660,
+  "authors": {
+   "Sergej Majboroda": "All"
+  },
+  "sponsors": [
+   "3237733",
+   "13450515"
+  ],
+  "backplates": true,
+  "tags": [
+   "tree",
+   "dirt",
+   "road",
+   "abandoned",
+   "sun",
+   "backplates"
+  ],
+  "files_hash": "60783e450628708ff419ae3400ecdef001f26d60",
+  "max_resolution": [
+   16384,
+   8192
+  ],
+  "description": "Free 16K unclipped HDRI: bright, clear afternoon sun over an abandoned brick factory and dirt road; high-contrast light with crisp shadows and warm tones.",
+  "category_id": "d19b2a03-269d-5ac7-9932-6967869a7184",
+  "category": "Abandoned & Ruins/Industrial/Derelict Factories & Warehouses",
+  "attributes": {
+   "time_of_day": "morning",
+   "weather": "clear",
+   "light_type": "natural",
+   "contrast": "high",
+   "backplates": true,
+   "environment": "outdoor",
+   "sky_view": "open"
+  },
+  "img_version": "9e9f0880",
+  "download_count": 37545,
+  "thumbnail_url": "https://cdn.polyhaven.com/asset_img/thumbs/brick_factory_01.png?width=256&height=256&format=webp&v=9e9f0880"
+ }
+}

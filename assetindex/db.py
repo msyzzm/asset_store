@@ -207,6 +207,7 @@ CREATE TABLE IF NOT EXISTS downloads (
     url      TEXT    NOT NULL,
     title    TEXT,
     source   TEXT,              -- site it was found on, NULL for a pasted link
+    source_id TEXT,             -- the asset's id on that site
     md5      TEXT,              -- given by the site: aria2 checks the file against it
     size     INTEGER,           -- expected bytes, if known
     status   TEXT    NOT NULL DEFAULT 'queued',  -- queued | active | done | duplicate | failed | cancelled
@@ -227,6 +228,7 @@ ADDED_COLUMNS = (
     ("archives", "preview_state", "INTEGER"),
     ("archives", "sheet_version", "INTEGER"),
     ("archives", "preview_postponed", "INTEGER"),  # scans whose preview timed out, in a row
+    ("downloads", "source_id", "TEXT"),
 )
 # Created after migration, since they reference added columns.
 POST_MIGRATION_SQL = (

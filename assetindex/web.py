@@ -36,6 +36,7 @@ from assetindex.embedding import (
 )
 from assetindex.extract import ExtractError, find_bsdtar, read_member
 from assetindex.kinds import KINDS, LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
+from assetindex.external_web import add_external_routes
 from assetindex.fetch_web import add_fetch_routes
 from assetindex.move_web import add_move_routes
 from assetindex.organize_web import add_organize_routes
@@ -395,6 +396,7 @@ def create_app(settings: Settings) -> FastAPI:
     add_organize_routes(app, settings, get_conn, page_request)
     add_move_routes(app, settings, get_conn, page_request)
     add_fetch_routes(app, settings, get_conn, page_request)
+    add_external_routes(app, settings, get_conn, page_request)
 
     @app.get("/api/files/{file_id}")
     def api_file(file_id: FileId, conn: sqlite3.Connection = Depends(get_conn)) -> dict:

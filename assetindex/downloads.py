@@ -22,7 +22,7 @@ MAX_TITLE = 300
 LIST_LIMIT = 200
 OPEN = ("queued", "active")  # still to finish
 ENDED = ("done", "duplicate", "failed", "cancelled")
-_COLUMNS = "id, root, url, title, source, md5, size, status, path, dup_of, error, created, finished"
+_COLUMNS = "id, root, url, title, source, source_id, md5, size, status, path, dup_of, error, created, finished"
 
 
 def check_url(url) -> str:
@@ -45,21 +45,35 @@ def _md5(value) -> str | None:
 
 
 def add(conn: sqlite3.Connection, root: str, url, title=None, source=None, md5=None, size=None,
-        now: float | None = None) -> int:
+        source_id=None, now: float | None = None) -> int:
     url = check_url(url)
     if title is not None and not isinstance(title, str):
         raise ValueError("标题格式不对")
-    if source is not None and not (isinstance(source, str) and 0 < len(source) <= 40):
-        raise ValueError("来源格式不对")
+    for value in (source, source_id):
+        if value is not None and not (isinstance(value, str) and 0 < len(value) <= 200):
+            raise ValueError("来源格式不对")
     if size is not None and (type(size) is not int or size < 0):
         raise ValueError("大小格式不对")
     with conn:
         cur = conn.execute(
-            "INSERT INTO downloads (root, url, title, source, md5, size, created) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (root, url, (title or "").strip()[:MAX_TITLE] or None, source, _md5(md5), size,
+            "INSERT INTO downloads (root, url, title, source, source_id, md5, size, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (root, url, (title or "").strip()[:MAX_TITLE] or None, source, source_id, _md5(md5), size,
              time.time() if now is None else now),
         )
     return cur.lastrowid
+
+
+def wanted(conn: sqlite3.Connection, source: str, source_ids: list[str]) -> set[str]:
+    """Which of these assets of `source` are queued, downloading or downloaded."""
+    if not source_ids:
+        return set()
+    marks = ", ".join("?" for _ in source_ids)
+    rows = conn.execute(
+        f"SELECT DISTINCT source_id FROM downloads WHERE source = ? AND source_id IN ({marks}) "
+        "AND status NOT IN ('failed', 'cancelled')",
+        (source, *source_ids),
+    )
+    return {r["source_id"] for r in rows}
 
 
 def get(conn: sqlite3.Connection, download_id: int) -> dict | None:

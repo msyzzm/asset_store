@@ -1,0 +1,51 @@
+/* 外部素材 page. Cards, wells and the dialog come from style.css; colours are its tokens. */
+
+.bar .home { color: inherit; text-decoration: none; }
+.bar .home:hover { text-decoration: underline; }
+.x-form { display: flex; flex: 1; gap: 8px; min-width: 0; }
+.x-form #q { flex: 1; min-width: 0; font-size: 15px; }
+.x-sources { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; padding: 0 20px 10px; font-size: 13px; }
+.x-sources label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+.x-hint { margin: 12px 20px 0; padding: 8px 12px; background: var(--surface); border-left: 3px solid var(--accent); }
+
+.x-source { margin-top: 18px; }
+.x-source-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 0 20px; }
+.x-source-head h2 { margin: 0; font-size: 17px; }
+.x-source-head .x-count { color: var(--muted); font-family: var(--num); }
+.x-source-head a { margin-left: auto; color: var(--accent); font-size: 13px; }
+.x-error { margin: 8px 20px 0; color: var(--danger); }
+.x-empty { margin: 8px 20px 0; color: var(--muted); }
+.x-source .more { margin-top: 0; }
+
+/* kind on the left, library state on the right, over the picture */
+.x-kind, .x-mark {
+  position: absolute;
+  top: 6px;
+  padding: 1px 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #fff;
+  border-radius: 4px;
+}
+.x-kind { left: 6px; background: rgb(0 0 0 / 0.62); }
+.x-mark { right: 6px; font-weight: 600; background: var(--accent); }
+.x-mark.queued { background: #4a4d55; }
+.thumb img.x-photo { width: 100%; height: 100%; object-fit: cover; }
+
+.x-viewer { width: min(760px, calc(100vw - 32px)); }
+.x-viewer .viewer-preview img { width: 100%; max-height: 52vh; object-fit: contain; }
+.xv-sub { margin: 18px 0 6px; font-size: 14px; }
+.xv-options { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.xv-options li { display: flex; gap: 12px; align-items: center; padding: 6px 10px; background: var(--bg); }
+.xv-options .xv-label { flex: 1; min-width: 0; font-weight: 600; }
+.xv-options .xv-size { color: var(--muted); font-family: var(--num); font-size: 13px; white-space: nowrap; }
+.xv-options .xv-later { color: var(--muted); font-size: 12px; }
+.xv-options .btn { height: 30px; padding: 0 12px; }
+
+@media (max-width: 640px) {
+  .x-form { order: 3; flex-basis: 100%; }
+  .bar .x-form #q { order: 0; flex-basis: auto; }  /* style.css sends the main page's #q to its own row */
+  .x-sources { padding: 0 16px 10px; }
+  .x-source-head { padding: 0 16px; }
+  .xv-options li { flex-wrap: wrap; }
+}

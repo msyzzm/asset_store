@@ -1,0 +1,109 @@
+{
+ "numberOfResults": 1,
+ "foundAssets": [
+  {
+   "assetId": "Bricks113A",
+   "dataType": "Material",
+   "displayName": "Bricks 113 A",
+   "displayCategory": "Bricks",
+   "shortLink": "https://ambientcg.com/a/Bricks113A",
+   "tags": [
+    "113",
+    "bricks",
+    "bricks113a",
+    "natural",
+    "stone"
+   ],
+   "previewImage": {
+    "256-PNG": "https://acg-media.struffelproductions.com/file/ambientCG-Web/media/thumbnail/256-PNG/Bricks113A.png",
+    "1024-PNG": "https://acg-media.struffelproductions.com/file/ambientCG-Web/media/thumbnail/1024-PNG/Bricks113A.png",
+    "2048-PNG": "https://acg-media.struffelproductions.com/file/ambientCG-Web/media/thumbnail/2048-PNG/Bricks113A.png"
+   },
+   "downloadFolders": {
+    "default": {
+     "title": "default",
+     "downloadFiletypeCategories": {
+      "zip": {
+       "title": "zip",
+       "downloads": [
+        {
+         "fullDownloadPath": "https://ambientcg.com/get?file=Bricks113A_1K-JPG.zip",
+         "downloadLink": "https://ambientcg.com/get?file=Bricks113A_1K-JPG.zip",
+         "fileName": "Bricks113A_1K-JPG.zip",
+         "size": 7839867,
+         "filetype": "zip",
+         "attribute": "1K-JPG",
+         "zipContent": []
+        },
+        {
+         "fullDownloadPath": "https://ambientcg.com/get?file=Bricks113A_2K-JPG.zip",
+         "downloadLink": "https://ambientcg.com/get?file=Bricks113A_2K-JPG.zip",
+         "fileName": "Bricks113A_2K-JPG.zip",
+         "size": 26521977,
+         "filetype": "zip",
+         "attribute": "2K-JPG",
+         "zipContent": []
+        },
+        {
+         "fullDownloadPath": "https://ambientcg.com/get?file=Bricks113A_4K-JPG.zip",
+         "downloadLink": "https://ambientcg.com/get?file=Bricks113A_4K-JPG.zip",
+         "fileName": "Bricks113A_4K-JPG.zip",
+         "size": 97737801,
+         "filetype": "zip",
+         "attribute": "4K-JPG",
+         "zipContent": []
+        },
+        {
+         "fullDownloadPath": "https://ambientcg.com/get?file=Bricks113A_8K-JPG.zip",
+         "downloadLink": "https://ambientcg.com/get?file=Bricks113A_8K-JPG.zip",
+         "fileName": "Bricks113A_8K-JPG.zip",
+         "size": 357532092,
+         "filetype": "zip",
+         "attribute": "8K-JPG",
+         "zipContent": []
+        },
+        {
+         "fullDownloadPath": "https://ambientcg.com/get?file=Bricks113A_1K-PNG.zip",
+         "downloadLink": "https://ambientcg.com/get?file=Bricks113A_1K-PNG.zip",
+         "fileName": "Bricks113A_1K-PNG.zip",
+         "size": 18084605,
+         "filetype": "zip",
+         "attribute": "1K-PNG",
+         "zipContent": []
+        },
+        {
+         "fullDownloadPath": "https://ambientcg.com/get?file=Bricks113A_2K-PNG.zip",
+         "downloadLink": "https://ambientcg.com/get?file=Bricks113A_2K-PNG.zip",
+         "fileName": "Bricks113A_2K-PNG.zip",
+         "size": 67588533,
+         "filetype": "zip",
+         "attribute": "2K-PNG",
+         "zipContent": []
+        },
+        {
+         "fullDownloadPath": "https://ambientcg.com/get?file=Bricks113A_4K-PNG.zip",
+         "downloadLink": "https://ambientcg.com/get?file=Bricks113A_4K-PNG.zip",
+         "fileName": "Bricks113A_4K-PNG.zip",
+         "size": 262005950,
+         "filetype": "zip",
+         "attribute": "4K-PNG",
+         "zipContent": []
+        },
+        {
+         "fullDownloadPath": "https://ambientcg.com/get?file=Bricks113A_8K-PNG.zip",
+         "downloadLink": "https://ambientcg.com/get?file=Bricks113A_8K-PNG.zip",
+         "fileName": "Bricks113A_8K-PNG.zip",
+         "size": 1007924006,
+         "filetype": "zip",
+         "attribute": "8K-PNG",
+         "zipContent": []
+        }
+       ]
+      }
+     }
+    }
+   },
+   "description": ""
+  }
+ ]
+}
