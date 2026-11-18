@@ -1,13 +1,16 @@
-"""Searching other sites' free assets (Poly Haven, ambientCG) from the web UI.
+"""Searching other sites' free assets (Poly Haven, ambientCG, OpenGameArt, itch.io) from
+the web UI.
 
-Each site has a module (ext_polyhaven.py, ext_ambientcg.py) with the same three calls:
-search(q, offset) -> {"items", "total"}, detail(asset_id) -> dict, and option(asset_id,
-key) -> what to download. They reach the sites through get_json() below, which tests
-replace with recorded responses.
+Each site has a module (ext_polyhaven.py, ...) with the same three calls: search(q,
+offset) -> {"items", "total", "more"?}, detail(asset_id) -> dict, and option(asset_id,
+key) -> what to download. They reach the sites through get_json() / get_text() below,
+which tests replace with recorded responses.
 
 An item: {source, id, title, kind, thumb, page, tags}. A detail adds previews,
-description, authors, license, credit, and options: [{key, label, size, ready}];
-ready=False options need a download of several files, not supported yet.
+description, authors, license, credit, note?, and options: [{key, label, size, ready}].
+A search result with total None does not know its total; `more` says if another page
+may follow; `next`, if given, is the offset to ask for it (rows a site gave but that were
+skipped still count).
 """
 
 import json
@@ -20,6 +23,7 @@ import urllib.request
 from assetindex.fetch_job import USER_AGENT
 
 TIMEOUT_SECONDS = 10
+MAX_PAGE_BYTES = 4 * 1024 * 1024
 PAGE_SIZE = 24
 MAX_TAGS = 8
 _CJK = re.compile(r"[㐀-鿿豈-﫿]")
@@ -38,6 +42,37 @@ def get_json(url: str):
         raise SourceError(f"网站返回 HTTP {err.code}") from None
     except (OSError, ValueError) as err:
         raise SourceError(f"连不上网站：{err.__class__.__name__}") from None
+
+
+def get_text(url: str) -> str:
+    """A web page or feed (OpenGameArt, itch.io: no JSON API)."""
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+            return response.read(MAX_PAGE_BYTES).decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as err:
+        raise SourceError(f"网站返回 HTTP {err.code}") from None
+    except OSError as err:
+        raise SourceError(f"连不上网站：{err.__class__.__name__}") from None
+
+
+class Gate:
+    """At most one request every `seconds` to a site (OpenGameArt asks for 10). A caller
+    who would wait longer than `max_wait` gets a SourceError instead of hanging."""
+
+    def __init__(self, seconds: float, max_wait: float, label: str) -> None:
+        self.seconds, self.max_wait, self.label = seconds, max_wait, label
+        self._next = 0.0
+        self._lock = threading.Lock()
+
+    def wait(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            start = max(now, self._next)
+            if start - now > self.max_wait:
+                raise SourceError(f"{self.label} 要求每 {self.seconds:g} 秒最多请求一次，等一会儿再试")
+            self._next = start + self.seconds
+        time.sleep(start - now)
 
 
 def web_url(value) -> str | None:

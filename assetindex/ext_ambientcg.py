@@ -8,6 +8,8 @@ from assetindex import external
 NAME = "ambientcg"
 LABEL = "ambientCG"
 CREDIT = "https://ambientcg.com"
+LICENSE = "CC0"
+MATCHES_LIBRARY = True  # its ids are in its file names
 BASE = "https://ambientcg.com/api/v2/full_json"
 INCLUDE = "downloadData,previewData,tagData,displayData"
 KINDS = {"Material": "材质", "HDRI": "HDRI", "3DModel": "模型", "Atlas": "贴图集", "Decal": "贴花", "Terrain": "地形"}

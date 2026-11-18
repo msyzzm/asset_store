@@ -1,6 +1,6 @@
 'use strict';
 
-// 外部素材 page: search Poly Haven and ambientCG through the server, look at an asset,
+// 外部素材 page: search Poly Haven, ambientCG, OpenGameArt and itch.io through the server, look at an asset,
 // queue one of its downloads (the server asks the site for the link).
 
 const HEADERS = { 'X-Requested-With': 'fetch', 'Content-Type': 'application/json' };
@@ -38,6 +38,10 @@ function chosenSources() {
   return [...document.querySelectorAll('input[name=source]:checked')].map((box) => box.value);
 }
 
+function sourceLabel(name) {
+  return document.querySelector(`input[name=source][value="${name}"]`)?.parentElement.textContent.trim() || name;
+}
+
 function mark(item) {
   if (item.in_library) return el('span', { className: 'x-mark', text: '已有', title: `库里有：${item.in_library}` });
   if (item.downloaded) return el('span', { className: 'x-mark queued', text: '已下载' });
@@ -47,7 +51,7 @@ function mark(item) {
 function itemCard(item) {
   const img = el('img', { src: item.thumb ?? '', loading: 'lazy', alt: '', className: 'x-photo', referrerPolicy: 'no-referrer' });
   img.addEventListener('error', () => img.replaceWith(el('span', { className: 'ext', text: item.kind || '?' })), { once: true });
-  const thumb = el('div', { className: 'thumb' }, [img, el('span', { className: 'x-kind', text: item.kind })]);
+  const thumb = el('div', { className: 'thumb' }, item.kind ? [img, el('span', { className: 'x-kind', text: item.kind })] : [img]);
   const badge = mark(item);
   if (badge) thumb.append(badge);
   const node = el('button', { className: 'card', type: 'button', title: item.title }, [
@@ -63,15 +67,16 @@ function renderSource(name, result) {
   const kept = state.sources[name];
   const head = el('div', { className: 'x-source-head' }, [
     el('h2', { text: result.label }),
-    el('span', { className: 'x-count', text: result.error ? '' : `共 ${result.total} 个 · CC0` }),
+    el('span', { className: 'x-count', text: result.error ? '' : [result.total == null ? '' : `共 ${result.total} 个`, result.license].filter(Boolean).join(' · ') }),
     el('a', { href: result.credit, target: '_blank', rel: 'noopener noreferrer', text: `素材来自 ${result.label} ↗` }),
   ]);
   const section = el('section', { className: 'x-source', id: `x-${name}` }, [head]);
   if (result.error) section.append(el('p', { className: 'x-error', text: `${result.label} 没搜到：${result.error}` }));
   else if (!kept.items.length) section.append(el('p', { className: 'x-empty', text: '没有结果，换个英文词试试。' }));
   section.append(el('div', { className: 'grid' }, kept.items.map(itemCard)));
-  if (kept.items.length < result.total) {
-    const more = el('button', { className: 'more', type: 'button', text: `加载更多（还有 ${result.total - kept.items.length} 个）` });
+  const left = result.total == null ? null : result.total - kept.items.length;
+  if (left > 0 || (left == null && result.more)) {
+    const more = el('button', { className: 'more', type: 'button', text: left ? `加载更多（还有 ${left} 个）` : '加载更多' });
     more.addEventListener('click', () => loadMore(name, more));
     section.append(more);
   }
@@ -82,15 +87,26 @@ async function search(event) {
   event?.preventDefault();
   const seq = ++state.seq;
   const q = $('q').value.trim();
-  $('x-results').replaceChildren(el('p', { className: 'x-empty', text: '搜索中…' }));
-  const results = await Promise.all(chosenSources().map((name) => api(`/api/external/search?${new URLSearchParams({ q, source: name })}`)
-    .catch((err) => ({ chinese: false, sources: { [name]: { label: name, credit: '', error: err.message, items: [], total: 0 } } }))));
-  if (seq !== state.seq) return;  // a newer search started meanwhile
+  const names = chosenSources();
+  if (!names.length) {
+    $('x-results').replaceChildren(el('p', { className: 'x-empty', text: '至少勾选一个网站。' }));
+    return;
+  }
   state.q = q;
-  const sources = Object.assign({}, ...results.map((r) => r.sources));
-  state.sources = Object.fromEntries(Object.entries(sources).map(([n, r]) => [n, { items: r.items, result: r }]));
-  $('x-hint').hidden = !results.some((r) => r.chinese);
-  $('x-results').replaceChildren(...Object.entries(sources).map(([name, r]) => renderSource(name, r)));
+  state.sources = {};
+  $('x-hint').hidden = true;
+  $('x-results').replaceChildren(...names.map((name) => el('section', { className: 'x-source', id: `x-${name}` }, [
+    el('p', { className: 'x-empty', text: `${sourceLabel(name)} 搜索中…` })])));
+  // Each site shows as soon as it answers: OpenGameArt can take 10 s or more.
+  await Promise.all(names.map(async (name) => {
+    const body = await api(`/api/external/search?${new URLSearchParams({ q, source: name })}`)
+      .catch((err) => ({ chinese: false, sources: { [name]: { label: sourceLabel(name), credit: '', license: '', error: err.message, items: [], total: 0 } } }));
+    if (seq !== state.seq) return;  // a newer search started meanwhile
+    const result = body.sources[name];
+    state.sources[name] = { items: result.items, result };
+    if (body.chinese) $('x-hint').hidden = false;
+    $(`x-${name}`).replaceWith(renderSource(name, result));
+  }));
 }
 
 async function loadMore(name, button) {
@@ -98,9 +114,11 @@ async function loadMore(name, button) {
   const seq = state.seq;
   button.disabled = true;
   try {
-    const body = await api(`/api/external/search?${new URLSearchParams({ q: state.q, source: name, offset: kept.items.length })}`);
+    const offset = kept.result.next ?? kept.items.length;
+    const body = await api(`/api/external/search?${new URLSearchParams({ q: state.q, source: name, offset })}`);
     if (seq !== state.seq) return;  // the page shows another search now
     const result = body.sources[name];
+    if (result.error) throw new Error(result.error);  // keep what is shown, and the button to try again
     kept.items = [...kept.items, ...result.items];
     kept.result = result;
     $(`x-${name}`).replaceWith(renderSource(name, result));
@@ -165,7 +183,7 @@ async function openDetail(source, id) {
   const page = el('a', { href: d.page, target: '_blank', rel: 'noopener noreferrer', text: `${d.page} ↗` });
   $('xv-meta').replaceChildren(
     ...metaRow('类型', d.kind),
-    ...metaRow('授权', `${d.license}（可商用，不用署名）`),
+    ...metaRow('授权', d.license && (d.license === 'CC0' ? 'CC0（可商用，不用署名）' : `${d.license}（用前看原页面的授权和署名要求）`)),
     ...metaRow('作者', d.authors),
     ...metaRow('说明', d.description),
     ...metaRow('标签', d.tags.join('、')),
@@ -173,7 +191,7 @@ async function openDetail(source, id) {
     ...metaRow('原页面', page),
   );
   if (d.downloaded) $('xv-status').textContent = '这个素材已经在下载队列里或下载过了。';
-  const options = d.options.length ? d.options.map((o) => optionRow(source, d.id, o)) : [el('li', { text: '网站没给可下载的文件。' })];
+  const options = d.options.length ? d.options.map((o) => optionRow(source, d.id, o)) : [el('li', { text: d.note || '网站没给可下载的文件。' })];
   $('xv-options').replaceChildren(...options);
 }
 

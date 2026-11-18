@@ -13,6 +13,8 @@ from assetindex import external
 NAME = "polyhaven"
 LABEL = "Poly Haven"
 CREDIT = "https://polyhaven.com"
+LICENSE = "CC0"
+MATCHES_LIBRARY = True  # its ids are in its file names
 API = "https://api.polyhaven.com"
 CDN = "https://cdn.polyhaven.com/asset_img"
 KINDS = {0: "HDRI", 1: "贴图", 2: "模型"}

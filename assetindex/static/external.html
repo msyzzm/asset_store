@@ -12,17 +12,19 @@
     <div class="bar-main">
       <h1><a class="home" href="/">素材库</a> / 外部素材</h1>
       <form id="x-form" class="x-form" role="search">
-        <input id="q" type="search" placeholder="英文关键词，比如 brick wall、forest floor、sky" autocomplete="off" autofocus>
+        <input id="q" type="search" placeholder="英文关键词，比如 brick wall、sword、pixel art" autocomplete="off" autofocus>
         <button class="btn" type="submit">搜索</button>
       </form>
     </div>
     <div class="x-sources" role="group" aria-label="搜哪些网站">
       <label><input type="checkbox" name="source" value="polyhaven" checked> Poly Haven</label>
       <label><input type="checkbox" name="source" value="ambientcg" checked> ambientCG</label>
-      <span class="filters-note">都是 CC0 免费素材：HDRI、PBR 材质、模型。看中了点开，选规格下载到素材库的 <code>_下载</code>。</span>
+      <label><input type="checkbox" name="source" value="opengameart" checked> OpenGameArt</label>
+      <label><input type="checkbox" name="source" value="itch" checked> itch.io</label>
+      <span class="filters-note">看中了点开，选规格下载到素材库的 <code>_下载</code>。Poly Haven、ambientCG 都是 CC0；OpenGameArt 授权各异，详情里看；itch.io 只按英文标签列免费素材，要到原页面手动下载。</span>
     </div>
   </header>
-  <p id="x-hint" class="x-hint" hidden>这两个网站只认英文：试试 bricks、grass、rock、wood、sky、metal。</p>
+  <p id="x-hint" class="x-hint" hidden>这些网站只认英文：试试 bricks、grass、rock、wood、sky、sword、pixel art。</p>
   <main id="x-results"></main>
 
   <dialog id="x-viewer" class="viewer x-viewer">

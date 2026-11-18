@@ -1,4 +1,4 @@
-"""Routes for the 外部素材 page: search Poly Haven and ambientCG, look at one asset,
+"""Routes for the 外部素材 page: search Poly Haven, ambientCG, OpenGameArt and itch.io, look at one asset,
 and queue one of its downloads. The server asks the site what to download (the page
 only names the asset and the option), so the queue only ever gets the site's own links."""
 
@@ -11,13 +11,13 @@ from typing import Annotated
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query
 
-from assetindex import downloads, ext_ambientcg, ext_polyhaven, external
+from assetindex import downloads, ext_ambientcg, ext_itch, ext_opengameart, ext_polyhaven, external
 from assetindex.config import Settings
 from assetindex.fetch_web import writable_root
 
 log = logging.getLogger(__name__)
 
-SOURCES = {m.NAME: m for m in (ext_polyhaven, ext_ambientcg)}
+SOURCES = {m.NAME: m for m in (ext_polyhaven, ext_ambientcg, ext_opengameart, ext_itch)}
 MAX_QUERY = 200
 MAX_OFFSET = 10_000
 _ASSET_ID = re.compile(r"[A-Za-z0-9_.-]{1,100}")
@@ -38,12 +38,14 @@ def _in_library(conn: sqlite3.Connection, asset_id: str) -> str | None:
 
 def _marked(conn: sqlite3.Connection, source: str, items: list[dict]) -> list[dict]:
     wanted = downloads.wanted(conn, source, [i["id"] for i in items])
-    return [{**i, "in_library": _in_library(conn, i["id"]), "downloaded": i["id"] in wanted} for i in items]
+    matches = SOURCES[source].MATCHES_LIBRARY
+    return [{**i, "in_library": _in_library(conn, i["id"]) if matches else None, "downloaded": i["id"] in wanted}
+            for i in items]
 
 
 def _search_one(module, q: str, offset: int) -> dict:
     """One site's results; its failure is its own, never the other site's."""
-    head = {"label": module.LABEL, "credit": module.CREDIT}
+    head = {"label": module.LABEL, "credit": module.CREDIT, "license": module.LICENSE}
     try:
         return {**head, "error": None, **module.search(q, offset)}
     except external.SourceError as err:
