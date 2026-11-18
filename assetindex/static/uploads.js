@@ -1,6 +1,6 @@
 'use strict';
 
-// "上传" in the header, "上传文件…" and "上传文件夹…" in the downloads dialog, and files or
+// The "上传" dialog (from the header or the task bar row), and files or
 // folders dropped on the page: sent to the web server (assetindex/upload_web.py), landing
 // in the library's _下载 folder. Several files are one upload each; a folder is one
 // upload, one pack. Loaded after downloads.js (dlPost, refreshDownloads), captions.js
@@ -185,13 +185,14 @@ function upFolderJob(name, entries) {
 }
 
 function upOpenDialog() {
-  if (!$('downloads').open) $('downloads-open').click();
+  if ($('uploads').open) return;
+  if ($('downloads').open) $('downloads').close();
+  $('uploads').showModal();
+  refreshDownloads();
 }
 
-$('upload-open').addEventListener('click', () => {
-  upOpenDialog();
-  $('u-files').focus();
-});
+for (const id of ['upload-open', 'uploads-task-open']) $(id).addEventListener('click', upOpenDialog);
+$('u-close').addEventListener('click', () => $('uploads').close());
 $('u-files').addEventListener('click', () => $('u-files-input').click());
 $('u-folder').addEventListener('click', () => $('u-folder-input').click());
 

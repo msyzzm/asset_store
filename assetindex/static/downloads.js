@@ -22,14 +22,16 @@ function dlProgressText(p) {
   return `${pct}%，${formatSize(p.done)}/${formatSize(p.total)}${p.speed ? `，${formatSize(p.speed)}/s` : ''}`;
 }
 
-function dlRowText(state) {
-  const uploading = state.items.filter((i) => i.status === 'uploading');  // the web server takes these, no fetcher needed
-  if (uploading.length) {
-    return `正在上传 ${dlName(uploading[0])}${uploading.length > 1 ? `，还有 ${uploading.length - 1} 个` : ''}`;
-  }
+function dlLastText(items, idle) {
+  const last = items.find((i) => i.finished);
+  if (!last) return idle;
+  return `上次（${finishedAt(last.finished)}）：${dlName(last)} ${DL_STATUS[last.status]}`;
+}
+
+function dlRowText(state, items) {
   if (!state.mount) return '下载服务没在运行（更新一次后会自动启动）';
   if (!Object.values(state.mount.roots).some(Boolean)) return 'NAS 对下载服务是只读的（.env 里设 ASSET_MOVER_ACCESS=rw）';
-  const active = state.items.filter((i) => i.status === 'active');
+  const active = items.filter((i) => i.status === 'active');
   const queued = state.counts.queued ?? 0;
   if (active.length) {
     const first = active[0];
@@ -37,9 +39,17 @@ function dlRowText(state) {
     return `正在下载 ${dlName(first)}：${dlProgressText(first.progress)}${more > 0 ? `，还有 ${more} 个` : ''}`;
   }
   if (queued) return `${queued} 个排队中…`;
-  const last = state.items.find((i) => i.finished);
-  if (!last) return '空闲';
-  return `上次（${finishedAt(last.finished)}）：${dlName(last)} ${DL_STATUS[last.status]}`;
+  return dlLastText(items, '空闲');
+}
+
+// Uploads are taken by the web server itself, no fetcher needed
+function upRowText(items) {
+  const uploading = items.filter((i) => i.status === 'uploading');
+  if (uploading.length) {
+    const more = uploading.length > 1 ? `，还有 ${uploading.length - 1} 个` : '';
+    return `正在上传 ${dlName(uploading[0])}：${dlProgressText(uploading[0].progress)}${more}`;
+  }
+  return dlLastText(items, '空闲（也可以把文件、文件夹直接拖到页面上）');
 }
 
 function dlButton(label, action, id) {
@@ -88,17 +98,29 @@ function dlItem(item) {
   return li;
 }
 
-function renderDownloads(state) {
-  const busy = state.items.some((i) => ['active', 'queued', 'uploading'].includes(i.status));
-  const row = $('task-downloads');
+// One task bar row ("downloads" or "uploads"); whether something is running in it
+function dlRenderRow(prefix, items, text, running) {
+  const busy = items.some((i) => ['active', 'queued', 'uploading'].includes(i.status));
+  const row = $(`task-${prefix}`);
   row.classList.toggle('busy', busy);
-  row.classList.toggle('failed', !busy && state.items[0]?.status === 'failed');
-  setText($('downloads-task-text'), dlRowText(state));
-  const active = state.items.filter((i) => i.status === 'active' && i.progress?.total);
-  setBar($('downloads-task-bar'), active.length > 0,
-    active.reduce((n, i) => n + i.progress.done, 0), active.reduce((n, i) => n + i.progress.total, 0));
-  if ($('downloads').open) $('d-list').replaceChildren(...state.items.map(dlItem));
+  row.classList.toggle('failed', !busy && items[0]?.status === 'failed');
+  setText($(`${prefix}-task-text`), text);
+  const shown = items.filter((i) => i.status === running && i.progress?.total);
+  setBar($(`${prefix}-task-bar`), shown.length > 0,
+    shown.reduce((n, i) => n + i.progress.done, 0), shown.reduce((n, i) => n + i.progress.total, 0));
   return busy;
+}
+
+function renderDownloads(state) {
+  const downs = state.items.filter((i) => i.source !== 'upload');
+  const ups = state.items.filter((i) => i.source === 'upload');
+  const busy = [
+    dlRenderRow('downloads', downs, dlRowText(state, downs), 'active'),
+    dlRenderRow('uploads', ups, upRowText(ups), 'uploading'),
+  ];
+  if ($('downloads').open) $('d-list').replaceChildren(...downs.map(dlItem));
+  if ($('uploads').open) $('u-list').replaceChildren(...ups.map(dlItem));
+  return busy.some(Boolean);
 }
 
 async function refreshDownloads() {
@@ -108,9 +130,11 @@ async function refreshDownloads() {
     busy = renderDownloads(await getJson('/api/downloads'));
   } catch (err) {
     setText($('downloads-task-text'), `状态读取失败：${err.message}`);
+    setText($('uploads-task-text'), `状态读取失败：${err.message}`);
   }
   clearTimeout(dl.timer);  // another refresh may have run while this one waited
-  dl.timer = setTimeout(refreshDownloads, busy || $('downloads').open ? DL_POLL_MS : DL_IDLE_POLL_MS);
+  const watched = busy || $('downloads').open || $('uploads').open;
+  dl.timer = setTimeout(refreshDownloads, watched ? DL_POLL_MS : DL_IDLE_POLL_MS);
 }
 
 async function dlPost(url, body) {
@@ -144,16 +168,18 @@ $('d-form').addEventListener('submit', async (event) => {
   refreshDownloads();
 });
 
-$('d-list').addEventListener('click', async (event) => {
-  const button = event.target.closest('button[data-action]');
-  if (!button) return;
-  try {
-    await dlPost(`/api/downloads/${button.dataset.id}/${button.dataset.action}`);
-    setText($('d-status'), '');
-  } catch (err) {
-    setText($('d-status'), err.message);
-  }
-  refreshDownloads();
-});
+for (const [list, status] of [['d-list', 'd-status'], ['u-list', 'u-status']]) {
+  $(list).addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-action]');
+    if (!button) return;
+    try {
+      await dlPost(`/api/downloads/${button.dataset.id}/${button.dataset.action}`);
+      setText($(status), '');
+    } catch (err) {
+      setText($(status), err.message);
+    }
+    refreshDownloads();
+  });
+}
 
 refreshDownloads();

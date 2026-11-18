@@ -94,6 +94,15 @@
         <button id="downloads-open" class="link-btn" type="button" title="贴一个下载链接，下到素材库的 _下载 文件夹">打开</button>
       </span>
     </div>
+    <div id="task-uploads" class="task">
+      <span class="task-dot" aria-hidden="true"></span>
+      <span class="task-name">上传</span>
+      <span id="uploads-task-text" class="task-text" aria-live="polite"></span>
+      <progress id="uploads-task-bar" class="task-bar" max="1" value="0" hidden></progress>
+      <span class="task-actions">
+        <button id="uploads-task-open" class="link-btn" type="button" title="从这台电脑上传文件或文件夹到素材库的 _下载 文件夹">打开</button>
+      </span>
+    </div>
     <div id="task-tags" class="task" hidden>
       <span class="task-dot" aria-hidden="true"></span>
       <span class="task-name">打标签</span>
@@ -194,7 +203,7 @@
 
   <dialog id="downloads" class="viewer settings">
     <div class="viewer-head">
-      <h2>下载、上传到素材库</h2>
+      <h2>下载到素材库</h2>
       <button id="d-close" class="icon-btn" type="button" aria-label="关闭">✕</button>
     </div>
     <p class="hint">贴一个文件的下载链接，服务器用 aria2 下载到素材库的 <code>_下载</code> 文件夹，下完自动扫描，之后在「整理」里给它分类。文件大小不限；库里已有一模一样的文件时照样保留，标成「库里已有」，删不删你决定。</p>
@@ -206,7 +215,15 @@
       </div>
     </form>
     <p id="d-status" class="settings-status" aria-live="polite"></p>
-    <p class="hint">也可以从这台电脑上传：几个文件各算一条，一个文件夹整体算一个包（保留子文件夹，隐藏文件和名字带 <code>\ : * ? " &lt; &gt; |</code> 的文件不传），也可以直接拖到页面上。同样放进 <code>_下载</code>、自动扫描。传的时候别关页面，没有续传。</p>
+    <ol id="d-list" class="dl-list" aria-label="下载列表"></ol>
+  </dialog>
+
+  <dialog id="uploads" class="viewer settings">
+    <div class="viewer-head">
+      <h2>上传到素材库</h2>
+      <button id="u-close" class="icon-btn" type="button" aria-label="关闭">✕</button>
+    </div>
+    <p class="hint">从这台电脑上传到素材库的 <code>_下载</code> 文件夹，传完自动扫描，之后在「整理」里给它分类。几个文件各算一条；一个文件夹整体算一个包，保留子文件夹。隐藏文件和名字带 <code>\ : * ? " &lt; &gt; |</code> 的文件不传。也可以把文件、文件夹直接拖到页面上。传的时候别关页面，没有续传。</p>
     <div class="viewer-actions">
       <button id="u-files" class="btn" type="button">上传文件…</button>
       <button id="u-folder" class="btn" type="button">上传文件夹…</button>
@@ -215,7 +232,7 @@
     </div>
     <progress id="u-bar" class="task-bar dl-bar" hidden></progress>
     <p id="u-status" class="settings-status" aria-live="polite"></p>
-    <ol id="d-list" class="dl-list" aria-label="下载列表"></ol>
+    <ol id="u-list" class="dl-list" aria-label="上传列表"></ol>
   </dialog>
 
   <script src="app.js"></script>
