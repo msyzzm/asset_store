@@ -109,3 +109,64 @@ def test_every_site_the_server_searches_is_in_the_skill():
 
     text = (SCRIPT.parent.parent / "SKILL.md").read_text(encoding="utf-8")
     assert [name for name in SOURCES if f"`{name}`" not in text] == []
+
+
+def test_organize_and_file_jobs_go_to_their_routes(monkeypatch):
+    calls = _calls(monkeypatch, {})
+    for argv in (
+        ["organize-start", "--root", "nas", "--prefix", "UE"],
+        ["units", "--root", "nas", "--show", "duplicates", "--limit", "5"],
+        ["decide", "accept", "--root", "nas", "a.zip", "b"],
+        ["accept-all", "--root", "nas", "--category", "01_2D/UI"],
+        ["retarget", "--root", "nas", "a.zip", "_待删除/a"],
+        ["split", "--root", "nas", "UE"],
+        ["move", "apply", "--root", "nas"],
+        ["move", "undo", "--root", "nas", "--journal", "20261118-101500.jsonl"],
+        ["move", "unpack", "--root", "nas", "--password", "pw", "--limit", "3"],
+        ["move", "verify", "--root", "nas", "a.zip", "b.zip"],
+        ["move", "purge", "--root", "nas"],
+    ):
+        assert skill.main(argv) == 0
+    assert calls == [
+        ("/api/organize", None, {"root": "nas", "prefix": "UE", "redo": False}),
+        ("/api/organize/units", {"root": "nas", "show": "duplicates", "category": "", "q": "", "limit": 5, "offset": 0}, None),
+        ("/api/organize/units/decide", None, {"root": "nas", "paths": ["a.zip", "b"], "action": "accept"}),
+        ("/api/organize/units/accept-all", None, {"root": "nas", "show": "proposed", "category": "01_2D/UI", "q": ""}),
+        ("/api/organize/units/target", None, {"root": "nas", "path": "a.zip", "target": "_待删除/a"}),
+        ("/api/organize/split", None, {"root": "nas", "path": "UE"}),
+        ("/api/organize/moves", None, {"action": "apply", "root": "nas"}),
+        ("/api/organize/moves", None, {"action": "undo", "root": "nas", "journal": "20261118-101500.jsonl"}),
+        ("/api/organize/moves", None, {"action": "unpack", "root": "nas", "password": "pw", "limit": 3}),
+        ("/api/organize/moves", None, {"action": "verify", "root": "nas", "paths": ["a.zip", "b.zip"]}),
+        ("/api/organize/moves", None, {"action": "purge", "root": "nas"}),
+    ]
+
+
+def test_settings_are_changed_with_put_and_a_json_object(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(skill, "_json", lambda args, path, params=None, body=None, method=None: calls.append(
+        (path, body, method)) or {})
+    assert skill.main(["settings-set", "caption", '{"model": "qwen"}']) == 0
+    assert skill.main(["update-run", "check"]) == 0
+    assert calls == [("/api/settings/caption", {"model": "qwen"}, "PUT"), ("/api/update", {"action": "check"}, None)]
+    assert skill.main(["settings-set", "embedding", "[1]"]) == 1
+    assert "JSON object" in capsys.readouterr().err
+
+
+def test_every_server_route_is_in_the_skill(tmp_path):
+    """An agent can do whatever the web page can: a new route the skill misses fails here."""
+    from assetindex.config import Settings
+    from assetindex.web import create_app
+
+    text = (SCRIPT.parent.parent / "SKILL.md").read_text(encoding="utf-8") + SCRIPT.read_text(encoding="utf-8")
+    app = create_app(Settings(roots={}, data_dir=tmp_path))
+    skipped = (
+        "/api/files/{file_id}/", "/api/captions/", "/api/settings/", "/api/external/{source}/",  # covered by their bases
+        "/api/search", "/api/packs/",  # the page's own search: /api/agent/search and /api/agent/packs serve agents
+    )
+    missing = sorted(
+        r.path for r in app.routes
+        if r.path.startswith("/api/") and r.path.split("{")[0].rstrip("/") not in text
+        and not any(r.path.startswith(s) for s in skipped)
+    )
+    assert missing == []

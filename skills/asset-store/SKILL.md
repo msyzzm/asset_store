@@ -1,6 +1,6 @@
 ---
 name: asset-store
-description: Search and fetch game assets (images, sprites, VFX, audio, music, 3D models, Unity/Unreal packages, zip/rar/7z packs) from the user's NAS asset library. Use when the user asks to find, browse, preview or download art/audio/model assets, look for "a sword icon", "explosion effect", "背景音乐", "宝箱", or pull a file from an asset pack into a project. When the library has nothing fitting, also searches free asset sites (Poly Haven, ambientCG, OpenGameArt, itch.io, Sketchfab, Freesound, Poly Pizza, Openverse...) and downloads from them into the library. Also starts library scans and picture-description jobs.
+description: Search and fetch game assets (images, sprites, VFX, audio, music, 3D models, Unity/Unreal packages, zip/rar/7z packs) from the user's NAS asset library. Use when the user asks to find, browse, preview or download art/audio/model assets, look for "a sword icon", "explosion effect", "背景音乐", "宝箱", or pull a file from an asset pack into a project. When the library has nothing fitting, also searches free asset sites (Poly Haven, ambientCG, OpenGameArt, itch.io, Sketchfab, Freesound, Poly Pizza, Openverse...) and downloads from them into the library. Also starts library scans and picture-description jobs, organizes the library (classify packs, move them, unpack, delete), changes the server's model settings and updates the server.
 ---
 
 # 素材库（asset-store）
@@ -92,6 +92,32 @@ python scripts/asset_store.py tasks
 - `download-cancel ID`：取消排队中或下载中的下载；`download-retry ID`：重试失败或取消了的下载。用户要求时才做。
 - `downloads`：看下载队列。`status` 取值：`queued` 排队、`active` 下载中（`progress` 里有 `done`/`total`/`speed` 字节数）、`done` 完成（`path` 是落地位置）、`duplicate` 完成但库里已有一模一样的文件（`dup_of`），`failed` 失败（`error` 是原因）、`cancelled` 已取消。
 
+## 整理素材库、设置、更新（用户要求时才做）
+
+这些命令和网页上「整理」页、右上角「设置」、「更新」做的是同一件事。分三档：
+
+**只读，随时可以用**：`stats`（各类文件数）、`organize`（分析进度、上次报告、`categories` 可用的分类、`counts` 各状态的包数）、`units`、`unit-pictures`、`splits`、`moves`（文件任务：正在做的、历史、`mount` 里 NAS 是否可写、`unsettled` 中断未收尾的次数）、`move-plan`、`trash`、`locked`、`tags`、`settings`、`update`。
+
+**只改整理建议、不动文件**：照用户说的做，做完告诉用户改了什么。
+- 流程：`organize-start --root nas [--prefix 文件夹]` 让看图模型分析（找重复的包，给每个包提议分类和名字；很慢、占用模型，先和用户确认范围）→ `units --root nas --show proposed` 看提议（每条有 `path`、`category`、`name`、`target` 目标路径、`reason`、`status`、`dup_of`）→ 审核 → 移动。
+- `decide accept|reject|reset|redo --root nas 路径…`：接受、拒绝、撤回决定、让模型重新分析。
+- `accept-all --root nas --category 01_2D/UI`：接受列表里这一类的全部提议。先用 `units` 告诉用户有多少个。
+- `retarget --root nas 路径 01_2D/UI/新名字`：改目标（分类用 `organize` 返回的 `categories`）。目标写 `_待删除/名字` 就是标记为要删除。
+- `keep`（重复的包改为保留这一份）、`split`（文件夹里每个子文件夹各算一个包）、`join`（整个文件夹算一个包）、`unsplit`（撤销拆开）。
+- `tag --root nas 包路径…` 让模型给包打视角、画风、题材标签（也占模型）。
+
+**动 NAS 上的文件、改服务器：每次都要用户明确同意**
+- `move apply --root nas`：把已接受的提议真正移动到目标位置。先跑 `move-plan --root nas`，把要移动的包数、文件数和 `problems`（移不了的原因）告诉用户，用户说移动再执行。进度看 `moves`。
+- `move undo --root nas --journal 20261118-101500.jsonl`：撤销某一次移动（名字在 `moves` 的 `history` 里）。
+- `move recover --root nas`：`unsettled` 大于 0 时，把上次中断的移动收尾。
+- `move unpack --root nas --password 密码 [--limit N] [路径…]`：把带密码的压缩包解成文件夹（`locked` 列出哪些可以解），原压缩包放进 `_待删除`。
+- `move verify --root nas 路径…`：只读，检查压缩包有没有损坏。用户问某个包坏没坏时可以直接用。
+- `move repair --root nas 副本1 副本2…`：用几份各坏一处的副本拼出一份完好的。`move lift --root nas 路径…`：外层压缩包里只套着另一个压缩包时，拆掉外层。
+- **`move purge --root nas`：永久删除 `_待删除` 文件夹里的全部文件，不进 NAS 回收站，删了找不回来。** 先跑 `trash --root nas`，把文件数和总大小告诉用户；只有用户明确说“永久删除”才执行，绝不自己决定删除。
+- `move-stop`：做完手上这个包后停下。文件任务进行时，扫描和分析会等它做完。
+- `settings-set caption '{"model": "qwen3-vl"}'`、`settings-set embedding '{"enabled": true}'`：改看图模型、语义搜索的设置，只传要改的字段（看图模型：`base_url`、`model`、`api_key`、`workers`、`retries`、`retry_wait`、`max_failures`；语义搜索：`enabled`、`base_url`、`model`、`api_key`、`image_format`、`batch_size`）。key 只能写不能读；改了接口地址却没给新 key 时，旧 key 会被清掉。改完用 `settings-test caption`（描述一张示例图）或 `settings-test embedding` 试一下。改前告诉用户要改成什么。
+- `update-run check` 查有没有新版本（`update` 里的 `behind`、`pending`）；`update-run update` 安装新版本并重启所有服务，约一分钟。重启会打断正在进行的扫描和分析（下载会续传），先用 `tasks` 看有没有扫描在跑，告诉用户再更新；更新完扫描不会自动接着做，需要时再 `scan`。`update-stop` 在重启前停下。
+
 ## 出错
 
 脚本失败时退出码是 1，stderr 里是 `{"error": "HTTP 4xx: 原因"}`：
@@ -134,5 +160,13 @@ GET 请求不需要认证。POST 请求要带请求头 `X-Requested-With: anythi
 | 外部素材详情 | `GET /api/external/{source}/{id}` |
 | 下载外部素材到素材库 | `POST /api/external/{source}/{id}/download`，body 为 `{"option":"fbx/1k"}`（可加 `"root"`） |
 | 哪些网站的 key 已填 | `GET /api/external/keys` |
+| 各类文件数 | `GET /api/stats` |
+| 整理分析 | `GET /api/organize`；开始 `POST /api/organize`，body 为 `{"root":"nas","prefix":"","redo":false}`；停止 `POST /api/organize/stop` |
+| 整理建议 | `GET /api/organize/units?root=&show=proposed&category=&q=&limit=&offset=`；包的图片 `GET /api/organize/units/pictures?root=&path=` |
+| 审核建议 | `POST /api/organize/units/decide` `{"root","paths":[…],"action":"accept"}`、`/units/accept-all` `{"root","show","category","q"}`、`/units/target` `{"root","path","target"}`、`/units/keep`、`/api/organize/split`、`/join`、`/unsplit` `{"root","path"}` |
+| 文件任务 | `GET /api/organize/moves`；预览 `GET /api/organize/moves/plan?root=`、`/trash?root=`、`/locked?root=`；开始 `POST /api/organize/moves` `{"action":"apply","root":"nas"}`（undo 加 `journal`，unpack 加 `password`，verify/repair/lift 加 `paths`）；停止 `POST /api/organize/moves/stop` |
+| 打标签 | `GET /api/organize/tags`；`POST /api/organize/tags` `{"root","paths":[…]}`；`POST /api/organize/tags/stop` |
+| 设置 | `GET /api/settings/caption`、`/api/settings/embedding`；修改 `PUT` 同一地址，body 为要改的字段；测试 `POST …/test` |
+| 更新 | `GET /api/update`；`POST /api/update` `{"action":"check"}` 或 `{"action":"update"}`；`POST /api/update/stop` |
 
 完整的接口文档在服务的 `/docs` 页面（FastAPI 自动生成）。

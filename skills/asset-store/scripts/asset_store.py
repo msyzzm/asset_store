@@ -30,12 +30,12 @@ def _base(args) -> str:
     return (args.url or os.environ.get("ASSET_STORE_URL") or DEFAULT_URL).rstrip("/")
 
 
-def _open(args, path: str, params: dict | None = None, body: dict | None = None):
+def _open(args, path: str, params: dict | None = None, body: dict | None = None, method: str | None = None):
     url = _base(args) + path
     if params:
         url += "?" + urllib.parse.urlencode({k: v for k, v in params.items() if v not in (None, "")})
     data = json.dumps(body).encode() if body is not None else None
-    request = urllib.request.Request(url, data=data, headers=WRITE_HEADERS if data is not None else {})
+    request = urllib.request.Request(url, data=data, headers=WRITE_HEADERS if data is not None else {}, method=method)
     try:
         return urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS)
     except urllib.error.HTTPError as err:
@@ -49,8 +49,8 @@ def _open(args, path: str, params: dict | None = None, body: dict | None = None)
         raise ApiError(f"cannot reach {url}: {err.reason} (is ASSET_STORE_URL right?)") from None
 
 
-def _json(args, path, params=None, body=None):
-    with _open(args, path, params, body) as resp:
+def _json(args, path, params=None, body=None, method=None):
+    with _open(args, path, params, body, method) as resp:
         return json.loads(resp.read())
 
 
@@ -163,6 +163,227 @@ def cmd_download_retry(args):
 
 def cmd_external_keys(args):
     return _json(args, "/api/external/keys")
+
+
+# ---- organizing the library, moving and deleting on the NAS, settings, updates ----
+
+
+def cmd_stats(args):
+    return _json(args, "/api/stats")
+
+
+def cmd_organize(args):
+    return _json(args, "/api/organize")
+
+
+def cmd_organize_start(args):
+    return _json(args, "/api/organize", body={"root": args.root, "prefix": args.prefix, "redo": args.redo})
+
+
+def cmd_organize_stop(args):
+    return _json(args, "/api/organize/stop", body={})
+
+
+def cmd_units(args):
+    params = {"root": args.root, "show": args.show, "category": args.category, "q": args.q,
+              "limit": args.limit, "offset": args.offset}
+    return _json(args, "/api/organize/units", params)
+
+
+def cmd_unit_pictures(args):
+    return _json(args, "/api/organize/units/pictures", {"root": args.root, "path": args.path})
+
+
+def cmd_decide(args):
+    return _json(args, "/api/organize/units/decide", body={"root": args.root, "paths": args.paths, "action": args.action})
+
+
+def cmd_accept_all(args):
+    body = {"root": args.root, "show": args.show, "category": args.category, "q": args.q}
+    return _json(args, "/api/organize/units/accept-all", body=body)
+
+
+def cmd_retarget(args):
+    return _json(args, "/api/organize/units/target", body={"root": args.root, "path": args.path, "target": args.target})
+
+
+def _unit_action(route):
+    def run(args):
+        return _json(args, route, body={"root": args.root, "path": args.path})
+    return run
+
+
+def cmd_splits(args):
+    return _json(args, "/api/organize/splits", {"root": args.root})
+
+
+def cmd_moves(args):
+    return _json(args, "/api/organize/moves")
+
+
+def cmd_move_plan(args):
+    return _json(args, "/api/organize/moves/plan", {"root": args.root})
+
+
+def cmd_trash(args):
+    return _json(args, "/api/organize/trash", {"root": args.root})
+
+
+def cmd_locked(args):
+    return _json(args, "/api/organize/locked", {"root": args.root})
+
+
+def cmd_move(args):
+    body = {"action": args.action, "root": args.root, "journal": args.journal, "password": args.password,
+            "limit": args.limit, "paths": args.paths or None}
+    return _json(args, "/api/organize/moves", body={k: v for k, v in body.items() if v is not None})
+
+
+def cmd_move_stop(args):
+    return _json(args, "/api/organize/moves/stop", body={})
+
+
+def cmd_tags(args):
+    return _json(args, "/api/organize/tags")
+
+
+def cmd_tag(args):
+    return _json(args, "/api/organize/tags", body={"root": args.root, "paths": args.paths})
+
+
+def cmd_tag_stop(args):
+    return _json(args, "/api/organize/tags/stop", body={})
+
+
+SETTINGS = ("caption", "embedding")
+
+
+def cmd_settings(args):
+    return {name: _json(args, f"/api/settings/{name}") for name in SETTINGS}
+
+
+def cmd_settings_set(args):
+    try:
+        update = json.loads(args.values)
+    except ValueError:
+        raise ValueError('values must be JSON, e.g. {"model": "qwen"}') from None
+    if not isinstance(update, dict):
+        raise ValueError('values must be a JSON object, e.g. {"model": "qwen"}')
+    return _json(args, f"/api/settings/{args.which}", body=update, method="PUT")
+
+
+def cmd_settings_test(args):
+    return _json(args, f"/api/settings/{args.which}/test", body={})
+
+
+def cmd_update(args):
+    return _json(args, "/api/update")
+
+
+def cmd_update_run(args):
+    return _json(args, "/api/update", body={"action": args.action})
+
+
+def cmd_update_stop(args):
+    return _json(args, "/api/update/stop", body={})
+
+
+def _admin_parsers(sub) -> None:
+    sub.add_parser("stats", help="how many files of each kind the library has").set_defaults(func=cmd_stats)
+
+    sub.add_parser("organize", help="the organize analysis: progress and its last report").set_defaults(func=cmd_organize)
+    p = sub.add_parser("organize-start", help="analyse a root or folder: duplicates and where each pack belongs (uses the model)")
+    p.add_argument("--root", required=True)
+    p.add_argument("--prefix", default="", help="only this folder; empty = the whole root")
+    p.add_argument("--redo", action="store_true", help="ask the model again for packs that have a proposal")
+    p.set_defaults(func=cmd_organize_start)
+    sub.add_parser("organize-stop", help="stop the organize analysis").set_defaults(func=cmd_organize_stop)
+
+    p = sub.add_parser("units", help="the packs of a root and what the analysis proposes for each")
+    p.add_argument("--root", required=True)
+    p.add_argument("--show", default="proposed", choices=["proposed", "duplicates", "accepted", "rejected", "todo", "failed", "all"])
+    p.add_argument("--category", default="")
+    p.add_argument("--q", default="", help="words in the pack's path")
+    p.add_argument("--limit", type=int, default=50)
+    p.add_argument("--offset", type=int, default=0)
+    p.set_defaults(func=cmd_units)
+    p = sub.add_parser("unit-pictures", help="the pictures of one pack (to look at it)")
+    p.add_argument("--root", required=True)
+    p.add_argument("path")
+    p.set_defaults(func=cmd_unit_pictures)
+    p = sub.add_parser("decide", help="accept, reject, reset or redo (ask the model again) proposals")
+    p.add_argument("action", choices=["accept", "reject", "reset", "redo"])
+    p.add_argument("--root", required=True)
+    p.add_argument("paths", nargs="+")
+    p.set_defaults(func=cmd_decide)
+    p = sub.add_parser("accept-all", help="accept every proposal of one category in the list")
+    p.add_argument("--root", required=True)
+    p.add_argument("--show", default="proposed", choices=["proposed", "duplicates"])
+    p.add_argument("--category", required=True)
+    p.add_argument("--q", default="")
+    p.set_defaults(func=cmd_accept_all)
+    p = sub.add_parser("retarget", help="change where a pack goes: <category>/<name> (also _待删除/<name>)")
+    p.add_argument("--root", required=True)
+    p.add_argument("path")
+    p.add_argument("target")
+    p.set_defaults(func=cmd_retarget)
+    for name, route, text in (
+        ("keep", "/api/organize/units/keep", "keep this copy of a duplicate instead of the one chosen"),
+        ("split", "/api/organize/split", "treat each subfolder of this folder as its own pack"),
+        ("join", "/api/organize/join", "keep this folder as one pack"),
+        ("unsplit", "/api/organize/unsplit", "undo a split"),
+    ):
+        p = sub.add_parser(name, help=text)
+        p.add_argument("--root", required=True)
+        p.add_argument("path")
+        p.set_defaults(func=_unit_action(route))
+    p = sub.add_parser("splits", help="the folders split into packs")
+    p.add_argument("--root", required=True)
+    p.set_defaults(func=cmd_splits)
+
+    sub.add_parser("moves", help="file jobs on the NAS: the running one, history, whether the NAS is writable").set_defaults(
+        func=cmd_moves)
+    p = sub.add_parser("move-plan", help="what `move apply` would move now (accepted proposals), with problems")
+    p.add_argument("--root", required=True)
+    p.set_defaults(func=cmd_move_plan)
+    p = sub.add_parser("trash", help="what `move purge` would delete for good (the _待删除 folder)")
+    p.add_argument("--root", required=True)
+    p.set_defaults(func=cmd_trash)
+    p = sub.add_parser("locked", help="password-protected archives `move unpack` could open")
+    p.add_argument("--root", required=True)
+    p.set_defaults(func=cmd_locked)
+    p = sub.add_parser("move", help="a file job on the NAS: apply, undo, recover, unpack, verify, purge, repair, lift")
+    p.add_argument("action", choices=["apply", "undo", "recover", "unpack", "verify", "purge", "repair", "lift"])
+    p.add_argument("--root", required=True)
+    p.add_argument("--journal", help="undo: which run (a name from `moves` history)")
+    p.add_argument("--password", help="unpack (required), repair, lift: the archives' password")
+    p.add_argument("--limit", type=int, help="unpack: at most this many archives")
+    p.add_argument("paths", nargs="*", help="verify, repair (2+ copies, the first named), lift; unpack: only these")
+    p.set_defaults(func=cmd_move)
+    sub.add_parser("move-stop", help="stop the running file job after the pack it is on").set_defaults(func=cmd_move_stop)
+
+    sub.add_parser("tags", help="the tagging job (view, style, themes of packs)").set_defaults(func=cmd_tags)
+    p = sub.add_parser("tag", help="tag these packs with the model (view, style, themes)")
+    p.add_argument("--root", required=True)
+    p.add_argument("paths", nargs="+")
+    p.set_defaults(func=cmd_tag)
+    sub.add_parser("tag-stop", help="stop the tagging job").set_defaults(func=cmd_tag_stop)
+
+    sub.add_parser("settings", help="the vision model (caption) and semantic search (embedding) settings; keys never shown"
+                   ).set_defaults(func=cmd_settings)
+    p = sub.add_parser("settings-set", help="change settings: settings-set caption '{\"model\": \"qwen\"}'")
+    p.add_argument("which", choices=SETTINGS)
+    p.add_argument("values", help="JSON object of the fields to change")
+    p.set_defaults(func=cmd_settings_set)
+    p = sub.add_parser("settings-test", help="try the settings: caption describes a sample picture, embedding embeds a word")
+    p.add_argument("which", choices=SETTINGS)
+    p.set_defaults(func=cmd_settings_test)
+
+    sub.add_parser("update", help="the server's version and whether a newer one is out").set_defaults(func=cmd_update)
+    p = sub.add_parser("update-run", help="check: look for a newer version; update: install it and restart the services")
+    p.add_argument("action", choices=["check", "update"])
+    p.set_defaults(func=cmd_update_run)
+    sub.add_parser("update-stop", help="stop an update before it restarts the services").set_defaults(func=cmd_update_stop)
 
 
 def _external_path(args, suffix: str = "") -> str:
@@ -280,6 +501,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--option", required=True, help="an option's `key` from external-show, e.g. fbx/1k")
     p.add_argument("--root", default="", help="root to download into; empty = the first one")
     p.set_defaults(func=cmd_external_get)
+
+    _admin_parsers(sub)
     return parser
 
 
