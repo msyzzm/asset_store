@@ -359,7 +359,7 @@ sudo deploy/updater/install.sh
 - Sketchfab：搜索不要 token，只列作者允许下载的模型；下载要 API token（sketchfab.com → Settings → Password & API）。可选 GLB、glTF、USDZ、原始文件。它的下载链接几分钟就过期，所以队列里只记“哪个模型、哪种格式”，下载器每次开始、重试、断点续传前都用 token 现要一个新链接。授权各异（CC0、CC-BY、CC-BY-NC 等），CC-BY 要署名作者和 Sketchfab，NC 不可商用。
 - Freesound：搜索就要 API key（freesound.org/apiv2/apply 申请）。原始文件要 OAuth 登录，程序拿不到，所以能下的是高质量试听版（OGG 约 192kbps、MP3 约 128kbps），下到 `_下载/<声音名 格式>/` 里；要原始文件就点原页面手动下。授权各异，详情里写着是否要署名、能否商用。
 - Poly Pizza：搜索、下载都要 API key（poly.pizza/settings/api 新建应用）。每个模型是一个 GLB，CC0 或 CC-BY；CC-BY 的详情里给出现成的署名文字。它的文件服务器也要 key，所以队列里不存 key，下载器开始下载时才把 key 加进请求头。不填关键词时列出 CC0 模型。
-- Openverse：不用账号，但不登录每分钟只能请求 20 次、每天 200 次，每页 20 条，所以不填关键词时不请求，结果缓存 10 分钟，点开详情用搜索时拿到的信息、不再请求。图片和音频分两栏。下载的是原文件，从它原来所在的网站（Flickr、Wikimedia、Jamendo 等）下，个别网站可能拒绝程序下载。授权各异，详情里有署名文字，带“不可商用”的别用在要卖的游戏里。
+- Openverse：不用账号，但不登录每分钟只能请求 20 次、每天 200 次，每页 20 条，所以不填关键词时不请求，结果缓存 10 分钟，点开详情用搜索时拿到的信息、不再请求。图片和音频分两栏。下载的是它原来所在的网站（Flickr、Wikimedia、Jamendo、Freesound 等）给的文件：多数是原图或原曲，来自 Freesound 的声音是 MP3 试听版；个别网站可能拒绝程序下载。授权各异，详情里有署名文字，带“不可商用”的别用在要卖的游戏里。
 - itch.io 不让程序搜索和下载：输入的词当作标签（`pixel art` → `pixel-art`），列出这个标签下最受欢迎的免费素材，每页 36 个；不填就列全站的。点开只有封面和简介，要点原页面到 itch.io 上手动下载，下好后放进素材库。
 
 ## 给 AI agent 用

@@ -715,3 +715,14 @@ def test_a_poly_pizza_result_without_its_file_link_is_asked_for_in_full(client, 
     body = client.get(f"/api/external/polypizza/{PIZZA}").json()
 
     assert body["options"] and any(c.endswith(f"/model/{PIZZA}") for c in sites.calls)
+
+
+def test_an_openverse_sound_named_with_an_extension_lands_without_it(client, conn, sites, writable, monkeypatch):
+    raw = _fixture("openverse_audio.json")
+    raw["results"][1]["title"] = "sword-01.wav"
+    monkeypatch.setattr(external, "get_json", lambda url, headers=None: raw)
+    client.get("/api/external/search", params={"q": "sword", "source": "openverse_audio"})
+
+    row = client.post(f"/api/external/openverse_audio/{SONG}/download", json={"option": "original"}, headers=HEADERS).json()
+
+    assert row["title"] == "sword-01 MP3" and downloads.parts(conn, row["id"])[0]["out"] == "sword-01.mp3"

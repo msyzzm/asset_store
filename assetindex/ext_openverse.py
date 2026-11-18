@@ -54,7 +54,7 @@ class Kind:
         return {
             "source": self.NAME,
             "id": item_id,
-            "title": html.unescape(raw.get("title") or item_id).strip(),  # some come with &amp;
+            "title": external.without_audio_extension(html.unescape(raw.get("title") or item_id).strip()),  # some come with &amp;
             "kind": self.kind,
             "thumb": external.web_url(raw.get("thumbnail")),
             "page": external.web_url(raw.get("foreign_landing_url")) or f"https://openverse.org/{self.media}/{item_id}",
@@ -127,13 +127,14 @@ class Kind:
             "attribution": "" if str(raw.get("license")).lower() in ("cc0", "pdm") else (raw.get("attribution") or "").strip(),
             "credit": CREDIT,
             "note": "文件从它原来所在的网站下载，个别网站可能拒绝程序下载，那就点原页面手动下。",
-            "options": [{"key": "original", "label": f"原文件{f'（{ext.upper()}）' if ext else ''}",
+            # its link is what the hosting site serves: an original, or (Freesound) a preview
+            "options": [{"key": "original", "label": f"文件{f'（{ext.upper()}）' if ext else ''}",
                          "size": raw.get("filesize") if type(raw.get("filesize")) is int else None, "ready": True}]
             if url else [],
         }
 
     def option(self, item_id: str, key: str) -> dict:
-        """{parts, label}: the original file, named after the item; KeyError if none."""
+        """{parts, label}: its file, named after the item; KeyError if none."""
         raw = self._raw(item_id)
         url = external.web_url(raw.get("url"))
         if key != "original" or not url:
@@ -145,7 +146,7 @@ class Kind:
         except ValueError:
             out = f"{item_id}{'.' + ext if ext else ''}"
         size = raw.get("filesize") if type(raw.get("filesize")) is int else None
-        return {"parts": [{"url": url, "out": out, "size": size, "md5": None}], "label": "原文件"}
+        return {"parts": [{"url": url, "out": out, "size": size, "md5": None}], "label": ext.upper() or "文件"}
 
 
 IMAGES = Kind("images", "openverse_images", "Openverse 图片", "图片")

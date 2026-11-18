@@ -105,6 +105,15 @@ def expect(value, kind: type, what: str):
     return value
 
 
+AUDIO_EXTENSIONS = (".wav", ".aif", ".aiff", ".flac", ".mp3", ".ogg", ".m4a")
+
+
+def without_audio_extension(name: str) -> str:
+    """A sound's name without the extension many carry ("DoorCreaking11.flac")."""
+    stem = name.rpartition(".")[0].strip() if name.lower().endswith(AUDIO_EXTENSIONS) else name
+    return stem or name
+
+
 def has_cjk(text: str) -> bool:
     return bool(_CJK.search(text))
 

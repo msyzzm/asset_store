@@ -23,8 +23,6 @@ LICENSES = (  # a part of its license link: how to show it
     ("licenses/by", "CC-BY（要署名）"),
 )
 
-AUDIO_EXTENSIONS = (".wav", ".aif", ".aiff", ".flac", ".mp3", ".ogg", ".m4a")
-
 _searches = external.TtlCache(600)
 _details = external.TtlCache(3600)
 
@@ -47,9 +45,7 @@ def _seconds(value) -> str:
 
 def _title(sound: dict) -> str:
     """Its name without the extension many carry ("DoorCreaking11.flac")."""
-    name = (sound.get("name") or str(sound["id"])).strip()
-    stem = name.rpartition(".")[0].strip() if name.lower().endswith(AUDIO_EXTENSIONS) else name
-    return stem or name
+    return external.without_audio_extension((sound.get("name") or str(sound["id"])).strip())
 
 
 def _item(sound: dict) -> dict:
