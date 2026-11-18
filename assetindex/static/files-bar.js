@@ -8,7 +8,7 @@ const FILES_POLL_MS = 3000;
 const FILES_IDLE_POLL_MS = 15000;
 const MOVE_ACTIONS = {
   apply: '移动', undo: '撤销移动', recover: '收尾上次中断的移动', unpack: '解包',
-  verify: '校验压缩包', purge: '永久删除', repair: '修复损坏的包',
+  verify: '校验压缩包', purge: '永久删除', repair: '修复损坏的包', lift: '拆外层压缩包',
 };
 const filesBar = { timer: 0 };
 

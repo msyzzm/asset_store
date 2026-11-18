@@ -19,10 +19,10 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
-from assetindex import organize, organize_apply, purge, repair, scan_request, unpack, verify
+from assetindex import lift, organize, organize_apply, purge, repair, scan_request, unpack, verify
 from assetindex.units import companions_by_unit, stored_layout
 from assetindex.config import Settings
-from assetindex.organize_move import build_plan
+from assetindex.organize_move import Problem, build_plan
 from assetindex.scan_request import write_json_atomic
 
 log = logging.getLogger(__name__)
@@ -31,8 +31,8 @@ REQUEST_NAME = "move.request"
 STOP_NAME = "move.stop"
 STATUS_NAME = "move.status"
 LOCK_NAME = "move.lock"  # held by the mover for a whole job: "running" means this lock is held
-ACTIONS = ("apply", "undo", "recover", "unpack", "verify", "purge", "repair")
-WITH_PATHS = ("verify", "repair")  # these need `paths`; unpack may take them
+ACTIONS = ("apply", "undo", "recover", "unpack", "verify", "purge", "repair", "lift")
+WITH_PATHS = ("verify", "repair", "lift")  # these need `paths`; unpack may take them
 MAX_VERIFY = 200  # each archive gets a line in the status (MAX_PROBLEMS)
 MAX_PASSWORD = 200
 MAX_UNPACK_LIMIT = 100_000
@@ -149,7 +149,7 @@ def parse(raw, settings: Settings) -> tuple[str, str, str | None]:
     if action == "unpack" and not (isinstance(password, str) and 0 < len(password) <= MAX_PASSWORD):
         raise ValueError("要填解压密码")
     limit = raw.get("limit")
-    if (action != "unpack" and limit is not None) or (action not in ("unpack", "repair") and password is not None):
+    if (action != "unpack" and limit is not None) or (action not in ("unpack", "repair", "lift") and password is not None):
         raise ValueError("请求格式不对")
     if password is not None and not (isinstance(password, str) and 0 < len(password) <= MAX_PASSWORD):
         raise ValueError("请求格式不对")
@@ -237,6 +237,8 @@ def run(
         return _unpack(conn, settings, raw, status, should_stop, report, move, free_bytes, now)
     if action == "repair":
         return _repair(conn, settings, raw, status, should_stop, report, move, free_bytes, now)
+    if action == "lift":
+        return _lift(conn, settings, raw, status, should_stop, report, move, free_bytes, now)
     journals = settings.data_dir / organize_apply.JOURNAL_DIR
     progress = {"done": 0}
 
@@ -317,6 +319,37 @@ def _repair(conn, settings: Settings, raw: dict, status: MoveStatus, should_stop
         scan_request.request_scan(settings.data_dir)
     return replace(status, running=False, finished=now(), moved=moved, done=progress["done"],
                    total=progress["total"], error=error, stopped=stopped)
+
+
+def _lift(conn, settings: Settings, raw: dict, status: MoveStatus, should_stop, report, move, free_bytes,
+          now) -> MoveStatus:
+    """Each archive in `paths` that only wraps another gives way to it (see
+    assetindex/lift.py); a scan picks the inner ones up."""
+    base = settings.roots[status.root].resolve()
+    companions = companions_by_unit(*stored_layout(conn, status.root))
+    paths = raw["paths"]
+    status = replace(status, total=len(paths))
+    report(status)
+    lifted, changed, problems, stopped = 0, False, [], False
+    for done, rel in enumerate(paths):
+        if should_stop():
+            stopped = True
+            break
+        report(replace(status, done=done))
+        try:
+            lift.lift_one(base, rel, raw.get("password"), companions.get(rel, []), move=move, free=free_bytes)
+            lifted += 1
+        except lift.LiftHalfDone as err:  # the NAS did change: the index should learn of it
+            changed = True
+            problems.append(Problem(rel, str(err)))
+        except lift.LiftError as err:
+            problems.append(Problem(rel, str(err)))
+        except OSError as err:  # extracting or the first move: nothing changed
+            problems.append(Problem(rel, f"出错了，没动：{err!r}"))
+    if lifted or changed:
+        scan_request.request_scan(settings.data_dir)
+    return replace(status, running=False, finished=now(), moved=lifted, done=done if stopped else len(paths),
+                   problems=_problems(problems), stopped=stopped)
 
 
 def _verify(settings: Settings, paths: list[str], status: MoveStatus, should_stop, report, test_archive, now) -> MoveStatus:

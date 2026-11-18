@@ -22,7 +22,7 @@ function moveJobText(job) {
   if (job.running) {
     const what = {
       undo: '正在撤销', recover: '正在收尾上次中断的移动', unpack: '正在解包', verify: '正在校验压缩包',
-      purge: '正在删除待删除里的文件', repair: '正在修复损坏的包',
+      purge: '正在删除待删除里的文件', repair: '正在修复损坏的包', lift: '正在拆外层压缩包',
     }[job.action] ?? '正在移动';
     return job.total ? `${what} ${job.done}/${job.total}…` : `${what}…`;
   }
@@ -32,6 +32,7 @@ function moveJobText(job) {
     undo: `撤销了 ${job.moved} 个包`, recover: '收尾完成', unpack: `解开了 ${job.moved} 个包，等扫描完再分析它们`,
     verify: `校验了 ${job.total} 个压缩包，${job.moved} 个完好`, purge: `永久删除了 ${job.moved} 个文件`,
     repair: job.moved ? '修好了 1 个包，原来的几份副本放进了待删除' : '没修成',
+    lift: `拆掉了 ${job.moved} 个外层压缩包，外层放进了待删除`,
   }[job.action] ?? `移动了 ${job.moved} 个包`;
   const problems = job.problems.length ? `，${job.problems.length} 个没动（原因见下）` : '';
   const ending = job.error ? `。${job.error}` : job.stopped ? '，已手动停止。' : '。';
