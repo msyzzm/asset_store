@@ -52,11 +52,11 @@ async function refreshMoveRow() {
     const row = $('task-files');
     row.classList.toggle('busy', busy);
     row.classList.toggle('failed', !busy && Boolean(job.error));
-    setText($('files-task-text'), moveText(job));
+    setTaskText($('files-task-text'), moveText(job));
     setBar($('files-task-bar'), job.running, job.done, job.total);
     return busy;
   } catch (err) {
-    setText($('files-task-text'), `状态读取失败：${err.message}`);
+    setTaskText($('files-task-text'), `状态读取失败：${err.message}`);
     return false;
   }
 }
@@ -69,11 +69,11 @@ async function refreshTagRow() {
     row.hidden = !busy && !s.finished;  // never run: no row
     row.classList.toggle('busy', busy);
     row.classList.toggle('failed', !busy && Boolean(s.error));
-    setText($('tags-task-text'), tagText(s));
+    setTaskText($('tags-task-text'), tagText(s));
     setBar($('tags-task-bar'), s.running, s.done + s.failed, s.total);
     return busy;
   } catch (err) {
-    setText($('tags-task-text'), `状态读取失败：${err.message}`);
+    setTaskText($('tags-task-text'), `状态读取失败：${err.message}`);
     return false;
   }
 }

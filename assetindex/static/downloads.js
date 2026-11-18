@@ -88,7 +88,8 @@ function dlItem(item) {
     bar.value = item.progress?.done ?? 0;
     li.append(bar);
   }
-  const note = item.error || (item.dup_of ? `和 ${item.dup_of} 一模一样` : item.path ? `在 ${item.path}` : '');
+  const where = item.gone ? `已从 ${item.path} 移走或删除` : `在 ${item.path}`;  // gone: organized away since
+  const note = item.error || (item.dup_of ? `和 ${item.dup_of} 一模一样` : item.path ? where : '');
   if (note) {
     const p = document.createElement('p');
     p.className = 'dl-note';
@@ -104,7 +105,7 @@ function dlRenderRow(prefix, items, text, running) {
   const row = $(`task-${prefix}`);
   row.classList.toggle('busy', busy);
   row.classList.toggle('failed', !busy && items[0]?.status === 'failed');
-  setText($(`${prefix}-task-text`), text);
+  setTaskText($(`${prefix}-task-text`), text);
   const shown = items.filter((i) => i.status === running && i.progress?.total);
   setBar($(`${prefix}-task-bar`), shown.length > 0,
     shown.reduce((n, i) => n + i.progress.done, 0), shown.reduce((n, i) => n + i.progress.total, 0));
@@ -129,8 +130,8 @@ async function refreshDownloads() {
   try {
     busy = renderDownloads(await getJson('/api/downloads'));
   } catch (err) {
-    setText($('downloads-task-text'), `状态读取失败：${err.message}`);
-    setText($('uploads-task-text'), `状态读取失败：${err.message}`);
+    setTaskText($('downloads-task-text'), `状态读取失败：${err.message}`);
+    setTaskText($('uploads-task-text'), `状态读取失败：${err.message}`);
   }
   clearTimeout(dl.timer);  // another refresh may have run while this one waited
   const watched = busy || $('downloads').open || $('uploads').open;

@@ -34,9 +34,9 @@ async function refreshOrganizeBar() {
     row.classList.toggle('busy', organizeBar.busy);
     row.classList.toggle('failed', !organizeBar.busy && Boolean(data.job.error));
     $('organize-task-stop').hidden = !organizeBar.busy || organizeBar.stopping;
-    setText($('organize-task-text'), organizeBar.stopping ? '正在停止：处理完手上这个包就停…' : organizeText(data));
+    setTaskText($('organize-task-text'), organizeBar.stopping ? '正在停止：处理完手上这个包就停…' : organizeText(data));
   } catch (err) {
-    setText($('organize-task-text'), `状态读取失败：${err.message}`);
+    setTaskText($('organize-task-text'), `状态读取失败：${err.message}`);
   }
   clearTimeout(organizeBar.timer);
   organizeBar.timer = setTimeout(refreshOrganizeBar, organizeBar.busy ? ORGANIZE_POLL_MS : ORGANIZE_IDLE_POLL_MS);
@@ -48,10 +48,10 @@ async function stopOrganize() {
     const resp = await fetch('/api/organize/stop', { method: 'POST', headers: { 'X-Requested-With': 'fetch' } });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     organizeBar.stopping = true;
-    setText($('organize-task-text'), '正在停止：处理完手上这个包就停…');
+    setTaskText($('organize-task-text'), '正在停止：处理完手上这个包就停…');
   } catch (err) {
     $('organize-task-stop').hidden = false;
-    setText($('organize-task-text'), `没能停止：${err.message}`);
+    setTaskText($('organize-task-text'), `没能停止：${err.message}`);
   }
 }
 

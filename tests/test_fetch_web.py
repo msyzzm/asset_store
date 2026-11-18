@@ -86,3 +86,25 @@ def test_cancel_and_retry(client, conn, writable):
     assert client.post(f"/api/downloads/{download_id}/retry", headers=HEADERS).status_code == 409
     assert client.post("/api/downloads/999/cancel", headers=HEADERS).status_code == 404
     assert client.post("/api/downloads/999/retry", headers=HEADERS).status_code == 404
+
+
+def test_a_finished_download_organized_away_says_so(client, settings, conn, asset_root):
+    from assetindex import scan_request
+    from assetindex.scanner import scan_root
+
+    scan_root(conn, "art", asset_root)
+    here = downloads.add(conn, "art", "https://example.org/a.zip")
+    away = downloads.add(conn, "art", "https://example.org/b.zip")
+    folder = downloads.add(conn, "art", "https://example.org/c.zip")
+    for row_id, path in ((here, "Audio/Battle_Theme.mp3"), (away, "_下载/b.zip"), (folder, "3D/Knight")):
+        conn.execute("UPDATE downloads SET status = 'done', path = ?, finished = 100 WHERE id = ?", (path, row_id))
+    conn.commit()
+
+    def gone():
+        return {i["id"]: i["gone"] for i in client.get("/api/downloads").json()["items"]}
+
+    assert gone() == {here: False, away: False, folder: False}  # no scan since: not known yet
+    scan_request.write_status(settings.data_dir, scan_request.ScanStatus(started=200, finished=300, ok=True))
+    assert gone() == {here: False, away: True, folder: False}
+    scan_request.write_status(settings.data_dir, scan_request.ScanStatus(started=200, finished=300, ok=False))
+    assert gone()[away] is False  # a scan cut short may have missed it

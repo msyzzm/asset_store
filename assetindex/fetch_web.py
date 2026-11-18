@@ -8,7 +8,7 @@ from typing import Annotated
 
 from fastapi import Body, Depends, FastAPI, HTTPException
 
-from assetindex import downloads, uploads
+from assetindex import downloads, scan_request, uploads
 from assetindex.config import Settings
 
 SWEEP_SECONDS = 60  # how often listing the downloads also drops abandoned uploads
@@ -22,9 +22,28 @@ def _progress(conn: sqlite3.Connection, row: dict, progress: dict) -> dict | Non
     return None
 
 
+def _in_index(conn: sqlite3.Connection, root: str, path: str) -> bool:
+    """A file at `path`, or anything under it (a folder pack)."""
+    return conn.execute(
+        "SELECT 1 FROM files WHERE root = ? AND (rel_path = ? OR (rel_path >= ? AND rel_path < ?)) LIMIT 1",
+        (root, path, f"{path}/", f"{path}0"),  # "0" sorts right after "/"
+    ).fetchone() is not None
+
+
+def _gone(conn: sqlite3.Connection, row: dict, scanned: float | None) -> bool:
+    """A finished download or upload no longer where it landed (organized away or
+    deleted). Only told after a scan that began later: before it, the index may not
+    have it yet."""
+    return bool(row["path"] and row["status"] in ("done", "duplicate") and scanned and row["finished"]
+                and row["finished"] < scanned and not _in_index(conn, row["root"], row["path"]))
+
+
 def download_state(conn: sqlite3.Connection, data_dir) -> dict:
     progress = downloads.read_progress(data_dir)
-    items = [{**row, "progress": _progress(conn, row, progress)} for row in downloads.recent(conn)]
+    last = scan_request.read_status(data_dir)
+    scanned = last.started if last.ok and not last.running else None  # a scan cut short may have missed it
+    items = [{**row, "progress": _progress(conn, row, progress), "gone": _gone(conn, row, scanned)}
+             for row in downloads.recent(conn)]
     return {"mount": downloads.read_mount(data_dir), "counts": downloads.counts(conn), "items": items}
 
 

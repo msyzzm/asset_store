@@ -207,6 +207,14 @@ def test_the_list_shows_how_far_an_upload_got(client):
 
     assert item["status"] == "uploading" and item["progress"] == {"done": 3, "total": 5, "speed": 0}
 
+    uploads.arriving(row["id"], 0, 1)  # half of file 0 written so far
+    try:
+        [item] = client.get("/api/downloads").json()["items"]
+        assert item["progress"]["done"] == 4
+    finally:
+        uploads.arrived(row["id"], 0)
+    assert client.get("/api/downloads").json()["items"][0]["progress"]["done"] == 3
+
 
 def test_an_abandoned_upload_fails_and_is_cleared(conn, settings, asset_root):
     upload_id = uploads.start(conn, settings, "art", {"folder": True, "name": "P",

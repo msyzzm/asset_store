@@ -39,9 +39,10 @@ def _open(target: Path):
     return target.open("wb")
 
 
-async def _receive(request: Request, target: Path, size: int) -> None:
+async def _receive(request: Request, target: Path, size: int, on_bytes: Callable[[int], None]) -> None:
     """Write the request body to `target`; it must be exactly `size` bytes. Nothing is
-    left behind when it is not, or when the sender goes away midway."""
+    left behind when it is not, or when the sender goes away midway. `on_bytes` hears
+    how much was written so far."""
     f = await run_in_threadpool(_open, target)
     received, pending = 0, []
     try:
@@ -53,6 +54,7 @@ async def _receive(request: Request, target: Path, size: int) -> None:
             if sum(map(len, pending)) >= WRITE_BYTES:
                 await run_in_threadpool(f.write, b"".join(pending))
                 pending = []
+                on_bytes(received)
         if pending:
             await run_in_threadpool(f.write, b"".join(pending))
         if received != size:
@@ -84,10 +86,12 @@ def add_upload_routes(app: FastAPI, settings: Settings, get_conn: Callable, page
         try:
             target, size = await run_in_threadpool(_call, uploads.part_target, conn, settings, upload_id, idx)
             try:
-                await _receive(request, target, size)
+                await _receive(request, target, size, lambda n: uploads.arriving(upload_id, idx, n))
             except BaseException:
                 uploads.clear_if_ended(conn, settings, upload_id)
                 raise
+            finally:
+                uploads.arrived(upload_id, idx)
             await run_in_threadpool(_call, uploads.part_done, conn, settings, upload_id, idx)
         finally:
             conn.close()

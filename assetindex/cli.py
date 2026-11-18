@@ -16,6 +16,7 @@ from assetindex.caption import CaptionClient
 from assetindex.archive_index import index_archives
 from assetindex.archive_previews import build_previews
 from assetindex.cache_prune import prune_thumbs
+from assetindex.categories import DOWNLOADS
 from assetindex.caption import load_config as load_caption_config
 from assetindex.check import run_checks
 from assetindex.config import Settings, load_settings
@@ -155,6 +156,7 @@ def _scan(only_root: str | None, retry_errors: bool = False) -> int:
                 # Only the roots scanned.
                 _embed(conn, replace(settings, roots=roots), retry_errors, should_stop, progress)
                 ok = all(results)
+                _auto_organize(conn, settings, [n for n, done in zip(roots, results) if done])
             except ScanStopped as err:
                 stopped = True
                 log.info("scan stopped from the web UI (%s); the rest waits for the next round", err)
@@ -166,6 +168,27 @@ def _scan(only_root: str | None, retry_errors: bool = False) -> int:
         log.error("%s; not starting another", err)
         return 3
     return 0 if ok or stopped else 1
+
+
+def _auto_organize(conn: sqlite3.Connection, settings: Settings, roots: list[str]) -> str | None:
+    """New packs in _下载 (downloads, uploads) get proposals without anyone starting an
+    analysis: proposals only, nothing moves until they are confirmed. Not when the model
+    is not set up or an analysis is already waiting. The root asked about, if any."""
+    data_dir = settings.data_dir
+    if not load_caption_config(data_dir).active or organize.is_requested(data_dir):
+        return None
+    try:
+        for root in roots:
+            organize.refresh_units(conn, root)
+            scope = caption_job.Scope(root=root, prefix=DOWNLOADS)
+            waiting = organize.never_asked(conn, scope)
+            if waiting:
+                organize.request_job(data_dir, scope)
+                log.info("%d new packs in %s:/%s: analysis requested", waiting, root, DOWNLOADS)
+                return root
+    except (OSError, sqlite3.Error):
+        log.exception("could not request the analysis of %s", DOWNLOADS)  # the scan itself went fine
+    return None
 
 
 def _settle_moves(conn: sqlite3.Connection, settings: Settings) -> list[str]:

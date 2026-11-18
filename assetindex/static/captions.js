@@ -98,6 +98,12 @@ function setText(node, text) {
   if (node.textContent !== text) node.textContent = text;
 }
 
+// A task card's text: cut to two lines there, the whole of it on hover
+function setTaskText(node, text) {
+  setText(node, text);
+  if (node.title !== text) node.title = text;
+}
+
 function showProgress(bar, s) {
   bar.hidden = !s.running;
   bar.max = Math.max(1, s.total);

@@ -34,6 +34,18 @@ MAX_PATH = 1000  # bytes of one file's path inside the folder
 MAX_DEPTH = 64
 IDLE_SECONDS = 3600  # nothing arrived for this long: the page was closed, the upload is dropped
 
+# Bytes of files still on their way, by (upload, file): the list shows a big file
+# filling up, not only whole files. This process only (the web server has one).
+_arriving: dict[tuple[int, int], int] = {}
+
+
+def arriving(upload_id: int, idx: int, received: int) -> None:
+    _arriving[(upload_id, idx)] = received
+
+
+def arrived(upload_id: int, idx: int) -> None:
+    _arriving.pop((upload_id, idx), None)
+
 
 class Refused(Exception):
     """The upload cannot do this now (HTTP 409)."""
@@ -225,4 +237,5 @@ def sweep(conn: sqlite3.Connection, settings: Settings, now: float | None = None
 def progress(conn: sqlite3.Connection, upload_id: int, total: int | None) -> dict:
     done = conn.execute("SELECT COALESCE(SUM(size), 0) FROM download_parts WHERE download_id = ? AND done = 1",
                         (upload_id,)).fetchone()[0]
-    return {"done": done, "total": total or 0, "speed": 0}
+    done += sum(n for (u, _), n in list(_arriving.items()) if u == upload_id)
+    return {"done": min(done, total or 0), "total": total or 0, "speed": 0}

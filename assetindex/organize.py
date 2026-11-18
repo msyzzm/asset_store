@@ -247,6 +247,14 @@ def to_classify(conn: sqlite3.Connection, scope: Scope) -> list[sqlite3.Row]:
     return [r for r in rows if not _is_note(r) and not r["path"].startswith(aside)]
 
 
+def never_asked(conn: sqlite3.Connection, scope: Scope) -> int:
+    """Packs in scope waiting for their first proposal; ones the model failed on wait
+    for someone to start an analysis."""
+    where, params = _in_scope(scope)
+    failed = {r[0] for r in conn.execute(f"SELECT path FROM organize_units WHERE {where} AND error IS NOT NULL", params)}
+    return sum(1 for r in to_classify(conn, replace(scope, redo=False)) if r["path"] not in failed)
+
+
 def forget_note_proposals(conn: sqlite3.Connection, root: str) -> int:
     """Notes (a password, a read-me) proposed before they were left out: they stay where
     they are, so their proposal goes. Decided ones are left as they are."""
