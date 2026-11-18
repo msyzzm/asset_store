@@ -337,7 +337,7 @@ function setFilter(key, value) {
 function setView(view) {
   state.view = view;
   if (view === 'packs') state.prefix = '';  // back to searching, out of the pack being browsed
-  search();
+  search(true);  // a page of its own: the back button returns to the previous one
 }
 
 async function load(reset) {
@@ -378,7 +378,9 @@ async function load(reset) {
   $('more').hidden = state.offset >= body.total;
 }
 
-function syncUrl() {
+// push: a new history entry (changing view, opening a folder); otherwise the current one
+// is rewritten (typing, filters), so back does not step through every keystroke.
+function syncUrl(push) {
   const params = new URLSearchParams();
   if (state.q) params.set('q', state.q);
   if (state.kind) params.set('kind', state.kind);
@@ -388,15 +390,17 @@ function syncUrl() {
   if (state.angle) params.set('angle', state.angle);
   if (state.style) params.set('style', state.style);
   const query = params.toString();
-  history.replaceState(null, '', query ? `?${query}` : location.pathname);
+  const url = query ? `?${query}` : location.pathname;
+  if (push && url !== (location.search || location.pathname)) history.pushState(null, '', url);
+  else history.replaceState(null, '', url);
 }
 
-function search() {
+function search(push = false) {
   state.q = $('q').value.trim();
   // Hide "more" until the new results land, or a click would page the new query onto the old grid.
   state.offset = 0;
   $('more').hidden = true;
-  syncUrl();
+  syncUrl(push);
   load(true);
 }
 
@@ -807,7 +811,7 @@ async function stopScan() {
   }
 }
 
-function init() {
+function readUrl() {
   const params = new URLSearchParams(location.search);
   $('q').value = params.get('q') ?? '';
   state.kind = params.get('kind') ?? '';
@@ -816,6 +820,21 @@ function init() {
   state.cat = params.get('cat') ?? '';
   state.angle = params.get('angle') ?? '';
   state.style = params.get('style') ?? '';
+}
+
+// Back/forward: show the page that history entry stands for, without writing the URL again.
+function onHistory() {
+  readUrl();
+  state.q = $('q').value.trim();
+  state.offset = 0;
+  $('more').hidden = true;
+  $('kinds').querySelectorAll('.kind').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.kind === state.kind)));
+  load(true);
+}
+
+function init() {
+  readUrl();
+  window.addEventListener('popstate', onHistory);
   $('f-cat').addEventListener('change', (e) => setFilter('cat', e.target.value));
   $('f-view').addEventListener('change', (e) => setFilter('angle', e.target.value));
   $('f-style').addEventListener('change', (e) => setFilter('style', e.target.value));
