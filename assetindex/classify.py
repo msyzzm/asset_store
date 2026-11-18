@@ -35,6 +35,7 @@ CELL_BOX = (160, 160)
 PICTURE_BOX = (512, 512)
 ANSWER_TOKENS = 1500  # 300 was cut short when "auto:fast" landed on a model that reasons first
 FLAT_OBJECT = re.compile(r"\{[^{}]*\}")
+ANSWER_SHOWN = 100  # chars of an unusable answer kept in its error
 CAPTION_TOKENS = 300  # extra room when the answer also describes the picture (Chinese: ~1.5 tokens a character)
 ITEM_PROBLEM = 422  # an answer we can't use counts against this unit, like a refused picture
 _BAD_NAME_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f\x7f]')
@@ -385,12 +386,18 @@ def prepare_question(conn: sqlite3.Connection, settings: Settings, root: str, pa
     )
 
 
+def answer_shown(answer: str) -> str:
+    """An unusable answer as its error shows it: the end, where a model that thinks
+    aloud either gave up or was cut off."""
+    return answer if len(answer) <= ANSWER_SHOWN else "…" + answer[-ANSWER_SHOWN:]
+
+
 def read_answer(conn: sqlite3.Connection, model: str, question: Question, answer: str) -> Proposal:
     """The proposal in the model's answer. Raises EmbedError (an item problem) if unusable."""
     try:
         proposal = parse_answer(answer)
     except ValueError as err:
-        raise EmbedError(f"{err}：{answer[:100]}", ITEM_PROBLEM) from None
+        raise EmbedError(f"{err}：{answer_shown(answer)}", ITEM_PROBLEM) from None
     if question.card is not None and proposal.caption:
         save_caption(conn, question.card, model, proposal.caption, None)
     name = clean_name(proposal.name, question.original, question.is_dir)

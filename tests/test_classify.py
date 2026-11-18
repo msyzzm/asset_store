@@ -88,6 +88,21 @@ def test_a_model_that_thinks_aloud_first_is_read_from_its_last_json():
     assert build_prompt("路径：x").rstrip().endswith("JSON。")  # reminded last, after the facts
 
 
+def test_an_unusable_long_answer_is_shown_by_its_end():
+    """Live 2026-11-17: an .hdr failed and its error showed only how the thinking began."""
+    said = "好的，我现在需要处理这个素材包的分类问题。" + "想" * 500 + "所以应该放贴图"
+
+    shown = classify.answer_shown(said)
+
+    assert shown.startswith("…") and shown.endswith("所以应该放贴图") and len(shown) <= 101
+    assert classify.answer_shown("短回答") == "短回答"
+
+
+def test_hdr_skies_have_a_category():
+    """Without one a reasoning model went back and forth until it ran out of room."""
+    assert "HDR" in dict(classify.CATEGORIES)["01_2D/Textures"]
+
+
 @pytest.mark.parametrize("answer", ["no json here", "{broken", "[1, 2]"])
 def test_unusable_answers_raise(answer):
     with pytest.raises(ValueError):
