@@ -125,8 +125,9 @@ def option(uid: str, key: str) -> dict:
             "resolve": f"{NAME}:{uid}:{key}"}
 
 
-def resolve(uid: str, fmt: str, title: str) -> tuple[str, str]:
-    """A fresh download link of the model in `fmt`, and the file name to save it as."""
+def resolve(uid: str, fmt: str, title: str) -> tuple[str, str, dict]:
+    """A fresh download link of the model in `fmt`, the file name to save it as, and
+    no headers (the link carries its own signature)."""
     token = ext_keys.get(NAME)
     if not token:
         raise external.NeedsKey("没填 Sketchfab 的 API token（「外部素材」页的「网站账号」）")
@@ -138,4 +139,4 @@ def resolve(uid: str, fmt: str, title: str) -> tuple[str, str]:
     path = urlsplit(url).path.rpartition("/")[2]
     suffix = path.rpartition(".")[2].lower() if "." in path else ""
     ext = f".{suffix}" if suffix.isalnum() and len(suffix) <= 6 else FORMATS[fmt][1]
-    return url, safe_name(f"{title}{ext}", 0)
+    return url, safe_name(f"{title}{ext}", 0), {}

@@ -81,10 +81,14 @@ class Aria2:
             raise Aria2Error(str(answer["error"].get("message", answer["error"])))
         return answer.get("result")
 
-    def add(self, url: str, folder: Path, user_agent: str, md5: str | None = None, out: str | None = None) -> str:
+    def add(self, url: str, folder: Path, user_agent: str, md5: str | None = None, out: str | None = None,
+            headers: dict[str, str] | None = None) -> str:
         """Start downloading `url` into `folder`, as `out` (a path inside it, folders
-        made as needed) or else under the name the response gives. Returns the gid."""
+        made as needed) or else under the name the response gives, sending `headers`
+        (a site's key). Returns the gid."""
         options = {"dir": str(folder), "user-agent": user_agent}
+        if headers:
+            options["header"] = [f"{k}: {v}" for k, v in headers.items()]
         if md5:
             options["checksum"] = f"md5={md5}"
         if out:

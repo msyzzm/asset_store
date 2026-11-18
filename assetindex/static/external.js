@@ -1,6 +1,6 @@
 'use strict';
 
-// 外部素材 page: search Poly Haven, ambientCG, OpenGameArt, itch.io, Sketchfab and Freesound through the server, look at an asset,
+// 外部素材 page: search the free asset sites (assetindex/external_web.py) through the server, look at an asset,
 // queue one of its downloads (the server asks the site for the link).
 
 const HEADERS = { 'X-Requested-With': 'fetch', 'Content-Type': 'application/json' };
@@ -119,9 +119,11 @@ async function loadMore(name, button) {
     if (seq !== state.seq) return;  // the page shows another search now
     const result = body.sources[name];
     if (result.error) throw new Error(result.error);  // keep what is shown, and the button to try again
+    // an empty page: the end, whatever the total said (rows skipped, or a site that stops serving)
+    const shown = result.items.length ? result : { ...kept.result, total: kept.items.length, more: false };
     kept.items = [...kept.items, ...result.items];
-    kept.result = result;
-    $(`x-${name}`).replaceWith(renderSource(name, result));
+    kept.result = shown;
+    $(`x-${name}`).replaceWith(renderSource(name, shown));
   } catch (err) {
     button.disabled = false;
     button.textContent = `加载失败：${err.message}（点这里重试）`;
@@ -185,6 +187,7 @@ async function openDetail(source, id) {
     ...metaRow('类型', d.kind),
     ...metaRow('授权', d.license && (d.license.startsWith('CC0') ? `${d.license}（可商用，不用署名）` : `${d.license}（用前看原页面的授权和署名要求）`)),
     ...metaRow('作者', d.authors),
+    ...metaRow('署名', d.attribution),
     ...metaRow('说明', d.description),
     ...metaRow('标签', d.tags.join('、')),
     ...metaRow('库里已有', d.in_library),
@@ -215,7 +218,7 @@ async function saveKeys(event) {
   event.preventDefault();
   const form = $('xk-form');
   const body = {};
-  for (const site of ['sketchfab', 'freesound']) {
+  for (const site of ['sketchfab', 'freesound', 'polypizza']) {
     if (form.elements[`clear-${site}`].checked) body[site] = '';
     else if (form.elements[site].value.trim()) body[site] = form.elements[site].value.trim();
   }

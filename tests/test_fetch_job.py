@@ -19,12 +19,14 @@ class FakeAria2:
         self.jobs: dict[str, dict] = {}
         self.added: list[tuple[str, Path, str | None]] = []
         self.forgotten: list[str] = []
+        self.headers: list[dict | None] = []
         self.refuse = False
 
-    def add(self, url, folder, user_agent, md5=None, out=None):
+    def add(self, url, folder, user_agent, md5=None, out=None, headers=None):
         if self.refuse:
             raise Aria2Error("bad uri")
         gid = f"g{len(self.added)}"
+        self.headers.append(headers)
         self.added.append((url, folder, md5) if out is None else (url, folder, md5, out))
         self.jobs[gid] = {"status": "active", "totalLength": "0", "completedLength": "0", "downloadSpeed": "0",
                           "folder": folder, "out": out}
@@ -481,7 +483,7 @@ def test_a_link_that_expires_is_asked_for_at_each_start_under_the_name_given(con
 
     def resolve(spec, title):
         asked.append((spec, title))
-        return f"https://cdn.example.org/{len(asked)}.glb?sig=x", "Crate GLB.glb"
+        return f"https://cdn.example.org/{len(asked)}.glb?sig=x", "Crate GLB.glb", {}
 
     clock = [100.0]
     download_id = _expiring(conn)
@@ -498,7 +500,7 @@ def test_a_link_that_expires_is_asked_for_at_each_start_under_the_name_given(con
 
 
 def test_a_link_the_site_will_not_give_fails_the_download_and_retry_asks_again(conn, settings, rpc):
-    answers = [ValueError("网站不认这个 key（HTTP 401）"), ("https://cdn.example.org/1.glb", "Crate GLB.glb")]
+    answers = [ValueError("网站不认这个 key（HTTP 401）"), ("https://cdn.example.org/1.glb", "Crate GLB.glb", {})]
 
     def resolve(spec, title):
         answer = answers.pop(0)
@@ -536,7 +538,7 @@ def test_a_site_down_while_asked_for_a_link_leaves_the_download_waiting_and_asks
         asked.append(clock[0])
         if len(asked) == 1:
             raise _Busy("连不上网站：TimeoutError")
-        return "https://cdn.example.org/1.glb", "Crate GLB.glb"
+        return "https://cdn.example.org/1.glb", "Crate GLB.glb", {}
 
     download_id = _expiring(conn)
     fetcher = _fetcher(conn, settings, rpc, resolve=resolve)
@@ -555,7 +557,7 @@ def test_a_link_asked_for_lately_serves_again_while_aria2_does_not_answer(conn, 
 
     def resolve(spec, title):
         asked.append(spec)
-        return "https://cdn.example.org/1.glb", "Crate GLB.glb"
+        return "https://cdn.example.org/1.glb", "Crate GLB.glb", {}
 
     def unreachable(*args, **kwargs):
         raise Aria2Unreachable("starting")
@@ -574,7 +576,7 @@ def test_a_download_whose_link_expired_midway_gets_a_fresh_one_a_few_times_then_
     links = iter(f"https://cdn.example.org/{n}.glb" for n in range(10))
     clock = [100.0]
     download_id = _expiring(conn)
-    fetcher = _fetcher(conn, settings, rpc, resolve=lambda spec, title: (next(links), "Crate GLB.glb"))
+    fetcher = _fetcher(conn, settings, rpc, resolve=lambda spec, title: (next(links), "Crate GLB.glb", {}))
     fetcher.now = lambda: clock[0]
     fetcher.tick()
 
@@ -586,3 +588,14 @@ def test_a_download_whose_link_expired_midway_gets_a_fresh_one_a_few_times_then_
     row = downloads.get(conn, download_id)
     assert [a[0] for a in rpc.added] == [f"https://cdn.example.org/{n}.glb" for n in range(4)]
     assert row["status"] == "failed"
+
+
+def test_a_site_key_goes_to_aria2_as_a_header_and_never_in_the_queue(conn, settings, rpc):
+    download_id = downloads.add(conn, "art", "https://poly.pizza/m/abc", title="Tree GLB", source="polypizza",
+                                resolve="polypizza:abc:glb")
+
+    _fetcher(conn, settings, rpc, resolve=lambda spec, title: ("https://static.poly.pizza/x.glb", "Tree GLB.glb",
+                                                                {"x-auth-token": "secret"})).tick()
+
+    assert rpc.headers == [{"x-auth-token": "secret"}] and rpc.added[0][3] == "Tree GLB.glb"
+    assert "secret" not in str(dict(conn.execute("SELECT * FROM downloads WHERE id = ?", (download_id,)).fetchone()))

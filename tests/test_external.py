@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from assetindex import (downloads, ext_ambientcg, ext_freesound, ext_itch, ext_keys, ext_opengameart, ext_polyhaven,
-                        ext_sketchfab, external)
+from assetindex import (downloads, ext_ambientcg, ext_freesound, ext_itch, ext_keys, ext_opengameart, ext_openverse,
+                        ext_polyhaven, ext_polypizza, ext_sketchfab, external)
 from assetindex.fetch_job import resolve_link
 from assetindex.scanner import scan_root
 from assetindex.web import create_app
@@ -28,6 +28,9 @@ def _fixture(name: str):
 OGA_ASSET = "zelda-like-tilesets-and-sprites"
 MODEL_UID = "f39dc69dbbfe49c68045bec2c16e03ba"
 SOUND = "398009"
+PIZZA = "4qjS9tFhsJg"
+IMAGE = "fbf921c3-f8e8-4b30-a892-ee3924b9f229"
+SONG = "135f2d4a-ad06-47bc-b426-f3a35fb1c604"
 SIGNED = "https://sketchfab-prod-media.s3.amazonaws.com/archives/x/file.glb?X-Amz-Signature=abc"
 EMPTY_FEED = '<?xml version="1.0" encoding="UTF-8" ?><rss version="2.0"><channel><title>x</title></channel></rss>'
 
@@ -41,7 +44,8 @@ class FakeSites:
         self.down: set[str] = set()
 
     def _site(self, url: str) -> str:
-        site = next((s for s in ("polyhaven", "opengameart", "itch.io", "sketchfab", "freesound") if s in url), "ambientcg")
+        site = next((s for s in ("polyhaven", "opengameart", "itch.io", "sketchfab", "freesound", "poly.pizza", "openverse")
+                     if s in url), "ambientcg")
         if site in self.down:
             raise external.SourceError("连不上网站：TimeoutError")
         return site
@@ -69,6 +73,19 @@ class FakeSites:
                 return _fixture("sketchfab_model.json")
             if "/v3/search?" in url:
                 return _fixture("sketchfab_search.json")
+            raise external.SourceError("网站返回 HTTP 404")
+        if site == "poly.pizza":
+            assert headers == {"x-auth-token": "pp-key"}
+            if "/search" in url:
+                return _fixture("polypizza_search.json")
+            if url.endswith(f"/model/{PIZZA}"):
+                return _fixture("polypizza_model.json")
+            raise external.SourceError("网站返回 HTTP 404")
+        if site == "openverse":
+            if "/images/?" in url:
+                return _fixture("openverse_images.json")
+            if "/audio/?" in url:
+                return _fixture("openverse_audio.json")
             raise external.SourceError("网站返回 HTTP 404")
         if site == "freesound":
             assert headers == {"Authorization": "Token fs-key"}
@@ -105,7 +122,8 @@ def sites(monkeypatch):
     for module, names in ((ext_polyhaven, ("_assets", "_details")), (ext_ambientcg, ("_searches", "_details")),
                           (ext_opengameart, ("_searches", "_details")), (ext_itch, ("_feeds", "_seen")),
                           (ext_sketchfab, ("_searches", "_details", "_archives")),
-                          (ext_freesound, ("_searches", "_details"))):
+                          (ext_freesound, ("_searches", "_details")), (ext_polypizza, ("_searches", "_details")),
+                          (ext_openverse.IMAGES, ("_searches", "_seen")), (ext_openverse.AUDIO, ("_searches", "_seen"))):
         for name in names:
             monkeypatch.setattr(module, name, external.TtlCache(3600))
     return fake
@@ -462,16 +480,16 @@ def test_itch_tells_the_offset_of_its_next_page(client):
 @pytest.fixture
 def keys(client):
     assert client.put("/api/external/keys", json={"sketchfab": "skf-token", "freesound": " fs-key "},
-                      headers=HEADERS).json() == {"sketchfab": True, "freesound": True}
+                      headers=HEADERS).json() == {"sketchfab": True, "freesound": True, "polypizza": False}
 
 
 def test_keys_are_kept_owner_only_and_the_page_only_learns_whether_they_are_set(client, settings, keys):
-    assert client.get("/api/external/keys").json() == {"sketchfab": True, "freesound": True}
+    assert client.get("/api/external/keys").json() == {"sketchfab": True, "freesound": True, "polypizza": False}
     stored = json.loads((settings.data_dir / ext_keys.FILE_NAME).read_text(encoding="utf-8"))
     assert stored == {"sketchfab": "skf-token", "freesound": "fs-key"}
 
     client.put("/api/external/keys", json={"freesound": ""}, headers=HEADERS)
-    assert client.get("/api/external/keys").json() == {"sketchfab": True, "freesound": False}
+    assert client.get("/api/external/keys").json() == {"sketchfab": True, "freesound": False, "polypizza": False}
 
 
 @pytest.mark.parametrize("body", [{"other": "x"}, {"freesound": "a b"}, {"freesound": 5}, {"sketchfab": "钥匙"}])
@@ -520,9 +538,9 @@ def test_sketchfab_download_needs_the_token_and_keeps_how_to_ask_for_the_link(cl
 
 
 def test_the_fetcher_gets_a_fresh_sketchfab_link_with_the_token(client, sites, keys):
-    url, name = resolve_link(f"sketchfab:{MODEL_UID}:glb", "The Sword Of Victory GLB")
+    url, name, headers = resolve_link(f"sketchfab:{MODEL_UID}:glb", "The Sword Of Victory GLB")
 
-    assert (url, name) == (SIGNED, "The Sword Of Victory GLB.glb")
+    assert (url, name, headers) == (SIGNED, "The Sword Of Victory GLB.glb", {})
     with pytest.raises(external.SourceError, match="gltf"):
         resolve_link(f"sketchfab:{MODEL_UID}:gltf", "x")  # a format the site did not give
 
@@ -574,3 +592,126 @@ def test_a_freesound_preview_downloads_named_after_the_sound(client, conn, keys,
 def test_freesound_licenses_read_plainly():
     assert ext_freesound._license("http://creativecommons.org/licenses/by-nc/3.0/") == "CC-BY-NC（署名，不可商用）"
     assert ext_freesound._license("http://creativecommons.org/publicdomain/zero/1.0/") == "CC0"
+
+
+# ---- Poly Pizza ----
+
+
+@pytest.fixture
+def pizza_key(client):
+    client.put("/api/external/keys", json={"polypizza": "pp-key"}, headers=HEADERS)
+
+
+def test_poly_pizza_needs_its_key_to_search(client):
+    pp = client.get("/api/external/search", params={"q": "car", "source": "polypizza"}).json()["sources"]["polypizza"]
+
+    assert "API key" in pp["error"]
+
+
+def test_poly_pizza_searches_with_its_key_and_lists_cc0_models_without_a_keyword(client, sites, pizza_key):
+    pp = client.get("/api/external/search", params={"q": "police car", "source": "polypizza"}).json()["sources"]["polypizza"]
+    client.get("/api/external/search", params={"source": "polypizza"})
+
+    assert (pp["total"], pp["next"], len(pp["items"])) == (77, 24, 2)
+    assert pp["items"][0]["title"] == "Police Car" and pp["items"][0]["tags"][:2] == ["Transport", "Car"]
+    assert any("/search/police%20car?" in c and "Limit=24" in c and "Page=0" in c for c in sites.calls)
+    assert any(c.endswith("/search?Limit=24&Page=0&License=1") for c in sites.calls)
+
+
+def test_a_cc_by_poly_pizza_model_shows_its_credit_text(client, pizza_key):
+    body = client.get(f"/api/external/polypizza/{PIZZA}").json()
+
+    assert body["license"] == "CC-BY 3.0" and body["authors"] == "Muhammad Reyhan"
+    assert body["attribution"].startswith("Mitsubishi L200 by Muhammad Reyhan") and "2899 个三角面" in body["description"]
+    assert body["options"] == [{"key": "glb", "label": "GLB（单个文件，带贴图）", "size": None, "ready": True}]
+
+
+def test_a_poly_pizza_download_keeps_its_key_out_of_the_queue(client, conn, sites, pizza_key, writable):
+    row = client.post(f"/api/external/polypizza/{PIZZA}/download", json={"option": "glb"}, headers=HEADERS).json()
+
+    stored = dict(conn.execute("SELECT * FROM downloads WHERE id = ?", (row["id"],)).fetchone())
+    assert stored["resolve"] == f"polypizza:{PIZZA}:glb" and "pp-key" not in str(stored)
+    url, name, headers = resolve_link(stored["resolve"], stored["title"])
+    assert (url, name, headers) == ("https://static.poly.pizza/ecae441a-cba8-4dd6-9795-207a72d7e88e.glb",
+                                    "Mitsubishi L200 GLB.glb", {"x-auth-token": "pp-key"})
+
+
+# ---- Openverse ----
+
+
+def test_openverse_asks_nothing_without_a_keyword(client, sites):
+    body = client.get("/api/external/search", params={"source": "openverse_images"}).json()
+
+    assert "关键词" in body["sources"]["openverse_images"]["error"] and not any("openverse" in c for c in sites.calls)
+
+
+def test_openverse_searches_images_and_audio_as_two_sources(client, sites):
+    body = client.get("/api/external/search", params={"q": "castle"}).json()["sources"]
+
+    images, audio = body["openverse_images"], body["openverse_audio"]
+    assert (images["total"], images["next"], len(images["items"])) == (240, 20, 3)
+    assert images["items"][0]["thumb"].endswith(f"/images/{IMAGE}/thumb/") and audio["items"][0]["kind"] == "音频"
+    assert audio["items"][2]["title"] == "King Gizzard & the Lizard Wizard - Crumbling Castle"  # its "&amp;" read
+    assert any("page_size=20" in c and "page=1" in c for c in sites.calls)
+
+
+def test_an_openverse_detail_comes_from_the_search_with_license_and_credit(client, sites):
+    client.get("/api/external/search", params={"q": "castle", "source": "openverse_images"})
+    calls = len(sites.calls)
+
+    body = client.get(f"/api/external/openverse_images/{IMAGE}").json()
+
+    assert len(sites.calls) == calls  # no request of its small allowance
+    assert body["license"] == "CC BY-NC-ND 2.0（不可商用）" and body["attribution"].startswith('"castle" by barnyz')
+    assert "1024×683" in body["description"] and body["options"][0]["key"] == "original"
+
+
+def test_an_openverse_file_downloads_named_after_the_item(client, conn, writable):
+    client.get("/api/external/search", params={"q": "castle", "source": "openverse_audio"})
+
+    row = client.post(f"/api/external/openverse_audio/{SONG}/download", json={"option": "original"}, headers=HEADERS).json()
+
+    parts = downloads.parts(conn, row["id"])
+    assert [(p["url"], p["out"]) for p in parts] == [("https://prod-1.storage.jamendo.com/?trackid=361990&format=mp32",
+                                                      "Castles.mp3")]
+
+
+def test_openverse_out_of_allowance_reads_as_such(client, monkeypatch):
+    def busy(url, headers=None):
+        raise external.SiteBusy("网站忙（HTTP 429）")
+
+    monkeypatch.setattr(external, "get_json", busy)
+
+    images = client.get("/api/external/search", params={"q": "x", "source": "openverse_images"}).json()["sources"]
+    assert "每天 200 次" in images["openverse_images"]["error"]
+
+
+def test_openverse_licenses_read_plainly():
+    assert ext_openverse._license({"license": "cc0", "license_version": "1.0"}) == "CC0"
+    assert ext_openverse._license({"license": "by-sa", "license_version": "4.0"}) == "CC BY-SA 4.0"
+    assert ext_openverse._license({"license": "pdm"}) == "公有领域"
+
+
+def test_openverse_past_its_last_page_is_empty_but_a_first_page_refused_is_an_error(client, monkeypatch):
+    def refuse(url, headers=None):
+        raise external.SourceError("网站返回 HTTP 400")
+
+    monkeypatch.setattr(external, "get_json", refuse)
+
+    deep = client.get("/api/external/search", params={"q": "cat", "source": "openverse_images", "offset": 240}).json()
+    first = client.get("/api/external/search", params={"q": "cat", "source": "openverse_images"}).json()
+
+    assert deep["sources"]["openverse_images"]["items"] == [] and deep["sources"]["openverse_images"]["error"] is None
+    assert "HTTP 400" in first["sources"]["openverse_images"]["error"]
+
+
+def test_a_poly_pizza_result_without_its_file_link_is_asked_for_in_full(client, sites, pizza_key, monkeypatch):
+    raw = _fixture("polypizza_search.json")
+    del raw["results"][1]["Download"]
+    real = sites.__call__
+    monkeypatch.setattr(external, "get_json", lambda url, headers=None: raw if "/search" in url else real(url, headers))
+    client.get("/api/external/search", params={"q": "car", "source": "polypizza"})
+
+    body = client.get(f"/api/external/polypizza/{PIZZA}").json()
+
+    assert body["options"] and any(c.endswith(f"/model/{PIZZA}") for c in sites.calls)

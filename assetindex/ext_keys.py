@@ -1,6 +1,6 @@
-"""The keys of sites that need one (a Sketchfab API token, a Freesound API key), set on
+"""The keys of sites that need one (a Sketchfab API token, Freesound and Poly Pizza API keys), set on
 the 外部素材 page and kept owner-only in the data dir (external.keys). The web server
-reads them to search; the fetcher reads the Sketchfab token to ask for download links.
+reads them to search; the fetcher reads them to download (Sketchfab links, Poly Pizza files).
 The page only ever learns whether a key is set."""
 
 import json
@@ -9,7 +9,7 @@ from pathlib import Path
 from assetindex.embedding import KEY_CHARS, MAX_KEY_LENGTH, save_private_json
 
 FILE_NAME = "external.keys"
-SITES = ("sketchfab", "freesound")
+SITES = ("sketchfab", "freesound", "polypizza")
 
 _data_dir: Path | None = None
 

@@ -371,7 +371,7 @@ def _fetch_watch() -> int:
     if binary is None:
         log.error("aria2c not found: downloads cannot run (rebuild the image)")
     secret = aria2.new_secret()
-    ext_keys.use(settings.data_dir)  # the Sketchfab token, to ask for its download links
+    ext_keys.use(settings.data_dir)  # sites' keys: Sketchfab links, Poly Pizza files
     process = aria2.start_daemon(binary, secret) if binary else None
     conn = connect(settings.db_path)
     fetcher = fetch_job.Fetcher(

@@ -1,5 +1,5 @@
-"""Routes for the 外部素材 page: search Poly Haven, ambientCG, OpenGameArt, itch.io, Sketchfab
-and Freesound, set the keys the last two need, look at one asset,
+"""Routes for the 外部素材 page: search Poly Haven, ambientCG, OpenGameArt, itch.io, Sketchfab,
+Freesound, Poly Pizza and Openverse, set the keys some need, look at one asset,
 and queue one of its downloads. The server asks the site what to download (the page
 only names the asset and the option), so the queue only ever gets the site's own links."""
 
@@ -12,14 +12,15 @@ from typing import Annotated
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query
 
-from assetindex import (downloads, ext_ambientcg, ext_freesound, ext_itch, ext_keys, ext_opengameart, ext_polyhaven,
-                        ext_sketchfab, external)
+from assetindex import (downloads, ext_ambientcg, ext_freesound, ext_itch, ext_keys, ext_opengameart, ext_openverse,
+                        ext_polyhaven, ext_polypizza, ext_sketchfab, external)
 from assetindex.config import Settings
 from assetindex.fetch_web import writable_root
 
 log = logging.getLogger(__name__)
 
-SOURCES = {m.NAME: m for m in (ext_polyhaven, ext_ambientcg, ext_opengameart, ext_itch, ext_sketchfab, ext_freesound)}
+SOURCES = {m.NAME: m for m in (ext_polyhaven, ext_ambientcg, ext_opengameart, ext_itch, ext_sketchfab, ext_freesound,
+                                ext_polypizza, ext_openverse.IMAGES, ext_openverse.AUDIO)}
 MAX_QUERY = 200
 MAX_OFFSET = 10_000
 _ASSET_ID = re.compile(r"[A-Za-z0-9_.-]{1,100}")

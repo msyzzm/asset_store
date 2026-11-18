@@ -1,0 +1,48 @@
+{
+ "_note": "from the examples in poly.pizza/apispec/v1.1.yaml (no key to record a real answer)",
+ "total": 77,
+ "results": [
+  {
+   "ID": "BwwnUrWGmV",
+   "Title": "Police Car",
+   "Attribution": "Police Car by Quaternius, https://poly.pizza/m/BwwnUrWGmV. Licence at https://creativecommons.org/publicdomain/zero/1.0/",
+   "Thumbnail": "https://static.poly.pizza/179e43ce-b9e0-40cf-8b99-641693d3207e.webp",
+   "Download": "https://static.poly.pizza/179e43ce-b9e0-40cf-8b99-641693d3207e.glb",
+   "Tri Count": 2370,
+   "Creator": {
+    "Username": "Quaternius",
+    "DPURL": ""
+   },
+   "Category": "Transport",
+   "Tags": [
+    "Car",
+    "Vehicle",
+    "Transportation",
+    "Police Car"
+   ],
+   "Licence": "CC0 1.0",
+   "Animated": false
+  },
+  {
+   "ID": "4qjS9tFhsJg",
+   "Title": "Mitsubishi L200",
+   "Description": "L200 / Triton 3rd Generation\nPickup - Double cabin - offroad",
+   "Attribution": "Mitsubishi L200 by Muhammad Reyhan, https://poly.pizza/m/4qjS9tFhsJg. Licence at https://creativecommons.org/licenses/by/3.0",
+   "Thumbnail": "https://static.poly.pizza/ecae441a-cba8-4dd6-9795-207a72d7e88e.webp",
+   "Download": "https://static.poly.pizza/ecae441a-cba8-4dd6-9795-207a72d7e88e.glb",
+   "Tri Count": 2899,
+   "Creator": {
+    "Username": "Muhammad Reyhan",
+    "DPURL": ""
+   },
+   "Category": "Transport",
+   "Tags": [
+    "car",
+    "truck",
+    "ute"
+   ],
+   "Licence": "CC-BY 3.0",
+   "Animated": false
+  }
+ ]
+}
