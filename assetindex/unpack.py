@@ -14,6 +14,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,6 +22,7 @@ from pathlib import Path
 import py7zr
 
 from assetindex import verify
+from assetindex.archives import ZIP_UTF8_FLAG
 from assetindex.categories import DUPLICATES, TO_DELETE
 from assetindex.organize_apply import _taken, move_no_replace
 from assetindex.organize_move import Problem
@@ -192,6 +194,28 @@ def _unpacked_into(tmp: Path, src: Path, password: str, expected: tuple[int, int
     return top[0] if len(top) == 1 and top[0].is_dir() else tmp
 
 
+def _has_gbk_names(src: Path) -> bool:
+    """Names not flagged UTF-8 and not plain ASCII (GBK, from Windows zippers): 7zz on Linux
+    writes them to disk as the raw bytes, garbled (2026-11-17, Space Creator Pro)."""
+    try:
+        with zipfile.ZipFile(src) as zf:
+            return any(_is_gbk(i) for i in zf.infolist())
+    except (zipfile.BadZipFile, OSError):
+        return False  # 7zz may still read it, and says so if not
+
+
+def _is_gbk(info: zipfile.ZipInfo) -> bool:
+    """Not flagged UTF-8 and not UTF-8 bytes either (macOS zippers write UTF-8 unflagged:
+    those land on disk right)."""
+    if info.flag_bits & ZIP_UTF8_FLAG or info.filename.isascii():
+        return False
+    try:
+        info.filename.encode("cp437").decode("utf-8")
+    except UnicodeError:
+        return True
+    return False
+
+
 def unpack_one(
     base: Path, rel: str, password: str, companions: list[str],
     move: Mover = move_no_replace, extract=None, free=free_bytes,
@@ -208,6 +232,8 @@ def unpack_one(
     suffix = src.suffix.lower()
     if suffix not in (".rar", ".zip", ".7z"):
         raise UnpackError("只解 7z、rar、zip")
+    if suffix == ".zip" and _has_gbk_names(src):
+        raise UnpackError("zip 里的中文文件名不是 UTF-8，7-Zip 会解成乱码，没解")
     # 7-Zip for everything when it is there (fast, and the only one for rar and zip);
     # py7zr, slow on big solid packs, only for 7z without it.
     by_7zz = suffix != ".7z" or verify.sevenzip() is not None

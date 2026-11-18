@@ -258,10 +258,30 @@ def test_every_member_failing_means_a_wrong_password(rars, monkeypatch):
 
 
 # A zip and a 7z of one pack (Space Creator Pro): other top folders, the zip holding more,
-# each with another member damaged.
+# each with another member damaged. The zip's names are GBK without the UTF-8 flag, as
+# Windows zippers write them: 7zz on Linux puts those bytes on disk as they are, under
+# names it does not print, so the zip is read with zipfile.
 ZIP_FILES = {"太空Pack/Pack/Content/a.uasset": b"a" * 10, "太空Pack/Pack/Content/b.uasset": b"bb",
-             "太空Pack/Pack/Content/c.uasset": b"ccc"}
+             "太空Pack/Pack/Content/c.uasset": b"ccc", "太空Pack/Pack/Content/贴图.uasset": b"dddd"}
 SEVEN_FILES = {"Pack/Pack/Content/a.uasset": b"a" * 10, "Pack/Pack/Content/b.uasset": b"bb"}
+
+
+def make_gbk_zip(path, files, bad=None):
+    """A stored zip of `files` named in GBK bytes, UTF-8 flag off; `bad` has a byte flipped."""
+    placeholders = {name: "".join("_" * len(ch.encode("gbk")) if not ch.isascii() else ch for ch in name)
+                    for name in files}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as z:
+        for name, data in files.items():
+            z.writestr(placeholders[name], data)
+    raw = path.read_bytes()
+    for name, placeholder in placeholders.items():
+        raw = raw.replace(placeholder.encode(), name.encode("gbk"))
+    if bad:
+        raw = bytearray(raw)
+        raw[raw.find(files[bad]) + len(files[bad]) // 2] ^= 0xFF
+    path.write_bytes(bytes(raw))
+    return path
 
 
 class FakeMixed7zz:
@@ -270,6 +290,7 @@ class FakeMixed7zz:
 
     def __call__(self, args):
         src = next(a for a in args if a.endswith((".zip", ".7z", ".rar")))
+        assert not src.endswith(".zip"), "a zip is read with zipfile"
         files, bad = self.archives[src.replace("\\", "/").rpartition("/")[2]]
         if args[0] == "l":
             blocks = "\n\n".join(f"Path = {p}\nSize = {len(d)}\nAttributes = A" for p, d in files.items())
@@ -290,10 +311,9 @@ def mixed(tmp_path, monkeypatch):
     root = tmp_path / "lib"
     (root / "P" / "太空").mkdir(parents=True)
     (root / "P" / "插件").mkdir(parents=True)
-    (root / "P" / "太空" / "Pack.zip").write_bytes(b"zip")
+    make_gbk_zip(root / "P" / "太空" / "Pack.zip", ZIP_FILES, bad="太空Pack/Pack/Content/a.uasset")
     (root / "P" / "插件" / "Pack.7z").write_bytes(b"7z")
     monkeypatch.setattr(unpack, "run_7zz", FakeMixed7zz({
-        "Pack.zip": (ZIP_FILES, "太空Pack/Pack/Content/a.uasset"),
         "Pack.7z": (SEVEN_FILES, "Pack/Pack/Content/b.uasset"),
     }))
     return root
@@ -309,14 +329,37 @@ def test_a_zip_is_mended_from_a_7z_whose_paths_differ(mixed):
     folder = mixed / new
     assert (folder / "Pack/Content/a.uasset").read_bytes() == b"a" * 10  # from the 7z
     assert (folder / "Pack/Content/c.uasset").read_bytes() == b"ccc"  # only the zip has it
+    assert (folder / "Pack/Content/贴图.uasset").read_bytes() == b"dddd"  # GBK name read as such
+    assert sorted(os.listdir(folder / "Pack/Content")) == ["a.uasset", "b.uasset", "c.uasset", "贴图.uasset"]
     assert sorted(os.listdir(mixed / "_待删除")) == ["Pack.7z", "Pack.zip"]
 
 
-def test_a_member_no_other_copy_holds_is_not_guessed(mixed, monkeypatch):
-    monkeypatch.setattr(unpack, "run_7zz", FakeMixed7zz({
-        "Pack.zip": (ZIP_FILES, "太空Pack/Pack/Content/c.uasset"),  # the 7z has no c.uasset
-        "Pack.7z": (SEVEN_FILES, "Pack/Pack/Content/b.uasset"),
-    }))
+def test_zips_named_in_gbk_are_rebuilt_under_their_real_names(tmp_path):
+    root = tmp_path / "lib"
+    make_gbk_zip(root / "E" / "包.zip", ZIP_FILES, bad="太空Pack/Pack/Content/a.uasset")
+    make_gbk_zip(root / "E" / "包 副本.zip", ZIP_FILES, bad="太空Pack/Pack/Content/b.uasset")
+
+    new = repair.repair_one(root, ["E/包.zip", "E/包 副本.zip"], {}, move=fake_move)
+
+    assert (root / new / "Pack/Content/贴图.uasset").read_bytes() == b"dddd"
+    assert (root / new / "Pack/Content/a.uasset").read_bytes() == b"a" * 10
+
+
+def test_a_locked_zip_goes_to_7zz_with_its_password(tmp_path):
+    """zipfile has no password (and no AES): a locked zip is 7zz's, as before."""
+    locked = make_gbk_zip(tmp_path / "x.zip", {"a.uasset": b"a"})
+    raw = bytearray(locked.read_bytes())
+    for magic, at in ((b"PK\x03\x04", 6), (b"PK\x01\x02", 8)):
+        raw[raw.find(magic) + at] |= repair.ZIP_LOCKED
+    locked.write_bytes(bytes(raw))
+    plain = make_gbk_zip(tmp_path / "y.zip", {"a.uasset": b"a"})
+
+    assert not repair._by_zipfile(locked) and repair._by_zipfile(plain)
+    assert not repair._by_zipfile(tmp_path / "z.7z")
+
+
+def test_a_member_no_other_copy_holds_is_not_guessed(mixed):
+    make_gbk_zip(mixed / "P" / "太空" / "Pack.zip", ZIP_FILES, bad="太空Pack/Pack/Content/c.uasset")  # the 7z has no c
 
     with pytest.raises(repair.RepairError, match="c.uasset"):
         repair.repair_one(mixed, MIXED, {}, move=fake_move)

@@ -21,12 +21,13 @@ from contextlib import ExitStack
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
-from assetindex import unpack, verify
+from assetindex import archives, unpack, verify
 from assetindex.categories import TO_DELETE
 from assetindex.organize_apply import _taken, move_no_replace
 from assetindex.scanner import UNPACKING_SUFFIX
 
 CHUNK = 1 << 20
+ZIP_LOCKED = 0x1  # general purpose flag bit 0: the member is encrypted
 NO_PASSWORD = "none"  # for packs not locked: 7zz must never stop to ask for one
 BAD_MEMBER = re.compile(r"^ERROR: (?:CRC Failed|Data Error)(?: in encrypted file\. Wrong password\?)? : (.+)$", re.MULTILINE)
 ERROR_COUNT = re.compile(r"Sub items Errors: (\d+)")
@@ -99,8 +100,19 @@ def _safe(name: str) -> str:
     return str(path)
 
 
+def _zip_files(zf: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
+    return [i for i in zf.infolist() if not i.is_dir()]
+
+
+def _open_zip(src: Path) -> zipfile.ZipFile:
+    try:
+        return zipfile.ZipFile(src)
+    except zipfile.BadZipFile:
+        raise RepairError(f"「{src.name}」的目录读不出来，这份不能用") from None
+
+
 def _listing(zf: zipfile.ZipFile) -> dict[str, int]:
-    return {i.filename: i.file_size for i in zf.infolist() if not i.is_dir()}
+    return {i.filename: i.file_size for i in _zip_files(zf)}
 
 
 def _rebuild(copies: Copies, names: list[str], tmp: Path, should_stop, report) -> None:
@@ -108,7 +120,7 @@ def _rebuild(copies: Copies, names: list[str], tmp: Path, should_stop, report) -
         if should_stop():
             raise Stopped("手动停止了，什么都没改")
         report(done, len(names))
-        target = tmp / _safe(name)
+        target = tmp / _safe(archives._zip_name(copies[0][1].getinfo(name)))  # GBK names as such
         target.parent.mkdir(parents=True, exist_ok=True)
         if not _read_whole(copies, name, target):
             raise RepairError(f"「{name}」每一份都坏了，修不了")
@@ -118,12 +130,7 @@ def _rebuild(copies: Copies, names: list[str], tmp: Path, should_stop, report) -
 def _build(base: Path, srcs: list[Path], tmp: Path, should_stop, report, free) -> None:
     """Every member, whole, under `tmp`; on any failure `tmp` is gone again."""
     with ExitStack() as stack:
-        copies = []
-        for src in srcs:
-            try:
-                copies.append((src, stack.enter_context(zipfile.ZipFile(src))))
-            except zipfile.BadZipFile:
-                raise RepairError(f"「{src.name}」的目录读不出来，这份不能用") from None
+        copies = [(src, stack.enter_context(_open_zip(src))) for src in srcs]
         listings = [_listing(zf) for _, zf in copies]
         if any(listing != listings[0] for listing in listings[1:]):
             raise RepairError("几份包里的文件不一样，不能拼成一份")
@@ -220,12 +227,58 @@ def _take_from_others(srcs: list[Path], names: list[str], expected: dict[str, tu
     return left
 
 
+def _by_zipfile(src: Path) -> bool:
+    """A zip zipfile reads itself: one with locked members still goes to 7zz, which takes
+    the password (zipfile has none, and no AES)."""
+    if src.suffix.lower() != ".zip":
+        return False
+    with _open_zip(src) as zf:
+        return not any(i.flag_bits & ZIP_LOCKED for i in zf.infolist())
+
+
+def _first_entries(src: Path, password: str) -> list[tuple[str, int, str]]:
+    """(path, size, CRC) of the first copy's files. A zip's come from zipfile, named as the
+    indexer names them (GBK unless flagged UTF-8): 7zz on Linux writes such names to disk
+    as the raw bytes, not as the names it prints (2026-11-17, Space Creator Pro)."""
+    if not _by_zipfile(src):
+        return unpack.entries_7zz(src, password)  # also refuses volume sets
+    with _open_zip(src) as zf:
+        return [(archives._zip_name(i), i.file_size, f"{i.CRC:08X}") for i in _zip_files(zf)]
+
+
+def _unzip_first(src: Path, tmp: Path, should_stop, report) -> list[str]:
+    """Every member of the zip at `src` written under `tmp` by its real name; the names of
+    those that did not read whole."""
+    bad = []
+    with _open_zip(src) as zf:
+        infos = _zip_files(zf)
+        for done, info in enumerate(infos):
+            if should_stop():
+                raise Stopped("手动停止了，什么都没改")
+            report(done, len(infos))
+            name = archives._zip_name(info)
+            target = tmp / _safe(name)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if not _read_whole([(src, zf)], info.filename, target):
+                bad.append(name)
+    return bad
+
+
+def _unpack_first(src: Path, tmp: Path, password: str) -> list[str]:
+    """The copy at `src` unpacked under `tmp` by 7zz, which writes a damaged member too and
+    names it; those names."""
+    done = unpack.run_7zz(["x", "-bd", "-y", f"-p{password}", f"-o{tmp}", "--", str(src)])
+    bad = [] if done.returncode == 0 else _bad_members(_said(done))
+    if bad is None:
+        raise RepairError(f"第一份解不开：{unpack._said(done, password)}")
+    return bad
+
+
 def _build_7zz(base: Path, srcs: list[Path], tmp: Path, password: str, should_stop, report, free) -> None:
-    """The first copy unpacked whole (7zz writes a damaged member too, and names it), each
-    damaged member then taken from another copy, of any format. The copies need not list
-    the same files: the first one's list is what the result must hold. On any failure
-    `tmp` is gone again."""
-    entries = unpack.entries_7zz(srcs[0], password)  # also refuses volume sets
+    """The first copy unpacked whole, damaged members too, each of those then taken from
+    another copy, of any format. The copies need not list the same files: the first one's
+    list is what the result must hold. On any failure `tmp` is gone again."""
+    entries = _first_entries(srcs[0], password)
     wanted = {path: (size, crc) for path, size, crc in entries}
     expected = (len(entries), sum(size for _, size, _ in entries))
     if free(base) < expected[1] + unpack.MIN_FREE_BYTES:
@@ -234,10 +287,10 @@ def _build_7zz(base: Path, srcs: list[Path], tmp: Path, password: str, should_st
     tmp.mkdir()
     try:
         report(0, expected[0])
-        done = unpack.run_7zz(["x", "-bd", "-y", f"-p{password}", f"-o{tmp}", "--", str(srcs[0])])
-        bad = [] if done.returncode == 0 else _bad_members(_said(done))
-        if bad is None:
-            raise RepairError(f"第一份解不开：{unpack._said(done, password)}")
+        if _by_zipfile(srcs[0]):
+            bad = _unzip_first(srcs[0], tmp, should_stop, report)
+        else:
+            bad = _unpack_first(srcs[0], tmp, password)
         if bad and len(bad) >= expected[0]:
             raise RepairError("每个文件都报错，多半是密码不对")
         for name in bad:

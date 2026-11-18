@@ -2,6 +2,7 @@
 faked, the listing parse is checked against 7zz's own -slt layout."""
 import os
 import subprocess
+import zipfile
 
 import pytest
 
@@ -176,3 +177,31 @@ def test_7z_and_zip_go_through_7zz_when_it_is_there(lib, monkeypatch):
     assert {call[-1].replace("\\", "/").rpartition("/")[2] for call in tool.calls} >= {"Tiger.7z", "Lion.zip"}
     with pytest.raises(unpack.UnpackError, match="只解"):
         unpack.unpack_one(root, "C/x.tar", PASSWORD, [], move=fake_move)
+
+
+def test_a_zip_named_in_gbk_is_not_left_to_7zz(lib, monkeypatch):
+    """7zz on Linux would put the GBK bytes on disk as they are: garbled folders on the NAS."""
+    root, tool = lib
+    monkeypatch.setattr(unpack.verify, "sevenzip", lambda: "7zz")
+    zipped = root / "C" / "Lion.zip"
+    with zipfile.ZipFile(zipped, "w") as z:
+        z.writestr("____/a.txt", b"a")  # placeholder of the GBK name's length
+    zipped.write_bytes(zipped.read_bytes().replace(b"____", "太空".encode("gbk")))
+
+    with pytest.raises(unpack.UnpackError, match="乱码"):
+        unpack.unpack_one(root, "C/Lion.zip", PASSWORD, [], move=fake_move)
+    assert zipped.exists() and not tool.calls
+
+
+def test_a_zip_with_utf8_names_not_flagged_still_unpacks(lib, monkeypatch):
+    """macOS zippers write UTF-8 names without the flag: 7zz puts those on disk right."""
+    root, tool = lib
+    monkeypatch.setattr(unpack.verify, "sevenzip", lambda: "7zz")
+    zipped = root / "C" / "Lion.zip"
+    with zipfile.ZipFile(zipped, "w") as z:
+        z.writestr("______/a.txt", b"a")
+    raw = zipped.read_bytes().replace(b"______", "太空".encode("utf-8"))
+    zipped.write_bytes(raw.replace(b"\x00\x08", b"\x00\x00", 0))
+    assert not any(i.flag_bits & 0x800 for i in zipfile.ZipFile(zipped).infolist())
+
+    assert unpack.unpack_one(root, "C/Lion.zip", PASSWORD, [], move=fake_move) == "C/Lion"
