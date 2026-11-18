@@ -175,6 +175,18 @@ def test_no_words_lists_every_pack_by_path(lib):
     assert _paths(packs.search_packs(conn, "", category="02_3D/Props")) == ["art:/02_3D/Props/Gear Props - 齿轮道具.zip"]
 
 
+def test_browsing_ignores_case(lib):
+    conn, settings = lib
+    root = settings.roots["art"]
+    _zip(root / "02_3D/Props/anvil - 铁砧.zip", ["anvil.fbx"])
+    _zip(root / "02_3D/Props/zebra - 斑马.zip", ["zebra.fbx"])
+    scan_root(conn, "art", root)
+
+    names = [p["name"] for p in packs.search_packs(conn, "", category="02_3D/Props").packs]
+
+    assert names == ["anvil - 铁砧.zip", "Gear Props - 齿轮道具.zip", "zebra - 斑马.zip"]
+
+
 def test_the_agent_endpoint_browses_without_words(lib):
     _, settings = lib
     client = TestClient(create_app(settings))

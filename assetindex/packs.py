@@ -146,7 +146,7 @@ def _every_pack(req: _Request, category: str) -> list[_Found]:
     found = _group(req, rows, [], category)
     for pack in found.values():
         pack.match, pack.hits = "all", []
-    return sorted(found.values(), key=lambda p: (p.root, p.path))
+    return sorted(found.values(), key=lambda p: (p.root, p.path.casefold(), p.path))  # "nikke" beside "Nier"
 
 
 def _folder_pack(req: _Request, pack: _Found) -> tuple[int, int, int | None, str | None, list[int]]:
