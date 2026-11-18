@@ -7,6 +7,7 @@ read by the web server, as the scanner and mover do with their status files.
 """
 
 import json
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -20,6 +21,11 @@ MOUNT_STALE_SECONDS = 300  # the fetcher rewrites fetch.mount every ~90 s; older
 MAX_URL = 4000
 MAX_TITLE = 300
 LIST_LIMIT = 200
+MAX_PARTS = 500
+MAX_OUT = 400
+MAX_OUT_DEPTH = 8
+MAX_NAME_BYTES = 255  # one file or folder name, on most file systems
+_BAD_NAME = re.compile(r'[\x00-\x1f\x7f\\:*?"<>|]')
 OPEN = ("queued", "active")  # still to finish
 ENDED = ("done", "duplicate", "failed", "cancelled")
 _COLUMNS = "id, root, url, title, source, source_id, md5, size, status, path, dup_of, error, created, finished"
@@ -61,6 +67,47 @@ def add(conn: sqlite3.Connection, root: str, url, title=None, source=None, md5=N
              time.time() if now is None else now),
         )
     return cur.lastrowid
+
+
+def check_out(out) -> str:
+    """A part's path inside its download's folder, as a site gave it: relative, plain
+    names only (no "..", no drive or backslash, no hidden or odd characters)."""
+    if not isinstance(out, str) or not 0 < len(out.encode()) <= MAX_OUT:
+        raise ValueError("文件路径不对")
+    names = out.split("/")
+    if len(names) > MAX_OUT_DEPTH or out.lower().endswith(".aria2") or any(
+            not n or n.startswith(".") or n != n.strip() or _BAD_NAME.search(n) or len(n.encode()) > MAX_NAME_BYTES
+            for n in names):
+        raise ValueError(f"文件路径不对：{out[:100]}")
+    return out
+
+
+def add_bundle(conn: sqlite3.Connection, root: str, page_url, title: str, parts: list[dict], source=None,
+               source_id=None, now: float | None = None) -> int:
+    """A download of several files ([{url, out, size?, md5?}]), landing as one folder;
+    `page_url` (where it came from) stands for them in the list."""
+    if not isinstance(parts, list) or not 0 < len(parts) <= MAX_PARTS or not all(isinstance(p, dict) for p in parts):
+        raise ValueError(f"要 1 到 {MAX_PARTS} 个文件")
+    checked = [(check_url(p.get("url")), check_out(p.get("out")), p.get("size"), _md5(p.get("md5"))) for p in parts]
+    outs = [o.lower() for _, o, _, _ in checked]
+    if len(set(outs)) != len(outs) or any(b.startswith(f"{a}/") for a in outs for b in outs):  # a file and a folder of one name
+        raise ValueError("文件路径重复或互相包含")
+    sizes = [s for _, _, s, _ in checked]
+    if any(s is not None and (type(s) is not int or s < 0) for s in sizes):
+        raise ValueError("大小格式不对")
+    total = sum(sizes) if all(s is not None for s in sizes) else None
+    download_id = add(conn, root, page_url, title=title, source=source, source_id=source_id, size=total, now=now)
+    with conn:
+        conn.executemany(
+            "INSERT INTO download_parts (download_id, idx, url, out, size, md5) VALUES (?, ?, ?, ?, ?, ?)",
+            [(download_id, i, url, out, size, md5) for i, (url, out, size, md5) in enumerate(checked)],
+        )
+    return download_id
+
+
+def parts(conn: sqlite3.Connection, download_id: int) -> list[sqlite3.Row]:
+    """The files of a download made of several, in order; [] for a one-file download."""
+    return conn.execute("SELECT * FROM download_parts WHERE download_id = ? ORDER BY idx", (download_id,)).fetchall()
 
 
 def wanted(conn: sqlite3.Connection, source: str, source_ids: list[str]) -> set[str]:
@@ -109,6 +156,8 @@ def retry(conn: sqlite3.Connection, download_id: int) -> bool:
             "WHERE id = ? AND status IN ('failed', 'cancelled') AND gid IS NULL",
             (download_id,),
         )
+        if cur.rowcount == 1:  # its folder was cleared: every part again
+            conn.execute("UPDATE download_parts SET done = 0, gid = NULL WHERE download_id = ?", (download_id,))
     return cur.rowcount == 1
 
 

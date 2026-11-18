@@ -1,0 +1,228 @@
+{
+ "Diffuse": {
+  "1k": {
+   "jpg": {
+    "size": 574381,
+    "md5": "955d2d4500eb549be0f2873305782798",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_wall_001/brick_wall_001_diffuse_1k.jpg"
+   },
+   "png": {
+    "size": 1782607,
+    "md5": "0fb8052e42bd6bc7141b28c481437a8b",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/brick_wall_001/brick_wall_001_diffuse_1k.png"
+   },
+   "exr": {
+    "size": 1658122,
+    "md5": "df51e840e6ed826ca4d2478fe23c0718",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/brick_wall_001/brick_wall_001_diffuse_1k.exr"
+   }
+  }
+ },
+ "arm": {
+  "1k": {
+   "jpg": {
+    "size": 123384,
+    "md5": "bb40df6639b15f56ecb484b350cbc45d",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_wall_001/brick_wall_001_arm_1k.jpg"
+   },
+   "png": {
+    "size": 1084907,
+    "md5": "b2ed4ccc04ed25cfd682e4fe13200747",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/brick_wall_001/brick_wall_001_arm_1k.png"
+   },
+   "exr": {
+    "size": 923369,
+    "md5": "5d564e88e51a599e0323c5d60295a20e",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/brick_wall_001/brick_wall_001_arm_1k.exr"
+   }
+  }
+ },
+ "AO": {
+  "1k": {
+   "jpg": {
+    "size": 269071,
+    "md5": "aa63a3345a5217f34aae37a05344ce00",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_wall_001/brick_wall_001_ao_1k.jpg"
+   },
+   "png": {
+    "size": 470899,
+    "md5": "a7194fda48f7fc52a5f3c915b6ec40bb",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/brick_wall_001/brick_wall_001_ao_1k.png"
+   },
+   "exr": {
+    "size": 655746,
+    "md5": "46cb8e3955edf1cfe245581bccb5a011",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/brick_wall_001/brick_wall_001_ao_1k.exr"
+   }
+  }
+ },
+ "Displacement": {
+  "1k": {
+   "jpg": {
+    "size": 172991,
+    "md5": "b36f80cb6e16f7de8354bd1593263986",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_wall_001/brick_wall_001_displacement_1k.jpg"
+   },
+   "png": {
+    "size": 1874946,
+    "md5": "2b5d461ef87420993fe52ff13753dcb1",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/brick_wall_001/brick_wall_001_displacement_1k.png"
+   },
+   "exr": {
+    "size": 343530,
+    "md5": "d96682385c93fb425f8af69bd40efa46",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/brick_wall_001/brick_wall_001_displacement_1k.exr"
+   }
+  }
+ },
+ "Rough": {
+  "1k": {
+   "jpg": {
+    "size": 211093,
+    "md5": "618ceca60a4321aecc6d61eebe53d551",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_wall_001/brick_wall_001_rough_1k.jpg"
+   },
+   "png": {
+    "size": 412987,
+    "md5": "29388613a9bd406979e5d82ba58e7dec",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/brick_wall_001/brick_wall_001_rough_1k.png"
+   },
+   "exr": {
+    "size": 587423,
+    "md5": "0d6e965a5c47196a7050b8e07217d07b",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/brick_wall_001/brick_wall_001_rough_1k.exr"
+   }
+  }
+ },
+ "nor_dx": {
+  "1k": {
+   "jpg": {
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_wall_001/brick_wall_001_nor_dx_1k.jpg",
+    "size": 295464,
+    "md5": "11cef145def0b0c298dd94f33b7a2b0b"
+   },
+   "png": {
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/brick_wall_001/brick_wall_001_nor_dx_1k.png",
+    "size": 2562977,
+    "md5": "b830cedb12ef577f9bbb5c751159b8e1"
+   },
+   "exr": {
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/brick_wall_001/brick_wall_001_nor_dx_1k.exr",
+    "size": 2244408,
+    "md5": "7505dc1f2d40afa50c0b169c059a6c62"
+   }
+  }
+ },
+ "nor_gl": {
+  "1k": {
+   "jpg": {
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_wall_001/brick_wall_001_nor_gl_1k.jpg",
+    "size": 295279,
+    "md5": "be151875ed0897fc716aeef6daac8bd5"
+   },
+   "png": {
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/brick_wall_001/brick_wall_001_nor_gl_1k.png",
+    "size": 2562545,
+    "md5": "99200c9dd07ae8bc85f5a027deea4b78"
+   },
+   "exr": {
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/brick_wall_001/brick_wall_001_nor_gl_1k.exr",
+    "size": 2241164,
+    "md5": "2e1ea0448ff3209d35ac21b8f5917aec"
+   }
+  }
+ },
+ "blend": {
+  "1k": {
+   "blend": {
+    "size": 277899,
+    "md5": "cd0ad1b47170729dc6a44f50a8eb4f3d",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/blend/1k/brick_wall_001/brick_wall_001_1k.blend",
+    "include": {
+     "textures/brick_wall_001_rough_1k.jpg": {
+      "size": 211093,
+      "md5": "618ceca60a4321aecc6d61eebe53d551",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_wall_001/brick_wall_001_rough_1k.jpg"
+     },
+     "textures/brick_wall_001_diffuse_1k.jpg": {
+      "size": 574381,
+      "md5": "955d2d4500eb549be0f2873305782798",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_wall_001/brick_wall_001_diffuse_1k.jpg"
+     },
+     "textures/brick_wall_001_displacement_1k.png": {
+      "size": 1874946,
+      "md5": "2b5d461ef87420993fe52ff13753dcb1",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/brick_wall_001/brick_wall_001_displacement_1k.png"
+     },
+     "textures/brick_wall_001_nor_gl_1k.exr": {
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/brick_wall_001/brick_wall_001_nor_gl_1k.exr",
+      "size": 2241164,
+      "md5": "2e1ea0448ff3209d35ac21b8f5917aec"
+     }
+    }
+   }
+  }
+ },
+ "gltf": {
+  "1k": {
+   "gltf": {
+    "size": 3564,
+    "md5": "f5950f35baa0a0b437d3726f1bb8984b",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/gltf/1k/brick_wall_001/brick_wall_001_1k.gltf",
+    "include": {
+     "textures/brick_wall_001_rough_1k.jpg": {
+      "size": 211093,
+      "md5": "618ceca60a4321aecc6d61eebe53d551",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_wall_001/brick_wall_001_rough_1k.jpg"
+     },
+     "brick_wall_001.bin": {
+      "size": 2370100,
+      "md5": "658b6a4923dd1b90c42e0d0595957743",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/gltf/8k/brick_wall_001/brick_wall_001.bin"
+     },
+     "textures/brick_wall_001_diffuse_1k.jpg": {
+      "size": 574381,
+      "md5": "955d2d4500eb549be0f2873305782798",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_wall_001/brick_wall_001_diffuse_1k.jpg"
+     },
+     "textures/brick_wall_001_nor_gl_1k.jpg": {
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_wall_001/brick_wall_001_nor_gl_1k.jpg",
+      "size": 295279,
+      "md5": "be151875ed0897fc716aeef6daac8bd5"
+     }
+    }
+   }
+  }
+ },
+ "mtlx": {
+  "1k": {
+   "mtlx": {
+    "size": 4729,
+    "md5": "d013825720d161f6fd3e47abf951a581",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/mtlx/1k/brick_wall_001/brick_wall_001_1k.mtlx",
+    "include": {
+     "textures/brick_wall_001_rough_1k.jpg": {
+      "size": 211093,
+      "md5": "618ceca60a4321aecc6d61eebe53d551",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_wall_001/brick_wall_001_rough_1k.jpg"
+     },
+     "textures/brick_wall_001_diffuse_1k.jpg": {
+      "size": 574381,
+      "md5": "955d2d4500eb549be0f2873305782798",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_wall_001/brick_wall_001_diffuse_1k.jpg"
+     },
+     "textures/brick_wall_001_displacement_1k.png": {
+      "size": 1874946,
+      "md5": "2b5d461ef87420993fe52ff13753dcb1",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/brick_wall_001/brick_wall_001_displacement_1k.png"
+     },
+     "textures/brick_wall_001_nor_gl_1k.exr": {
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/brick_wall_001/brick_wall_001_nor_gl_1k.exr",
+      "size": 2241164,
+      "md5": "2e1ea0448ff3209d35ac21b8f5917aec"
+     }
+    }
+   }
+  }
+ }
+}

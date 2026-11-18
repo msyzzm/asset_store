@@ -88,6 +88,40 @@ def test_a_database_from_before_source_ids_gets_the_column(tmp_path):
         conn.close()
 
 
+def test_a_bundle_keeps_its_parts_in_order_with_the_total_size(conn):
+    parts = [{"url": "https://x.org/a.fbx", "out": "a.fbx", "size": 2, "md5": "A" * 32},
+             {"url": "https://x.org/t.jpg", "out": "textures/t.jpg", "size": 5}]
+
+    download_id = downloads.add_bundle(conn, "art", "https://x.org/page", "Crate", parts, source="polyhaven", source_id="c")
+
+    row = downloads.get(conn, download_id)
+    assert (row["url"], row["title"], row["size"], row["source_id"]) == ("https://x.org/page", "Crate", 7, "c")
+    assert [(p["out"], p["md5"], p["done"]) for p in downloads.parts(conn, download_id)] == [
+        ("a.fbx", "a" * 32, 0), ("textures/t.jpg", None, 0)]
+    assert downloads.parts(conn, downloads.add(conn, "art", "https://x.org/b.zip")) == []
+
+
+@pytest.mark.parametrize("out", ["../x.jpg", "/abs.jpg", "a\\b.jpg", "C:x.jpg", ".hidden", "a//b.jpg", "textures/",
+                                 " a.jpg", "a\x00.jpg", "a/../../b", 5, "", "x/" * 9 + "y", "a.jpg.aria2",
+                                 "石" * 90 + ".jpg"])
+def test_a_bundle_refuses_paths_that_could_leave_its_folder(conn, out):
+    with pytest.raises(ValueError):
+        downloads.add_bundle(conn, "art", "https://x.org/p", "T", [{"url": "https://x.org/a", "out": out}])
+
+
+@pytest.mark.parametrize("outs", [["a.jpg", "A.JPG"], ["textures", "textures/a.jpg"]])
+def test_a_bundle_refuses_parts_that_collide(conn, outs):
+    with pytest.raises(ValueError):
+        downloads.add_bundle(conn, "art", "https://x.org/p", "T", [{"url": "https://x.org/a", "out": o} for o in outs])
+
+
+def test_a_bundle_needs_parts_with_web_links(conn):
+    for parts in ([], [{"url": "file:///etc/passwd", "out": "a"}], ["https://x.org/a"],
+                  [{"url": "https://x.org/a", "out": f"{n}"} for n in range(501)]):
+        with pytest.raises(ValueError):
+            downloads.add_bundle(conn, "art", "https://x.org/p", "T", parts)
+
+
 def test_progress_round_trips_and_tolerates_garbage(tmp_path):
     downloads.write_progress(tmp_path, {3: {"done": 1, "total": 2, "speed": 3}})
     assert downloads.read_progress(tmp_path) == {3: {"done": 1, "total": 2, "speed": 3}}

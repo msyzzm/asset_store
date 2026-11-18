@@ -1,0 +1,24 @@
+{
+ "name": "Brick Wall 001",
+ "type": 1,
+ "categories": [
+  "brick",
+  "man made",
+  "outdoor",
+  "indoor",
+  "clean",
+  "wall"
+ ],
+ "tags": [
+  "red",
+  "rough",
+  "industrial",
+  "plain",
+  "baked"
+ ],
+ "authors": {
+  "Rob Tuytel": "Processing",
+  "Dimitrios Savva": "Photography"
+ },
+ "description": "Free 8K texture of a red, rough industrial brick wall with baked-in grime, chipped edges, varied mortar tones and pronounced surface relief."
+}

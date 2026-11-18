@@ -2,8 +2,11 @@
 asset (~2400, under 1 MB) is cached for 12 hours and matched here, by name, tags and
 categories, most downloaded first.
 
-HDRIs download as one file. Textures and models are sets of files (maps, or a model
-with its textures), offered but not ready until the downloader takes several files."""
+HDRIs download as one file. Textures and models are sets of files: every map of one
+resolution and format, or a model file with the files it includes (textures/...),
+downloaded together into one folder."""
+
+from urllib.parse import unquote, urlsplit
 
 from assetindex import external
 
@@ -63,6 +66,28 @@ def _sized(entry: dict) -> int:
     return (entry.get("size") or 0) + sum(i.get("size") or 0 for i in (entry.get("include") or {}).values())
 
 
+def _file_name(url: str) -> str:
+    return unquote(urlsplit(url).path.rpartition("/")[2])
+
+
+def _part(url: str, out: str, entry: dict) -> dict:
+    return {"url": url, "out": out, "size": entry.get("size"), "md5": entry.get("md5")}
+
+
+def _map_parts(files: dict, res: str, fmt: str) -> list[dict]:
+    """Every map (diffuse, normal, roughness...) of one resolution and format."""
+    maps = [v for k, v in files.items() if k not in NOT_MAPS and isinstance(v, dict)]
+    entries = [(v.get(res) or {}).get(fmt) for v in maps]
+    return [_part(e["url"], _file_name(e["url"]), e) for e in entries if isinstance(e, dict) and e.get("url")]
+
+
+def _model_parts(entry: dict) -> list[dict]:
+    """A model file and the files it includes, at the paths it expects them."""
+    includes = entry.get("include") or {}
+    return [_part(entry["url"], _file_name(entry["url"]), entry),
+            *(_part(i["url"], out, i) for out, i in includes.items() if isinstance(i, dict) and i.get("url"))]
+
+
 def _options(kind: int, files: dict) -> list[dict]:
     options = []
     if kind == 0:
@@ -76,17 +101,17 @@ def _options(kind: int, files: dict) -> list[dict]:
         maps = {k: v for k, v in files.items() if k not in NOT_MAPS and isinstance(v, dict)}
         for res in sorted({r for v in maps.values() for r in v}, key=_res_key):
             for fmt in MAP_FORMATS:
-                size = sum((v.get(res) or {}).get(fmt, {}).get("size") or 0 for v in maps.values())
-                if size:
+                parts = _map_parts(files, res, fmt)
+                if parts:
                     options.append({"key": f"maps/{res}/{fmt}", "label": f"{res.upper()} {fmt.upper()} 全套贴图",
-                                    "size": size, "ready": False})
+                                    "size": sum(p["size"] or 0 for p in parts) or None, "ready": True})
     else:
         for fmt in MODEL_FORMATS:
             for res in sorted(files.get(fmt) or {}, key=_res_key):
                 entry = (files[fmt][res] or {}).get(fmt)
                 if entry:
                     options.append({"key": f"{fmt}/{res}", "label": f"{fmt.upper()}（{res.upper()} 贴图）",
-                                    "size": _sized(entry), "ready": False})
+                                    "size": _sized(entry), "ready": True})
     return options
 
 
@@ -112,10 +137,18 @@ def detail(asset_id: str) -> dict:
 
 
 def option(asset_id: str, key: str) -> dict:
-    """{url, size, md5, label} of a single-file option ("hdri/2k/hdr"); KeyError if none
-    or if it is a set of files."""
-    kind, res, fmt = (key.split("/") + ["", ""])[:3]
-    if kind != "hdri":
+    """What option `key` downloads: {url, size, md5, label} for one file ("hdri/2k/hdr"),
+    {parts, label} for several ("maps/1k/jpg", "fbx/2k"); KeyError if none."""
+    info, files = _info_and_files(asset_id)
+    label = next((o["label"] for o in _options(info.get("type"), files) if o["key"] == key), None)
+    if label is None:
         raise KeyError(key)
-    entry = _info_and_files(asset_id)[1]["hdri"][res][fmt]
-    return {"url": entry["url"], "size": entry.get("size"), "md5": entry.get("md5"), "label": f"{res.upper()} {fmt.upper()}"}
+    head, _, rest = key.partition("/")
+    if head == "hdri":
+        res, fmt = rest.split("/")
+        entry = files["hdri"][res][fmt]
+        return {"url": entry["url"], "size": entry.get("size"), "md5": entry.get("md5"), "label": label}
+    if head == "maps":
+        res, fmt = rest.split("/")
+        return {"parts": _map_parts(files, res, fmt), "label": label}
+    return {"parts": _model_parts(files[head][rest][head]), "label": label}

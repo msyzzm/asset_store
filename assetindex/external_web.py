@@ -114,13 +114,16 @@ def add_external_routes(app: FastAPI, settings: Settings, get_conn: Callable, pa
         root = writable_root(settings, body.get("root"))
         found = _ask(module, module.detail, _check_id(asset_id))
         if not any(o["key"] == key and o["ready"] for o in found["options"]):
-            raise HTTPException(422, "这个规格不能下载（多文件的下载下一步支持）")
+            raise HTTPException(422, "这个素材没有这个下载规格")
         chosen = _ask(module, module.option, asset_id, key)
+        title = f"{found['title']} {chosen['label']}"
         try:
-            download_id = downloads.add(
-                conn, root, chosen["url"], title=f"{found['title']} {chosen['label']}", source=source,
-                source_id=asset_id, md5=chosen["md5"], size=chosen["size"],
-            )
+            if "parts" in chosen:  # several files: one folder named after the asset and option
+                download_id = downloads.add_bundle(conn, root, found["page"], title, chosen["parts"],
+                                                   source=source, source_id=asset_id)
+            else:
+                download_id = downloads.add(conn, root, chosen["url"], title=title, source=source,
+                                            source_id=asset_id, md5=chosen["md5"], size=chosen["size"])
         except ValueError as err:
             raise HTTPException(502, f"网站给的下载链接不对：{err}") from None
         return downloads.get(conn, download_id)

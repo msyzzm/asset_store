@@ -218,6 +218,20 @@ CREATE TABLE IF NOT EXISTS downloads (
     created  REAL    NOT NULL,
     finished REAL
 );
+-- The files of a download made of several (a model with its textures), landing as one
+-- folder. `done` is set when aria2 reports the file complete: a file's length alone
+-- never says so (segments leave holes below it).
+CREATE TABLE IF NOT EXISTS download_parts (
+    download_id INTEGER NOT NULL,
+    idx         INTEGER NOT NULL,
+    url         TEXT    NOT NULL,
+    out         TEXT    NOT NULL,  -- path inside the download's folder
+    size        INTEGER,
+    md5         TEXT,
+    gid         TEXT,
+    done        INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (download_id, idx)
+);
 """
 
 # Columns added after the first release; old databases get them via ALTER TABLE.

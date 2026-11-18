@@ -26,7 +26,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from assetindex import scan_request
+from assetindex import downloads, scan_request
 from assetindex.aria2 import Aria2, Aria2Error, Aria2Unreachable
 from assetindex.categories import DOWNLOADS, PARTIAL
 from assetindex.config import Settings
@@ -42,6 +42,7 @@ FREE_MARGIN = 1024**3  # left free on the NAS after a download
 MAX_TWIN_CHECKS = 50  # same-size files hashed when looking for a twin
 MAX_NAME_BYTES = 200
 HTML_SNIFF_BYTES = 512
+BUNDLE_GID = "parts"  # downloads.gid of a download of several files: aria2 holds each part's gid
 ARIA2_ERRORS = {
     "3": "找不到文件（404）",
     "9": "磁盘空间不够",
@@ -182,9 +183,19 @@ class Fetcher:
             )
         return cur.rowcount == 1
 
-    def _fail(self, row, error: str, folder: Path | None = None) -> None:
-        if row["gid"]:
+    def _forget(self, row) -> None:
+        """Stop whatever aria2 runs for this download: its one file, or its parts."""
+        if row["gid"] == BUNDLE_GID:
+            for part in downloads.parts(self.conn, row["id"]):
+                if part["gid"]:
+                    self.rpc.forget(part["gid"])
+            with self.conn:
+                self.conn.execute("UPDATE download_parts SET gid = NULL WHERE download_id = ?", (row["id"],))
+        elif row["gid"]:
             self.rpc.forget(row["gid"])
+
+    def _fail(self, row, error: str, folder: Path | None = None) -> None:
+        self._forget(row)
         if folder is not None:
             _clear(folder)
         self._set(row["id"], (row["status"],), status="failed", error=error, gid=None, finished=self.now())
@@ -192,7 +203,7 @@ class Fetcher:
     def _stop_cancelled(self) -> None:
         rows = self.conn.execute("SELECT id, root, gid FROM downloads WHERE status = 'cancelled' AND gid IS NOT NULL").fetchall()
         for row in rows:
-            self.rpc.forget(row["gid"])
+            self._forget(row)
             base = self._base(row["root"])
             if base is not None:
                 _clear(partial_dir(base, row["id"]))
@@ -208,7 +219,92 @@ class Fetcher:
             if row["size"] and self.free(base) < row["size"] + FREE_MARGIN:
                 self._fail(row, "NAS 空间不够放这个文件")
                 continue
-            self._hand_over(row, base)
+            parts = downloads.parts(self.conn, row["id"])
+            if parts:
+                self._hand_over_parts(row, base, parts)
+            else:
+                self._hand_over(row, base)
+
+    def _hand_over_parts(self, row, base: Path, parts) -> bool:
+        """Give aria2 every part not done nor running; False if the download failed or
+        was cancelled meanwhile. A file a part left without its .aria2 control file is
+        deleted first: aria2 would take it as complete."""
+        folder = partial_dir(base, row["id"])
+        if row["gid"] != BUNDLE_GID:  # marked first: a cancel or a failure then finds the parts started
+            if not self._set(row["id"], (row["status"],), gid=BUNDLE_GID):
+                return False
+            row = {**dict(row), "gid": BUNDLE_GID}
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            for part in parts:
+                if part["done"] or (part["gid"] and self.rpc.status(part["gid"]) is not None):
+                    continue
+                target = folder / part["out"]
+                if target.is_file() and not target.with_name(f"{target.name}.aria2").exists():
+                    target.unlink()
+                gid = self.rpc.add(part["url"], folder, USER_AGENT, part["md5"], out=part["out"])
+                with self.conn:
+                    self.conn.execute("UPDATE download_parts SET gid = ? WHERE download_id = ? AND idx = ?",
+                                      (gid, row["id"], part["idx"]))
+        except Aria2Unreachable:
+            raise  # stays as it is, its started parts recorded: picked up once aria2 answers
+        except (OSError, Aria2Error) as err:
+            log.warning("download %s: a part was refused: %s", row["id"], err)
+            self._fail(row, f"有一个文件下不了：{err}", folder)
+            return False
+        if not self._set(row["id"], (row["status"],), status="active"):  # cancelled meanwhile
+            self._forget(row)
+            _clear(folder)
+            return False
+        return True
+
+    def _follow_parts(self, row, base: Path, parts) -> dict | None:
+        """How far a download of several files got; finishes it once every part is done."""
+        done = total = speed = 0
+        lost = False
+        for part in parts:
+            size = part["size"] or 0
+            status = None if part["done"] or not part["gid"] else self.rpc.status(part["gid"])
+            if part["done"] or (status and status.get("status") == "complete"):
+                if not part["done"]:
+                    self.rpc.forget(part["gid"])
+                    with self.conn:
+                        self.conn.execute("UPDATE download_parts SET done = 1, gid = NULL WHERE download_id = ? AND idx = ?",
+                                          (row["id"], part["idx"]))
+                done, total = done + size, total + size
+            elif status is None:  # aria2 restarted (or never got it)
+                lost, total = True, total + size
+            elif status.get("status") in ("error", "removed"):
+                self._fail(row, f"{part['out']}：{_error_text(status)}", partial_dir(base, row["id"]))
+                return None
+            else:
+                done += int(status.get("completedLength") or 0)
+                total += int(status.get("totalLength") or 0) or size
+                speed += int(status.get("downloadSpeed") or 0)
+        if lost:
+            log.info("download %s: parts unknown to aria2, handing them over again", row["id"])
+            if not self._hand_over_parts(row, base, downloads.parts(self.conn, row["id"])):
+                return None
+        elif all(p["done"] for p in downloads.parts(self.conn, row["id"])):
+            if not self.mover_busy():
+                self._finish_parts(row, base)
+            return None
+        return {"done": done, "total": total, "speed": speed}
+
+    def _finish_parts(self, row, base: Path) -> None:
+        folder = partial_dir(base, row["id"])
+        try:
+            for control in folder.rglob("*.aria2"):
+                control.unlink()
+            target = _landing(base, safe_name(row["title"] or "", row["id"]))
+            self.move(str(folder), str(target), True)
+        except OSError as err:
+            self._fail(row, f"下载完成，但放不进 {DOWNLOADS}：{err!r}", folder)
+            return
+        rel = target.relative_to(base).as_posix()
+        self._set(row["id"], ("active", "cancelled"), status="done", path=rel, gid=None, finished=self.now())
+        scan_request.request_scan(self.settings.data_dir)
+        log.info("download %s landed at %s", row["id"], rel)
 
     def _hand_over(self, row, base: Path) -> None:
         folder = partial_dir(base, row["id"])
@@ -243,6 +339,12 @@ class Fetcher:
             base = self._base(row["root"])
             if base is None:
                 self._fail(row, "没有这个根目录")
+                continue
+            parts = downloads.parts(self.conn, row["id"])
+            if parts:
+                running = self._follow_parts(row, base, parts)
+                if running:
+                    progress[row["id"]] = running
                 continue
             status = self.rpc.status(row["gid"]) if row["gid"] else None
             if status is None:  # aria2 restarted: it resumes into the same folder

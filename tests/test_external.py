@@ -13,6 +13,8 @@ from assetindex.web import create_app
 FIXTURES = Path(__file__).parent / "fixtures" / "external"
 HEADERS = {"X-Requested-With": "fetch"}
 HDRI = "kloofendal_48d_partly_cloudy_puresky"
+TEXTURE = "brick_wall_001"
+MODEL = "wooden_crate_01"
 
 
 def _fixture(name: str):
@@ -37,6 +39,9 @@ class FakeSites:
             return _fixture("polyhaven_info_hdri.json")
         if url == f"{ext_polyhaven.API}/files/{HDRI}":
             return _fixture("polyhaven_files_hdri.json")
+        for asset, kind in ((TEXTURE, "texture"), (MODEL, "model")):
+            if url.endswith(f"/{asset}"):
+                return _fixture(f"polyhaven_{'info' if '/info/' in url else 'files'}_{kind}.json")
         if "id=Bricks113A" in url:
             return _fixture("ambientcg_one.json")
         if "id=" in url:
@@ -136,15 +141,35 @@ def test_poly_haven_hdri_detail_offers_single_files(client):
     assert labels["hdri/2k/hdr"]["ready"] and labels["hdri/1k/exr"]["size"] > 0
 
 
-def test_poly_haven_texture_and_model_options_wait_for_multi_file_downloads():
-    files = {"Diffuse": {"1k": {"jpg": {"size": 5}, "png": {"size": 9}}}, "nor_gl": {"1k": {"jpg": {"size": 3}}},
-             "gltf": {"1k": {"gltf": {"size": 1, "include": {"a.bin": {"size": 2}}}}}}
+def test_poly_haven_texture_options_are_whole_map_sets(client):
+    body = client.get(f"/api/external/polyhaven/{TEXTURE}").json()
 
-    maps = ext_polyhaven._options(1, files)
-    models = ext_polyhaven._options(2, files)
+    assert body["kind"] == "贴图"
+    assert [o["key"] for o in body["options"]] == ["maps/1k/jpg", "maps/1k/png"] and all(o["ready"] for o in body["options"])
 
-    assert [(o["key"], o["size"], o["ready"]) for o in maps] == [("maps/1k/jpg", 8, False), ("maps/1k/png", 9, False)]
-    assert [(o["key"], o["size"], o["ready"]) for o in models] == [("gltf/1k", 3, False)]
+
+def test_poly_haven_model_options_are_each_format_with_its_files(client):
+    keys = [o["key"] for o in client.get(f"/api/external/polyhaven/{MODEL}").json()["options"]]
+
+    assert keys == ["fbx/1k", "gltf/1k", "blend/1k"]
+
+
+def test_a_texture_set_downloads_as_one_folder_of_maps(client, conn, writable):
+    row = client.post(f"/api/external/polyhaven/{TEXTURE}/download", json={"option": "maps/1k/jpg"}, headers=HEADERS).json()
+
+    parts = downloads.parts(conn, row["id"])
+    outs = [p["out"] for p in parts]
+    assert row["url"] == f"https://polyhaven.com/a/{TEXTURE}" and row["title"] == "Brick Wall 001 1K JPG 全套贴图"
+    assert "brick_wall_001_diffuse_1k.jpg" in outs and all("/" not in o and o.endswith(".jpg") for o in outs)
+    assert all(len(p["md5"]) == 32 for p in parts) and row["size"] == sum(p["size"] for p in parts)
+
+
+def test_a_model_downloads_with_the_files_it_includes_at_their_paths(client, conn, writable):
+    row = client.post(f"/api/external/polyhaven/{MODEL}/download", json={"option": "gltf/1k"}, headers=HEADERS).json()
+
+    outs = [p["out"] for p in downloads.parts(conn, row["id"])]
+    assert outs[0] == "wooden_crate_01_1k.gltf" and "wooden_crate_01.bin" in outs
+    assert any(o.startswith("textures/") for o in outs)
 
 
 def test_unknown_sites_and_assets(client):
@@ -177,6 +202,7 @@ def test_a_poly_haven_hdri_download_carries_its_md5(client, writable):
 
 @pytest.mark.parametrize("body", [{}, {"option": ""}, {"option": "9K-JPG"}, {"option": "maps/1k/jpg"}, {"option": "x", "url": "y"}])
 def test_options_that_cannot_be_downloaded_are_refused(client, writable, body):
+    # maps/1k/jpg asked of an HDRI: an option of another kind of asset
     source, asset = ("polyhaven", HDRI) if body.get("option", "").startswith("maps") else ("ambientcg", "Bricks113A")
 
     assert client.post(f"/api/external/{source}/{asset}/download", json=body, headers=HEADERS).status_code == 422

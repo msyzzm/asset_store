@@ -21,13 +21,13 @@ class FakeAria2:
         self.forgotten: list[str] = []
         self.refuse = False
 
-    def add(self, url, folder, user_agent, md5=None):
+    def add(self, url, folder, user_agent, md5=None, out=None):
         if self.refuse:
             raise Aria2Error("bad uri")
         gid = f"g{len(self.added)}"
-        self.added.append((url, folder, md5))
+        self.added.append((url, folder, md5) if out is None else (url, folder, md5, out))
         self.jobs[gid] = {"status": "active", "totalLength": "0", "completedLength": "0", "downloadSpeed": "0",
-                          "folder": folder}
+                          "folder": folder, "out": out}
         return gid
 
     def status(self, gid):
@@ -38,10 +38,16 @@ class FakeAria2:
         self.jobs.pop(gid, None)
 
     def finish(self, gid, name="pack.zip", data=b"new pack"):
-        folder = self.jobs[gid]["folder"]
-        (folder / name).write_bytes(data)
-        (folder / f"{name}.aria2").write_bytes(b"ctl")
-        self.jobs[gid]["status"] = "complete"
+        job = self.jobs[gid]
+        path = job["folder"] / (job["out"] or name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        if job["out"] is None:
+            path.with_name(f"{path.name}.aria2").write_bytes(b"ctl")  # a leftover the landing must not carry
+        job["status"] = "complete"
+
+    def gid_of(self, out):
+        return next(g for g, j in self.jobs.items() if j["out"] == out)
 
 
 @pytest.fixture
@@ -335,6 +341,114 @@ def test_each_download_is_a_pack_of_its_own():
     shape = layout([f"{DOWNLOADS}/a.zip", f"{DOWNLOADS}/b.zip"], always_open=SCHEME_FOLDERS)
 
     assert shape.unit_of(f"{DOWNLOADS}/a.zip") == (f"{DOWNLOADS}/a.zip", False)
+
+
+PARTS = [
+    {"url": "https://example.org/crate.fbx", "out": "crate.fbx", "size": 3, "md5": "a" * 32},
+    {"url": "https://example.org/diff.jpg", "out": "textures/crate_diff.jpg", "size": 4},
+]
+
+
+def _bundle(conn, title="Wooden Crate 01 FBX"):
+    return downloads.add_bundle(conn, "art", "https://polyhaven.com/a/crate", title, PARTS, source="polyhaven",
+                                source_id="crate")
+
+
+def test_a_download_of_several_files_lands_as_one_folder(conn, settings, rpc):
+    download_id = _bundle(conn)
+    fetcher = _fetcher(conn, settings, rpc)
+    fetcher.tick()
+    folder = partial_dir(_base(settings), download_id)
+    assert [a[3] for a in rpc.added] == ["crate.fbx", "textures/crate_diff.jpg"]
+    assert rpc.added[0][2] == "a" * 32 and rpc.added[0][1] == folder
+    rpc.finish(rpc.gid_of("crate.fbx"), data=b"fbx")
+    assert fetcher.tick() == {download_id: {"done": 3, "total": 7, "speed": 0}}
+    rpc.finish(rpc.gid_of("textures/crate_diff.jpg"), data=b"diff")
+
+    fetcher.tick()
+
+    row = downloads.get(conn, download_id)
+    landed = _base(settings) / DOWNLOADS / "Wooden Crate 01 FBX"
+    assert (row["status"], row["path"]) == ("done", f"{DOWNLOADS}/Wooden Crate 01 FBX")
+    assert sorted(p.relative_to(landed).as_posix() for p in landed.rglob("*") if p.is_file()) == [
+        "crate.fbx", "textures/crate_diff.jpg"]
+    assert not folder.exists() and scan_request.is_requested(settings.data_dir)
+
+
+def test_after_a_restart_only_unfinished_parts_go_again_and_a_part_file_without_control_is_dropped(conn, settings, rpc):
+    download_id = _bundle(conn)
+    fetcher = _fetcher(conn, settings, rpc)
+    fetcher.tick()
+    rpc.finish(rpc.gid_of("crate.fbx"), data=b"fbx")
+    fetcher.tick()  # crate.fbx recorded done
+    folder = partial_dir(_base(settings), download_id)
+    (folder / "textures").mkdir()
+    (folder / "textures" / "crate_diff.jpg").write_bytes(b"di")  # half, its control file lost
+    rpc.jobs.clear()  # the container restarted
+
+    fetcher.tick()
+
+    assert [a[3] for a in rpc.added[2:]] == ["textures/crate_diff.jpg"]
+    assert not (folder / "textures" / "crate_diff.jpg").exists()
+    assert (folder / "crate.fbx").read_bytes() == b"fbx"
+
+
+def test_a_part_that_fails_fails_the_whole_download(conn, settings, rpc):
+    download_id = _bundle(conn)
+    fetcher = _fetcher(conn, settings, rpc)
+    fetcher.tick()
+    rpc.jobs[rpc.gid_of("textures/crate_diff.jpg")].update(status="error", errorCode="3")
+
+    fetcher.tick()
+
+    row = downloads.get(conn, download_id)
+    assert row["status"] == "failed" and "textures/crate_diff.jpg" in row["error"] and "404" in row["error"]
+    assert "g0" in rpc.forgotten and not partial_dir(_base(settings), download_id).exists()
+    assert all(p["gid"] is None for p in downloads.parts(conn, download_id))
+
+
+def test_a_cancelled_download_of_several_files_stops_every_part_and_retries_from_scratch(conn, settings, rpc):
+    download_id = _bundle(conn)
+    fetcher = _fetcher(conn, settings, rpc)
+    fetcher.tick()
+    rpc.finish(rpc.gid_of("crate.fbx"), data=b"fbx")
+    fetcher.tick()
+    downloads.cancel(conn, download_id)
+
+    fetcher.tick()
+
+    assert "g1" in rpc.forgotten and not partial_dir(_base(settings), download_id).exists()
+    assert downloads.retry(conn, download_id)
+    assert [p["done"] for p in downloads.parts(conn, download_id)] == [0, 0]
+
+
+def test_parts_started_before_aria2_stopped_answering_are_stopped_when_cancelled(conn, settings, rpc):
+    download_id = _bundle(conn)
+    real_add = rpc.add
+
+    def add_once_then_unreachable(*args, **kwargs):
+        if rpc.added:
+            raise Aria2Unreachable("restarting")
+        return real_add(*args, **kwargs)
+
+    rpc.add = add_once_then_unreachable
+    fetcher = _fetcher(conn, settings, rpc)
+    with pytest.raises(Aria2Unreachable):
+        fetcher.tick()
+    downloads.cancel(conn, download_id)
+
+    fetcher.tick()
+
+    assert rpc.forgotten == ["g0"]
+    assert downloads.retry(conn, download_id)
+
+
+def test_a_download_of_several_files_without_room_is_refused(conn, settings, rpc):
+    download_id = _bundle(conn)
+
+    _fetcher(conn, settings, rpc, free=lambda path: 1024**3).tick()
+
+    assert downloads.get(conn, download_id)["status"] == "failed" and rpc.added == []
 
 
 @pytest.mark.parametrize(("name", "expected"), [
