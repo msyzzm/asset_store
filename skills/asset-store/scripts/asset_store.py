@@ -153,6 +153,27 @@ def cmd_downloads(args):
     return {**state, "items": state["items"][: args.limit]}
 
 
+def _external_path(args, suffix: str = "") -> str:
+    site, asset = (urllib.parse.quote(v, safe="") for v in (args.site, args.asset_id))
+    return f"/api/external/{site}/{asset}{suffix}"
+
+
+def cmd_external(args):
+    params = {"q": " ".join(args.query), "source": args.source, "offset": args.offset}
+    found = _json(args, "/api/external/search", params)
+    sites = {name: {**site, "items": site.get("items", [])[: args.limit]} for name, site in found["sources"].items()}
+    return {**found, "sources": sites}
+
+
+def cmd_external_show(args):
+    return _json(args, _external_path(args))
+
+
+def cmd_external_get(args):
+    body = {"option": args.option, "root": args.root or None}
+    return _json(args, _external_path(args, "/download"), body={k: v for k, v in body.items() if v is not None})
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="asset_store.py", description="Search and fetch assets from the asset library.")
     parser.add_argument("--url", help=f"server address (default: $ASSET_STORE_URL or {DEFAULT_URL})")
@@ -219,6 +240,25 @@ def _parser() -> argparse.ArgumentParser:
     p = sub.add_parser("downloads", help="the download queue: running first, then the latest finished")
     p.add_argument("--limit", type=int, default=20)
     p.set_defaults(func=cmd_downloads)
+
+    p = sub.add_parser("external", help="search free asset sites (Poly Haven, OpenGameArt, ...): English words")
+    p.add_argument("query", nargs="*")
+    p.add_argument("--source", default="", help="one site only, e.g. polyhaven; empty = every site")
+    p.add_argument("--offset", type=int, default=0, help="next page: the site's `next`")
+    p.add_argument("--limit", type=int, default=10, help="items kept per site")
+    p.set_defaults(func=cmd_external)
+
+    p = sub.add_parser("external-show", help="one asset on a site: description, license, download options")
+    p.add_argument("site")
+    p.add_argument("asset_id")
+    p.set_defaults(func=cmd_external_show)
+
+    p = sub.add_parser("external-get", help="have the server download one option of a site's asset into _下载")
+    p.add_argument("site")
+    p.add_argument("asset_id")
+    p.add_argument("--option", required=True, help="an option's `key` from external-show, e.g. fbx/1k")
+    p.add_argument("--root", default="", help="root to download into; empty = the first one")
+    p.set_defaults(func=cmd_external_get)
     return parser
 
 

@@ -1,6 +1,6 @@
 ---
 name: asset-store
-description: Search and fetch game assets (images, sprites, VFX, audio, music, 3D models, Unity/Unreal packages, zip/rar/7z packs) from the user's NAS asset library. Use when the user asks to find, browse, preview or download art/audio/model assets, look for "a sword icon", "explosion effect", "背景音乐", "宝箱", or pull a file from an asset pack into a project. Also starts library scans and picture-description jobs.
+description: Search and fetch game assets (images, sprites, VFX, audio, music, 3D models, Unity/Unreal packages, zip/rar/7z packs) from the user's NAS asset library. Use when the user asks to find, browse, preview or download art/audio/model assets, look for "a sword icon", "explosion effect", "背景音乐", "宝箱", or pull a file from an asset pack into a project. When the library has nothing fitting, also searches free asset sites (Poly Haven, ambientCG, OpenGameArt, itch.io, Sketchfab, Freesound...) and downloads from them into the library. Also starts library scans and picture-description jobs.
 ---
 
 # 素材库（asset-store）
@@ -22,9 +22,10 @@ python scripts/asset_store.py tasks
 0. **先按包找**（找"做某种游戏用的素材"时从这里开始）：`python scripts/asset_store.py packs 蒸汽朋克 --limit 20`
    - 一个素材包（文件夹，或压缩包加它的预览图）只占一条，不会被包里几百个文件刷屏。
    - 排序：包名里有全部搜索词的在前（`match: name`），其次是包里文件命中的（`match: inside`，`hit_count` 多的在前），最后是按意思找到的（`match: meaning`）。不带搜索词时按路径列出全部包（`match: all`）。
-   - 每条有 `category`（分类路径）、`dim`（2D/3D/audio）、`engine`（unreal/unity，不知道时为空）、`caption`（画面描述）、`files`、`size`、`hits`（命中的几个文件）、`links`。
+   - 每条有 `category`（分类路径）、`dim`（2D/3D/audio）、`engine`（unreal/unity，不知道时为空）、`caption`（画面描述）、`tags`（打过标签才有：`view` 视角、`style` 画风、`themes` 题材）、`files`、`size`、`hits`（命中的几个文件）、`links`。
    - `--category 02_3D/Environments` 只看某个分类；分类有 `01_2D/*`、`02_3D/*`、`03_Audio/*`、`04_Tools/*`、`05_Reference`。
-   - 视角（俯视、横版、等距）一般写不进包名：3D 场景和道具大多能俯视使用，不要因为名字里没有"俯视"就排除。用 `thumb` 看预览图再判断。
+   - `--view` 只留这个视角的包：`俯视 等距 横版 第一人称 第三人称 不限`；`--style` 只留这个画风的包：`写实 卡通 像素 低多边形 风格化 手绘 其他`。
+   - 标签只打了一小部分包，没打标签的包会被 `--view`/`--style` 直接筛掉。先不带这两个选项搜一次；结果太多、又只要 2D 素材时再用它们缩小范围，找 3D 素材时不要用。3D 场景和道具大多什么视角都能用（标签是「不限」），不要因为名字里没有"俯视"就排除。拿不准时用 `thumb` 看预览图。
    - 想看文件夹包里有什么，用 `search 包名的一段 --mode text`。
 1. **搜文件**：`python scripts/asset_store.py search 火焰 爆炸 --limit 10`
    - 多个词之间是"并且"的关系，中英文都可以，例如 `sword icon`、`剑`。
@@ -49,6 +50,23 @@ python scripts/asset_store.py tasks
    - 已有同名文件时不会覆盖，会存成 `name (1).ext`，以 `saved` 为准。
    - 单个文件取不出来（422，常见于文件名是 GBK 编码或用反斜杠的旧压缩包）时，改为整包下载，再在本地解压。
 
+## 库里没有：去外部网站找
+
+库里搜不到合适的素材时，可以搜免费素材网站。目前接了 Poly Haven、ambientCG、OpenGameArt、itch.io、Sketchfab、Freesound；以后可能还会加，以返回的 `sources` 为准。
+
+1. **搜**：`python scripts/asset_store.py external treasure chest --limit 10`
+   - 这些网站只认英文：中文需求先翻成英文关键词。返回里 `chinese: true` 表示你传的是中文，多半搜不到东西。
+   - 默认同时搜所有网站，每个网站留前 `--limit` 条。`--source polyhaven` 只搜一个网站，翻页用 `--offset`，值取那个网站返回的 `next`。
+   - 每个网站一段：`label`、`license`（网站整体的授权）、`total`、`error`（这个网站出错时的原因，不影响其他网站）、`items`。
+   - 每条有 `source`、`id`、`title`、`kind`、`thumb`（网站上的预览图地址）、`page`（原页面）、`tags`；`in_library` 表示库里已经有这个素材（给出库里的路径），`downloaded: true` 表示已经下过，这两种情况都不要再下。
+2. **看**：`python scripts/asset_store.py external-show polyhaven treasure_chest`
+   - 有 `description`、`authors`、`license`（这个素材自己的授权）、`previews`、`note`（下载限制等说明），以及 `options`：可以下的规格，每个有 `key`、`label`、`size`（字节，有时没有）和 `ready`（false 表示这个规格现在下不了）。
+   - **授权**：Poly Haven、ambientCG 是 CC0，可以随便用；其他网站每个素材的授权都不一样（如 CC-BY 要署名、CC-BY-NC 不可商用），一定要把 `license` 告诉用户。
+3. **下到素材库**：`python scripts/asset_store.py external-get polyhaven treasure_chest --option fbx/1k`
+   - 会让服务器下载，先和用户确认素材、规格和授权。`--option` 用 `external-show` 里 `ready` 为 true 的 `key`；同一个素材有多种规格时，没有特别要求就选小一点的（比如 1K 贴图）。
+   - 文件下到素材库的 `_下载` 文件夹，进度和结果用 `downloads` 查看。下完自动扫描，扫完就能在库里搜到。
+   - 409 说要 key 时：Sketchfab、Freesound 下载要先在网页「外部素材」页填 key，告诉用户去填，不要自己设置。
+
 ## 其他操作（会让服务器干活，用户要求时才做）
 
 - `scan`：马上重新扫描 NAS，新加的素材要扫描后才搜得到。服务器一分钟内开始，用 `tasks` 看进度。
@@ -67,11 +85,12 @@ python scripts/asset_store.py tasks
 | 状态码 | 含义 |
 |---|---|
 | 404 | id 不存在，或者文件已从 NAS 删除，需要重新扫描 |
-| 409 | 功能没启用（比如语义搜索、看图描述），或已有任务在跑 |
+| 409 | 功能没启用（比如语义搜索、看图描述），或已有任务在跑；外部网站下载时表示这个网站要 key |
 | 413 | 包里的文件太大，只能整包下载 |
 | 415 | 这类压缩包不能单独取文件，或者没有缩略图 |
 | 422 | 包里的这个文件取不出来，改为整包下载 |
 | 429 | 语义搜索正忙（只有 `--mode semantic` 时会出现），稍后再试或改用 `--mode auto` |
+| 502 | 外部网站出错或接口改了，稍后再试或换个网站 |
 | 503 | 带 `Retry-After` 时表示服务器忙，稍等再试；说 bsdtar 没装时，只能整包下载 |
 
 网络超时、下载中断这类问题也会以同样的 `{"error": ...}` 格式报告，出错时不会留下下载了一半的文件。
@@ -97,5 +116,8 @@ GET 请求不需要认证。POST 请求要带请求头 `X-Requested-With: anythi
 | 下载链接到素材库 | `POST /api/downloads`，body 为 `{"url":"https://…/a.zip","title":"可选"}` |
 | 下载队列 | `GET /api/downloads` |
 | 取消、重试下载 | `POST /api/downloads/{id}/cancel`、`POST /api/downloads/{id}/retry` |
+| 搜外部网站 | `GET /api/external/search?q=&source=&offset=0`（source 为空：所有网站） |
+| 外部素材详情 | `GET /api/external/{source}/{id}` |
+| 下载外部素材到素材库 | `POST /api/external/{source}/{id}/download`，body 为 `{"option":"fbx/1k"}`（可加 `"root"`） |
 
 完整的接口文档在服务的 `/docs` 页面（FastAPI 自动生成）。

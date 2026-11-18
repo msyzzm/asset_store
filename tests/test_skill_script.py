@@ -40,3 +40,53 @@ def test_existing_files_are_never_overwritten(tmp_path):
     (tmp_path / "icon (1).png").write_bytes(b"old")
     assert skill._free_name(tmp_path, "icon.png").name == "icon (2).png"
     assert skill._free_name(tmp_path, "new.png").name == "new.png"
+
+
+def _calls(monkeypatch, answer):
+    calls = []
+
+    def fake_json(args, path, params=None, body=None):
+        calls.append((path, params, body))
+        return answer
+
+    monkeypatch.setattr(skill, "_json", fake_json)
+    return calls
+
+
+def test_external_search_asks_every_site_and_keeps_a_few_items_each(monkeypatch, capsys):
+    answer = {"query": "crate", "chinese": False, "sources": {
+        "polyhaven": {"label": "Poly Haven", "license": "CC0", "error": None, "total": 13,
+                      "items": [{"id": str(n)} for n in range(13)]},
+        "itch": {"label": "itch.io", "license": "", "error": "超时", "total": 0, "items": []},
+    }}
+    calls = _calls(monkeypatch, answer)
+    assert skill.main(["external", "wooden", "crate", "--limit", "3"]) == 0
+    assert calls == [("/api/external/search", {"q": "wooden crate", "source": "", "offset": 0}, None)]
+    out = json.loads(capsys.readouterr().out)
+    assert [i["id"] for i in out["sources"]["polyhaven"]["items"]] == ["0", "1", "2"]
+    assert out["sources"]["polyhaven"]["total"] == 13
+    assert out["sources"]["itch"]["error"] == "超时"
+
+
+def test_external_search_of_one_site_pages_with_offset(monkeypatch):
+    calls = _calls(monkeypatch, {"sources": {}})
+    assert skill.main(["external", "rock", "--source", "ambientcg", "--offset", "24"]) == 0
+    assert calls[0][1] == {"q": "rock", "source": "ambientcg", "offset": 24}
+
+
+def test_external_show_and_get_name_the_site_asset_and_option(monkeypatch):
+    calls = _calls(monkeypatch, {})
+    assert skill.main(["external-show", "polyhaven", "treasure_chest"]) == 0
+    assert skill.main(["external-get", "polyhaven", "treasure_chest", "--option", "fbx/1k"]) == 0
+    assert skill.main(["external-get", "freesound", "640170", "--option", "original", "--root", "nas"]) == 0
+    assert calls == [
+        ("/api/external/polyhaven/treasure_chest", None, None),
+        ("/api/external/polyhaven/treasure_chest/download", None, {"option": "fbx/1k"}),
+        ("/api/external/freesound/640170/download", None, {"option": "original", "root": "nas"}),
+    ]
+
+
+def test_external_ids_cannot_reach_other_routes(monkeypatch):
+    calls = _calls(monkeypatch, {})
+    assert skill.main(["external-show", "polyhaven", "../../scan"]) == 0
+    assert calls[0][0] == "/api/external/polyhaven/..%2F..%2Fscan"
