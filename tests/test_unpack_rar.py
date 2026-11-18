@@ -78,6 +78,18 @@ def test_the_listing_is_read_from_7zz_technical_output():
     assert unpack.parse_listing(LISTING) == (2, 12)
 
 
+def test_a_7z_listing_marks_folders_only_by_their_attributes():
+    seven = (
+        "Path = /lib/C/Tiger.7z\nType = 7z\n\n----------\n"
+        "Path = Tiger\nSize = 0\nAttributes = D_ drwxr-xr-x\n\n"
+        "Path = Tiger/Maps\nSize = 0\nAttributes = D\n\n"
+        "Path = Tiger/a.uasset\nSize = 10\nAttributes = A_ -rw-r--r--\n\n"
+        "Path = Tiger/empty.txt\nSize = 0\nAttributes = A\n"
+    )
+
+    assert unpack.parse_listing(seven) == (2, 10)  # two files, an empty one too; two folders
+
+
 def test_a_rar_becomes_its_folder_and_the_password_goes_to_7zz_only(lib):
     root, tool = lib
 

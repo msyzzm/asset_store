@@ -81,13 +81,18 @@ def search(
     kind: str | None = None,
     limit: int = 50,
     offset: int = 0,
+    prefix: str = "",
 ) -> SearchResult:
+    """`prefix`: only files under that folder (a pack's contents)."""
     terms = parse_terms(query)
     if terms:
         where, params = _where_with_terms(terms, kind)
     else:
         where = f"WHERE {VISIBLE}" + (" AND f.kind = ?" if kind else "")
         params = [kind] if kind else []
+    if prefix:  # "/" sorts right before "0": [prefix/, prefix0) is everything under it
+        where += " AND f.rel_path >= ? AND f.rel_path < ?"
+        params = [*params, prefix.rstrip("/") + "/", prefix.rstrip("/") + "0"]
     # Evaluate the match once: ordered ids give both the total and the page.
     ids = [r[0] for r in conn.execute(f"SELECT f.id FROM files f {where} ORDER BY f.rel_path, f.id", params)]
     start = max(0, offset)

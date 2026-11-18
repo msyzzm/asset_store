@@ -68,6 +68,21 @@ def test_a_pack_is_one_result_and_its_own_name_ranks_first(lib):
     assert robots["match"] == "inside" and robots["hit_count"] == 12
     assert len(robots["hits"]) == packs.MAX_HITS and robots["hits"][0] == "Content/Anim/Rbot_Steam_00.uasset"
     assert result.packs[0]["match"] == "name"
+    assert result.packs[2]["hits"] == ["Props/steam_valve.fbx"]  # inside the archive, not its own name
+    assert result.packs[2]["hit_count"] == 1 and result.packs[2]["id"] and result.packs[0]["id"] is None
+
+
+def test_the_page_opens_a_pack_by_its_id_or_its_folder(lib):
+    conn, settings = lib
+    client = TestClient(create_app(settings))
+    gears = packs.search_packs(conn, "齿轮").packs[0]
+
+    card = client.get(f"/api/files/{gears['id']}/card").json()
+    inside = client.get("/api/search", params={"prefix": ROBOTS, "limit": 50}).json()
+
+    assert card["rel_path"] == "02_3D/Props/Gear Props - 齿轮道具.zip" and card["entry_count"] == 2
+    assert inside["total"] == 12 and all(i["rel_path"].startswith(ROBOTS + "/") for i in inside["items"])
+    assert client.get("/api/files/999999/card").status_code == 404
 
 
 def test_set_aside_packs_are_never_offered(lib):
@@ -97,15 +112,20 @@ def test_category_filter_and_paging(lib):
     assert page.total == 3 and _paths(page) == [f"art:/{ROBOTS}"]
 
 
-def test_meaning_matches_come_after_word_matches(lib):
+def test_after_the_named_packs_meaning_orders_the_rest(lib):
     conn, _ = lib
-    dungeon = conn.execute("SELECT id FROM files WHERE name = 'Dungeon - 地牢瓦片.zip'").fetchone()[0]
-    brick = conn.execute("SELECT id FROM files WHERE name = 'T_Brick.uasset'").fetchone()[0]
+    ids = dict(conn.execute("SELECT name, id FROM files"))
+    meaning = [ids["Dungeon - 地牢瓦片.zip"], ids["Gear Props - 齿轮道具.zip"], ids["T_Brick.uasset"]]
 
-    result = packs.search_packs(conn, "steam", meaning=[dungeon, brick])
+    result = packs.search_packs(conn, "steam", meaning=meaning)
 
-    assert _paths(result)[-1] == "art:/01_2D/Environments/Dungeon - 地牢瓦片.zip"  # the city is there already
-    assert result.packs[-1]["match"] == "meaning" and result.total == 4
+    assert _paths(result) == [
+        "art:/02_3D/Environments/SteamPunk City - 蒸汽朋克城市",  # its name says it: first, whatever the meaning
+        "art:/01_2D/Environments/Dungeon - 地牢瓦片.zip",  # closest in meaning
+        "art:/02_3D/Props/Gear Props - 齿轮道具.zip",  # a word inside, and close in meaning
+        f"art:/{ROBOTS}",  # words inside only: 12 hits, but nothing in meaning
+    ]
+    assert [p["match"] for p in result.packs] == ["name", "meaning", "inside", "inside"] and result.total == 4
 
 
 def test_previews_are_found_as_the_organizer_pairs_them(tmp_path):

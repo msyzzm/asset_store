@@ -28,8 +28,12 @@ const SCAN_IDLE_POLL_MS = 15000;
 // The scanner starts a requested scan within its 60 s minimum gap plus a poll.
 const SCAN_START_TIMEOUT_MS = 2 * 60 * 1000;
 
+// /api/agent/packs gives at most 50 a page.
+const PACK_PAGE_SIZE = 48;
+const DIM_LABELS = { '2D': '2D', '3D': '3D', audio: '音频' };
+
 const $ = (id) => document.getElementById(id);
-const state = { q: '', kind: '', offset: 0, requestSeq: 0, viewerSeq: 0, stopPlayer: null, stopModel: null, scanBusy: false, scanTimer: 0, scanSeq: 0, scanWaitingSince: null };
+const state = { q: '', kind: '', view: 'packs', prefix: '', offset: 0, requestSeq: 0, viewerSeq: 0, stopPlayer: null, stopModel: null, scanBusy: false, scanTimer: 0, scanSeq: 0, scanWaitingSince: null };
 const frameCache = new Map();
 // Only one card plays at a time; a re-rendered grid never fires mouseleave, so stop it explicitly.
 let stopHover = null;
@@ -192,10 +196,123 @@ function card(item) {
   return node;
 }
 
+// ---- search by pack: one card per pack (a folder, or an archive with its previews) ----
+
+function packThumb(pack) {
+  const badge = () => el('span', { className: 'ext', text: pack.kind === 'folder' ? '文件夹' : basename(pack.name).split('.').pop() });
+  if (!pack.links.thumb) return badge();
+  const img = el('img', { src: pack.links.thumb, loading: 'lazy', alt: '' });
+  img.addEventListener('error', () => img.replaceWith(badge()), { once: true });
+  return img;
+}
+
+function packTags(pack) {
+  const tags = [];
+  if (pack.dim) tags.push(DIM_LABELS[pack.dim] ?? pack.dim);
+  if (pack.tags?.style) tags.push(pack.tags.style);
+  if (pack.tags?.view && pack.tags.view !== '不限') tags.push(pack.tags.view);
+  return tags.map((t) => el('span', { className: 'pack-tag', text: t }));
+}
+
+function packWhy(pack) {
+  if (pack.match === 'meaning') return [el('div', { className: 'hit', text: '按意思找到' })];
+  if (pack.match !== 'inside') return [];
+  const more = pack.hit_count > pack.hits.length ? `（共 ${pack.hit_count} 个）` : '';
+  return pack.hits.slice(0, 2).map((hit, i) => el('div', {
+    className: 'hit', title: hit, text: `包内：${basename(hit)}${i === 0 ? more : ''}`,
+  }));
+}
+
+function packCard(pack) {
+  const thumbBox = el('div', { className: 'thumb' }, [packThumb(pack)]);
+  const engine = ENGINE_LABELS[pack.engine];
+  if (engine) thumbBox.append(el('span', { className: `engine-badge ${pack.engine}`, text: engine }));
+  const themes = pack.tags?.themes?.length ? `\n题材：${pack.tags.themes.join('、')}` : '';
+  const node = el('button', { className: 'card', type: 'button', title: `${pack.path}${pack.caption ? `\n${pack.caption}` : ''}${themes}` }, [
+    thumbBox,
+    el('div', { className: 'name', text: pack.name }),
+    el('div', { className: 'path', text: pack.category }),
+    el('div', { className: 'meta' }, [
+      ...packTags(pack),
+      el('span', { className: 'num', text: formatSize(pack.size) }),
+      el('span', { className: 'count', text: `${pack.files.toLocaleString('zh-CN')} 个文件` }),
+    ]),
+    ...packWhy(pack),
+  ]);
+  node.addEventListener('click', () => openPack(pack));
+  return node;
+}
+
+// A folder pack lists what it holds; an archive (or a lone file) opens as in the file list.
+async function openPack(pack) {
+  if (pack.kind === 'folder') {
+    $('q').value = '';
+    state.kind = '';
+    state.prefix = pack.path.slice(pack.path.indexOf(':/') + 2);
+    setView('files');
+    return;
+  }
+  const seq = state.requestSeq;
+  try {
+    const resp = await fetch(`/api/files/${pack.id}/card`);
+    if (!resp.ok) throw new Error(resp.status === 404 ? '索引里没有这个文件，等扫描更新' : `HTTP ${resp.status}`);
+    const item = await resp.json();
+    if (seq === state.requestSeq) openViewer(item);  // not after a new search
+  } catch (err) {
+    if (seq === state.requestSeq) $('summary').textContent = `打不开这个包：${err.message}`;
+  }
+}
+
+async function loadPacks(reset, seq, offset) {
+  const params = new URLSearchParams({ q: state.q, limit: PACK_PAGE_SIZE, offset });
+  let body;
+  try {
+    const resp = await fetch(`/api/agent/packs?${params}`);
+    if (!resp.ok) {
+      const detail = await resp.json().then((b) => b.detail, () => null);
+      throw new Error(typeof detail === 'string' ? detail : `HTTP ${resp.status}`);
+    }
+    body = await resp.json();
+  } catch (err) {
+    if (seq === state.requestSeq) $('summary').textContent = `搜索失败：${err.message}`;
+    return;
+  }
+  if (seq !== state.requestSeq) return;
+  if (reset) {
+    stopHover?.();
+    stopHover = null;
+    $('grid').replaceChildren();
+  }
+  $('grid').append(...body.packs.map(packCard));
+  state.offset = offset + body.packs.length;
+  const note = body.note ? `（${body.note}）` : '';
+  $('summary').textContent = body.total ? `共 ${body.total} 个素材包${note}` : `没有找到匹配的素材包${note}`;
+  $('more').hidden = state.offset >= body.total;
+}
+
+function showView() {
+  const packs = state.view === 'packs' && Boolean(state.q);
+  $('view-packs').setAttribute('aria-pressed', String(state.view === 'packs'));
+  $('view-files').setAttribute('aria-pressed', String(state.view === 'files'));
+  $('kinds').hidden = packs;  // types are for files; a pack holds many
+}
+
+function setView(view) {
+  state.view = view;
+  if (view === 'packs') state.prefix = '';  // back to searching, out of the pack being browsed
+  search();
+}
+
 async function load(reset) {
   const seq = ++state.requestSeq;
   const offset = reset ? 0 : state.offset;
+  showView();
+  if (state.view === 'packs' && state.q) {
+    await loadPacks(reset, seq, offset);
+    return;
+  }
   const params = new URLSearchParams({ q: state.q, limit: PAGE_SIZE, offset });
+  if (state.prefix) params.set('prefix', state.prefix);
   if (state.kind) params.set('kind', state.kind);
 
   let body;
@@ -219,7 +336,8 @@ async function load(reset) {
   }
   $('grid').append(...body.items.map(card));
   state.offset = offset + body.items.length;
-  $('summary').textContent = body.total ? `共 ${body.total} 个结果` : '没有找到匹配的素材';
+  const where = state.prefix ? `「${basename(state.prefix)}」里` : '';
+  $('summary').textContent = body.total ? `${where}共 ${body.total} 个${where ? '文件' : '结果'}` : '没有找到匹配的素材';
   $('more').hidden = state.offset >= body.total;
 }
 
@@ -227,6 +345,8 @@ function syncUrl() {
   const params = new URLSearchParams();
   if (state.q) params.set('q', state.q);
   if (state.kind) params.set('kind', state.kind);
+  if (state.view === 'files') params.set('view', 'files');
+  if (state.prefix) params.set('prefix', state.prefix);
   const query = params.toString();
   history.replaceState(null, '', query ? `?${query}` : location.pathname);
 }
@@ -632,9 +752,17 @@ function init() {
   const params = new URLSearchParams(location.search);
   $('q').value = params.get('q') ?? '';
   state.kind = params.get('kind') ?? '';
+  state.view = params.get('view') === 'files' ? 'files' : 'packs';
+  state.prefix = params.get('prefix') ?? '';
+  $('view-packs').addEventListener('click', () => setView('packs'));
+  $('view-files').addEventListener('click', () => setView('files'));
 
   let timer;
-  $('q').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(search, DEBOUNCE_MS); });
+  // Typing a new search leaves the pack being browsed.
+  $('q').addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { state.prefix = ''; search(); }, DEBOUNCE_MS);
+  });
   $('more').addEventListener('click', () => load(false));
   $('v-close').addEventListener('click', () => $('viewer').close());
   // Clearing the preview stops audio/video playback when the dialog closes.

@@ -100,14 +100,22 @@ def _said(done: subprocess.CompletedProcess, password: str) -> str:
     return " ".join(line.strip() for line in text.splitlines() if line.strip())[-OUTPUT_CHARS:]
 
 
+FOLDER_ATTRIBUTES = re.compile(r"^D|\bd[r-][w-][x-]")
+
+
+def _is_folder(fields: dict[str, str]) -> bool:
+    return fields.get("Folder") == "+" or bool(FOLDER_ATTRIBUTES.search(fields.get("Attributes", "")))
+
+
 def parse_listing(text: str) -> tuple[int, int]:
     """(files, bytes) from `7zz l -slt`: the blocks after the "----------" line, one per
-    member, as "Key = value" lines."""
+    member, as "Key = value" lines. A folder says "Folder = +" in rar and zip, but in 7z
+    only through its attributes ("D..." or a unix "drwx...")."""
     _, _, members = text.replace("\r\n", "\n").partition("\n----------\n")
     files = sizes = 0
     for block in members.split("\n\n"):
         fields = dict(line.split(" = ", 1) for line in block.splitlines() if " = " in line)
-        if "Path" in fields and fields.get("Folder") != "+":
+        if "Path" in fields and not _is_folder(fields):
             files += 1
             sizes += int(fields.get("Size") or 0)
     return files, sizes

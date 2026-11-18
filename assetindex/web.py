@@ -41,7 +41,7 @@ from assetindex.organize_web import add_organize_routes
 from assetindex.scan_request import is_requested, read_status, request_scan, stop_requested, timing
 from assetindex.scan_request import request_stop as request_scan_stop
 from assetindex.scanlock import is_scan_running
-from assetindex.search import MAX_LIMIT, MAX_QUERY_LENGTH, parse_terms, search
+from assetindex.search import MAX_LIMIT, MAX_QUERY_LENGTH, fetch_items, parse_terms, search
 from assetindex.packs import search_packs
 from assetindex.tags import add_tag_routes
 from assetindex.semantic import NoVectors, VectorIndex, ranked_ids, semantic_search
@@ -96,6 +96,7 @@ QUERY_VECTOR_CACHE_SIZE = 256  # "load more" asks for the same query again
 
 PROBE_SLOTS = 1  # connection tests at once
 SEMANTIC_SLOTS = 4  # semantic searches waiting on the API at once
+MAX_PREFIX_LENGTH = 1000  # a pack's folder, for listing what it holds
 PACK_MEANING_CARDS = 3000  # cards semantic search hands to search by pack, before grouping
 
 
@@ -215,6 +216,7 @@ def create_app(settings: Settings) -> FastAPI:
         limit: int = Query(50, ge=1, le=MAX_LIMIT),
         offset: int = Query(0, ge=0),
         mode: Literal["text", "semantic"] = "text",
+        prefix: str = Query("", max_length=MAX_PREFIX_LENGTH),
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> dict:
         if kind and kind not in KINDS:
@@ -222,8 +224,16 @@ def create_app(settings: Settings) -> FastAPI:
         if mode == "semantic" and parse_terms(q):
             result = semantic(conn, q, kind, limit, offset)
         else:
-            result = search(conn, q, kind=kind, limit=limit, offset=offset)
+            result = search(conn, q, kind=kind, limit=limit, offset=offset, prefix=prefix)
         return {"total": result.total, "items": result.items}
+
+    @app.get("/api/files/{file_id}/card")
+    def api_card(file_id: FileId, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+        """One file as a search result shows it (the page opens its viewer with this)."""
+        items = fetch_items(conn, [file_id], [])
+        if not items:
+            raise HTTPException(404, "file not indexed")
+        return items[0]
 
     def query_vector(config: EmbedConfig, q: str) -> list[float]:
         key = (config.base_url, config.model, q)

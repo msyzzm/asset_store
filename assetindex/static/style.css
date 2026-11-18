@@ -81,6 +81,40 @@ body {
 .bar #q { flex: 1; min-width: 0; font-size: 15px; }
 .bar #q:focus-visible { outline: 2px solid var(--select); outline-offset: -1px; border-color: transparent; background: var(--surface); }
 
+/* Results by pack or by file: a two-part switch beside the search box. */
+.views {
+  flex: none;
+  display: inline-flex;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.view-btn {
+  padding: 0 14px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--muted);
+  background: var(--bg);
+  border: 0;
+  cursor: pointer;
+}
+.view-btn + .view-btn { border-left: 1px solid var(--border); }
+.view-btn:hover { color: var(--text); }
+.view-btn[aria-pressed="true"] { color: var(--text); font-weight: 600; background: var(--surface); box-shadow: inset 0 -2px 0 var(--select); }
+.view-btn:focus-visible { outline: 2px solid var(--select); outline-offset: -2px; }
+
+/* A pack's 2D/3D, style and view, before its size. */
+.pack-tag {
+  flex: none;
+  padding: 0 5px;
+  font-size: 11px;
+  line-height: 17px;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
 .kinds {
   display: flex;
   gap: 2px;

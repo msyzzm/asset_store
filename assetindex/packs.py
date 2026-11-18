@@ -12,6 +12,7 @@ import sqlite3
 import threading
 from dataclasses import dataclass, field
 
+from assetindex.archive_queries import entry_hits
 from assetindex.categories import DUPLICATES, TO_DELETE
 from assetindex.classify import under
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
@@ -60,6 +61,7 @@ class _Request:
     """One search: each root's layout looked up once, each folder's files read once."""
 
     conn: sqlite3.Connection
+    terms: list[str] = field(default_factory=list)
     layouts: dict[str, Layout] = field(default_factory=dict)
     folders: dict[tuple[str, str], list[sqlite3.Row]] = field(default_factory=dict)
 
@@ -120,13 +122,22 @@ def _group(req: _Request, rows, terms: list[str], category: str) -> dict[tuple[s
 
 
 def _ranked(word: dict, meaning: dict) -> list[_Found]:
-    order = {"name": 0, "inside": 1}
-    ranked = sorted(word.values(), key=lambda p: (order[p.match], -len(p.hits), p.path))
-    for key, pack in meaning.items():  # in the order semantic search gave
+    """Named packs first (most hits first); then the rest by meaning, whether a word
+    matched inside or not; last, packs only a word inside matched (most hits first). A
+    pack with one file called "fighter" no longer outranks every warrior pack."""
+    closeness = {key: n for n, key in enumerate(meaning)}  # in the order semantic search gave
+    named = [p for p in word.values() if p.match == "name"]
+    rest = [p for p in word.values() if p.match != "name"]
+    for key, pack in meaning.items():
         if key not in word:
             pack.match = "meaning"
-            ranked.append(pack)
-    return ranked
+            rest.append(pack)
+    unranked = len(closeness)
+
+    def order(pack: _Found) -> tuple:
+        return closeness.get((pack.root, pack.path), unranked), -len(pack.hits), pack.path
+
+    return sorted(named, key=lambda p: (-len(p.hits), p.path)) + sorted(rest, key=order)
 
 
 def _folder_pack(req: _Request, pack: _Found) -> tuple[int, int, int | None, str | None, list[int]]:
@@ -213,7 +224,12 @@ def describe(req: _Request, pack: _Found) -> dict:
     if thumb is not None:
         links["thumb"] = f"/api/files/{thumb}/thumb"
     category, _, name = pack.path.rpartition("/")
+    hits = sorted(pack.hits)
+    if kind == "archive":  # the files inside that matched, not the archive's own name
+        inside = entry_hits(req.conn, own["id"], own["rel_path"], req.terms) if req.terms else []
+        hits = inside + [h for h in hits if h != name]
     return {
+        "id": own["id"] if own is not None else None,  # the archive or file itself; None for a folder
         "path": f"{pack.root}:/{pack.path}",
         "name": name,
         "category": category,
@@ -225,8 +241,8 @@ def describe(req: _Request, pack: _Found) -> dict:
         "caption": _caption(req.conn, ids),
         "tags": tags_of(req.conn, pack.root, pack.path),  # view (a hint only), style, themes; None if not tagged
         "match": pack.match,
-        "hit_count": len(pack.hits),
-        "hits": sorted(pack.hits)[:MAX_HITS],
+        "hit_count": len(hits),  # an archive: its matching files inside (entry_hits caps them)
+        "hits": hits[:MAX_HITS],
         "links": links,
     }
 
@@ -245,8 +261,8 @@ def search_packs(
     meaning: list[int] | None = None,
 ) -> PackResult:
     """Packs for `query`; `meaning` is semantic search's file ids, best first, if any."""
-    req = _Request(conn)
     terms = parse_terms(query)
+    req = _Request(conn, terms)
     rows = []
     if terms:
         where, params = _where_with_terms(terms, None)

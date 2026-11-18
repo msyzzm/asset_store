@@ -19,7 +19,11 @@
   <header class="bar">
     <div class="bar-main">
       <h1>素材库</h1>
-      <input id="q" type="search" placeholder="搜索文件名或路径，空格分隔多个词" autocomplete="off" autofocus>
+      <input id="q" type="search" placeholder="搜索素材，比如 战士、蒸汽朋克 场景、fighter" autocomplete="off" autofocus>
+      <div class="views" role="group" aria-label="结果按什么列出">
+        <button id="view-packs" class="view-btn" type="button" aria-pressed="true" title="一个素材包一条，也按意思找">素材包</button>
+        <button id="view-files" class="view-btn" type="button" aria-pressed="false" title="一个文件一条，只按文件名和路径找">文件</button>
+      </div>
       <button id="settings-btn" class="btn secondary" type="button" title="看图描述和素材整理用的模型">设置</button>
     </div>
     <nav id="kinds" class="kinds" aria-label="按类型筛选"></nav>
