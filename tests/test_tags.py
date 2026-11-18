@@ -53,8 +53,10 @@ def test_an_answer_becomes_tags():
 
     assert got == tags.Tags(view="不限", style="写实", themes=("蒸汽朋克", "维多利亚", "城市"))
     assert tags.parse_tags('{"view": "鸟瞰", "style": "油画", "themes": ""}') == tags.Tags("不限", "其他", ())
-    with pytest.raises(ValueError):
-        tags.parse_tags("没有 JSON")
+    with pytest.raises(ValueError, match="回答里没有 JSON：抱歉，我看不出"):  # what it said instead, to see why
+        tags.parse_tags("抱歉，我看不出这是什么" + "。" * 200)
+    with pytest.raises(ValueError, match="（空）"):
+        tags.parse_tags("  ")
 
 
 def test_a_job_tags_the_packs_asked_for_and_search_shows_them(lib):

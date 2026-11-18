@@ -84,7 +84,8 @@ def parse_tags(text: str) -> Tags:
     """The model's JSON answer, checked; ValueError if there is none."""
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end <= start:
-        raise ValueError("回答里没有 JSON")
+        said = " ".join(text.split())[:ANSWER_SHOWN] or "（空）"
+        raise ValueError(f"回答里没有 JSON：{said}")
     try:
         data = json.loads(text[start : end + 1])
     except ValueError:
