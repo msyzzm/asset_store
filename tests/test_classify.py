@@ -4,6 +4,7 @@ import zipfile
 import pytest
 from PIL import Image
 
+from assetindex import classify
 from assetindex.archive_index import index_archives
 from assetindex.caption import CaptionClient, CaptionConfig
 from assetindex.classify import (
@@ -75,6 +76,16 @@ def test_prompt_lists_every_category(library):
 )
 def test_answers_are_validated(answer, category):
     assert parse_answer(answer).category == category
+
+
+def test_a_model_that_thinks_aloud_first_is_read_from_its_last_json():
+    """Live 2026-11-17: "auto:fast" landed on a model that reasons in plain text; 6 of 7 packs failed."""
+    said = ('好的，我现在需要处理这个素材包的分类问题。格式是 {"category": "分类路径", "name": "名字"}，'
+            '路径显示在 02_3D/Animations 下。所以：{"category": "02_3D/Characters", "name": "格斗动作", "reason": "r"}')
+
+    assert parse_answer(said).category == "02_3D/Characters"
+    assert classify.ANSWER_TOKENS >= 1000  # room to think and still answer
+    assert build_prompt("路径：x").rstrip().endswith("JSON。")  # reminded last, after the facts
 
 
 @pytest.mark.parametrize("answer", ["no json here", "{broken", "[1, 2]"])

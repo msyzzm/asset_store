@@ -33,7 +33,8 @@ SAMPLE_NAMES = 40
 SHEET_CELLS = 9
 CELL_BOX = (160, 160)
 PICTURE_BOX = (512, 512)
-ANSWER_TOKENS = 300
+ANSWER_TOKENS = 1500  # 300 was cut short when "auto:fast" landed on a model that reasons first
+FLAT_OBJECT = re.compile(r"\{[^{}]*\}")
 CAPTION_TOKENS = 300  # extra room when the answer also describes the picture (Chinese: ~1.5 tokens a character)
 ITEM_PROBLEM = 422  # an answer we can't use counts against this unit, like a refused picture
 _BAD_NAME_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f\x7f]')
@@ -230,19 +231,28 @@ def build_prompt(facts: str, with_caption: bool = False) -> str:
         "只有从包里的文件名或原名能确认作者或商店（比如 Brushify、Synty）时，才写成「作者 - 内容」；"
         "不要写引擎名（UE、Unity）、下载网站名或文件夹名。\n\n"
         f"{caption}只输出一个 JSON，不要别的文字：{fields}\n\n"
-        f"素材包信息：\n{facts}"
+        f"素材包信息：\n{facts}\n\n"
+        "再说一次：直接回答，只输出那一个 JSON。"
     )
+
+
+def last_json_object(text: str) -> object:
+    """The last flat {...} in the answer that parses: a model that thinks aloud first may
+    quote the format on its way. ValueError if there is none."""
+    found = FLAT_OBJECT.findall(text)
+    if not found:
+        raise ValueError("回答里没有 JSON")
+    for candidate in reversed(found):
+        try:
+            return json.loads(candidate)
+        except ValueError:
+            continue
+    raise ValueError("回答里的 JSON 不完整")
 
 
 def parse_answer(text: str) -> Proposal:
     """The model's JSON answer, validated. ValueError if there is none."""
-    start, end = text.find("{"), text.rfind("}")
-    if start < 0 or end <= start:
-        raise ValueError("回答里没有 JSON")
-    try:
-        data = json.loads(text[start : end + 1])
-    except ValueError:
-        raise ValueError("回答里的 JSON 不完整") from None
+    data = last_json_object(text)
     if not isinstance(data, dict):
         raise ValueError("回答不是 JSON 对象")
     category = data.get("category")

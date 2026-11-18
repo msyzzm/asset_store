@@ -184,6 +184,46 @@ def test_duplicate_marks_go_when_the_kept_copy_does(lib, server):
     assert row["dup_of"] is None and row["status"] == "todo" and row["target"] is None
 
 
+@pytest.mark.parametrize(
+    "status, target, marked",
+    [
+        ("accepted", "2D/Fire Pack (1)", True),  # accepted and moved before the twin was found: still a copy
+        ("accepted", "01_2D/VFX/Fire", False),  # accepted, move still to come: the user's plan stands
+        ("rejected", None, False),
+    ],
+)
+def test_a_decided_copy_found_later_is_marked_unless_its_move_is_pending_or_rejected(lib, status, target, marked):
+    """Live 2026-11-17: 6 packs and their .rar twins were all accepted and moved; the
+    report counted 7 groups (7.35 GB) while the 重复 tab showed 0."""
+    conn, _, _ = lib
+    refresh_units(conn, "lib")
+    with conn:
+        conn.execute("UPDATE organize_units SET status = ?, target = ? WHERE path = '2D/Fire Pack (1)'", (status, target))
+
+    organize.apply_duplicates(conn, "lib", organize.current_units(conn, "lib"))
+
+    row = _rows(conn)["2D/Fire Pack (1)"]
+    assert (row["dup_of"] == "2D/Fire Pack") is marked
+    assert row["status"] == ("proposed" if marked else status)
+
+
+def test_a_copy_already_set_aside_is_not_marked_again(lib):
+    import shutil
+
+    conn, _, root = lib
+    (root / "_Duplicates").mkdir()
+    shutil.move(root / "2D" / "Fire Pack (1)", root / "_Duplicates" / "Fire Pack (1)")
+    scan_root(conn, "lib", root)
+    refresh_units(conn, "lib")
+    with conn:
+        conn.execute("UPDATE organize_units SET status = 'accepted', target = path WHERE path = '_Duplicates/Fire Pack (1)'")
+
+    organize.apply_duplicates(conn, "lib", organize.current_units(conn, "lib"))
+
+    row = _rows(conn)["_Duplicates/Fire Pack (1)"]
+    assert row["status"] == "accepted" and row["dup_of"] is None
+
+
 def test_old_names_lose_junk_sources_and_notes_are_not_sorted(lib, server):
     conn, settings, root = lib
     (root / "2D" / "解压密码.txt").write_text("1234", encoding="utf-8")

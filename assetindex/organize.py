@@ -143,9 +143,18 @@ def _taken(conn: sqlite3.Connection, root: str, exclude: str | None = None) -> s
     return taken
 
 
+def _may_mark_copy(path: str, row: sqlite3.Row) -> bool:
+    """An undecided copy, or one accepted and already moved before its twin was found.
+    A rejected one, a move still to come, or a copy already set aside is left alone."""
+    if row["status"] not in DECIDED:
+        return True
+    return row["status"] == "accepted" and row["target"] == path and not path.startswith(DUPLICATES + "/")
+
+
 def apply_duplicates(conn: sqlite3.Connection, root: str, units: dict) -> list:
     """Mark the extra copies of identical packs; packs no longer duplicated go back to
-    being classified. A decision the user already made is left alone."""
+    being classified. A decision the user already made is left alone, except a pack
+    accepted and moved before its twin was found: it is still a copy."""
     preferred = [r[0] for r in conn.execute("SELECT path FROM dup_keep WHERE root = ?", (root,))]
     groups = duplicate_units(units, preferred)
     now = time.time()
@@ -161,9 +170,9 @@ def apply_duplicates(conn: sqlite3.Connection, root: str, units: dict) -> list:
         for group in groups:
             for other in group.others:
                 row = conn.execute(
-                    "SELECT status, is_dir FROM organize_units WHERE root = ? AND path = ?", (root, other)
+                    "SELECT status, is_dir, target FROM organize_units WHERE root = ? AND path = ?", (root, other)
                 ).fetchone()
-                if row is None or row["status"] in DECIDED:
+                if row is None or not _may_mark_copy(other, row):
                     continue
                 name = PurePosixPath(other).name
                 how = "内容完全相同" if group.exact else "文件名和大小完全相同"
