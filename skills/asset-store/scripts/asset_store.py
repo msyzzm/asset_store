@@ -153,6 +153,18 @@ def cmd_downloads(args):
     return {**state, "items": state["items"][: args.limit]}
 
 
+def cmd_download_cancel(args):
+    return _json(args, f"/api/downloads/{args.id}/cancel", body={})
+
+
+def cmd_download_retry(args):
+    return _json(args, f"/api/downloads/{args.id}/retry", body={})
+
+
+def cmd_external_keys(args):
+    return _json(args, "/api/external/keys")
+
+
 def _external_path(args, suffix: str = "") -> str:
     site, asset = (urllib.parse.quote(v, safe="") for v in (args.site, args.asset_id))
     return f"/api/external/{site}/{asset}{suffix}"
@@ -241,9 +253,18 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=20)
     p.set_defaults(func=cmd_downloads)
 
+    p = sub.add_parser("download-cancel", help="cancel a queued or running download")
+    p.add_argument("id", type=int)
+    p.set_defaults(func=cmd_download_cancel)
+    p = sub.add_parser("download-retry", help="queue a failed or cancelled download again")
+    p.add_argument("id", type=int)
+    p.set_defaults(func=cmd_download_retry)
+
+    sub.add_parser("external-keys", help="which sites' keys are set (Sketchfab, Freesound, Poly Pizza)").set_defaults(
+        func=cmd_external_keys)
     p = sub.add_parser("external", help="search free asset sites (Poly Haven, OpenGameArt, ...): English words")
     p.add_argument("query", nargs="*")
-    p.add_argument("--source", default="", help="one site only, e.g. polyhaven; empty = every site")
+    p.add_argument("--source", default="", help="one site only, e.g. polyhaven or openverse_audio; empty = every site")
     p.add_argument("--offset", type=int, default=0, help="next page: the site's `next`")
     p.add_argument("--limit", type=int, default=10, help="items kept per site")
     p.set_defaults(func=cmd_external)

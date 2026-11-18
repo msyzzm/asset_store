@@ -1,6 +1,6 @@
 ---
 name: asset-store
-description: Search and fetch game assets (images, sprites, VFX, audio, music, 3D models, Unity/Unreal packages, zip/rar/7z packs) from the user's NAS asset library. Use when the user asks to find, browse, preview or download art/audio/model assets, look for "a sword icon", "explosion effect", "背景音乐", "宝箱", or pull a file from an asset pack into a project. When the library has nothing fitting, also searches free asset sites (Poly Haven, ambientCG, OpenGameArt, itch.io, Sketchfab, Freesound...) and downloads from them into the library. Also starts library scans and picture-description jobs.
+description: Search and fetch game assets (images, sprites, VFX, audio, music, 3D models, Unity/Unreal packages, zip/rar/7z packs) from the user's NAS asset library. Use when the user asks to find, browse, preview or download art/audio/model assets, look for "a sword icon", "explosion effect", "背景音乐", "宝箱", or pull a file from an asset pack into a project. When the library has nothing fitting, also searches free asset sites (Poly Haven, ambientCG, OpenGameArt, itch.io, Sketchfab, Freesound, Poly Pizza, Openverse...) and downloads from them into the library. Also starts library scans and picture-description jobs.
 ---
 
 # 素材库（asset-store）
@@ -52,20 +52,33 @@ python scripts/asset_store.py tasks
 
 ## 库里没有：去外部网站找
 
-库里搜不到合适的素材时，可以搜免费素材网站。目前接了 Poly Haven、ambientCG、OpenGameArt、itch.io、Sketchfab、Freesound；以后可能还会加，以返回的 `sources` 为准。
+库里搜不到合适的素材时，可以搜免费素材网站。以返回的 `sources` 为准，目前有：
 
-1. **搜**：`python scripts/asset_store.py external treasure chest --limit 10`
+| source | 有什么 | 说明 |
+|---|---|---|
+| `polyhaven` | HDRI、PBR 贴图、模型 | CC0 |
+| `ambientcg` | PBR 材质、HDRI、模型 | CC0，每个规格一个 zip |
+| `opengameart` | 2D、像素、3D、音乐、音效 | 授权各异；它要求每 10 秒最多请求一次，搜一次常要等 10 秒左右 |
+| `itch` | 2D、像素、UI 等免费素材包 | 只按英文标签找（`pixel art` 当成标签 `pixel-art`）；**不能下载**，只能把 `page` 给用户去手动下 |
+| `sketchfab` | 3D 模型（最多） | 授权各异；下载要 key |
+| `freesound` | 音效 | 授权各异；搜索就要 key；只能下试听版（MP3/OGG），原始文件要用户手动下 |
+| `polypizza` | 低模（low poly）模型，GLB | CC0 或 CC-BY；搜索就要 key |
+| `openverse_images` | CC 图片（Flickr、Wikimedia 等） | 授权各异；**每天只能请求 200 次**，必须带关键词 |
+| `openverse_audio` | CC 音乐、音效 | 同上 |
+
+1. **搜**：`python scripts/asset_store.py external treasure chest --source polypizza --limit 10`
    - 这些网站只认英文：中文需求先翻成英文关键词。返回里 `chinese: true` 表示你传的是中文，多半搜不到东西。
-   - 默认同时搜所有网站，每个网站留前 `--limit` 条。`--source polyhaven` 只搜一个网站，翻页用 `--offset`，值取那个网站返回的 `next`。
-   - 每个网站一段：`label`、`license`（网站整体的授权）、`total`、`error`（这个网站出错时的原因，不影响其他网站）、`items`。
+   - **按要找的东西挑网站，用 `--source` 一次搜一个**，不要每次都搜全部：模型找 `polypizza`、`sketchfab`、`polyhaven`；贴图、材质、HDRI 找 `polyhaven`、`ambientcg`；音效找 `freesound`、`openverse_audio`；2D 和像素素材找 `opengameart`、`itch`；参考图找 `openverse_images`。不带 `--source` 会同时搜所有网站（慢，还会用掉 Openverse 的每日额度）。
+   - 每个网站留前 `--limit` 条。翻页用 `--offset`，值取那个网站返回的 `next`；`more: true` 表示还有下一页。
+   - 每个网站一段：`label`、`license`（网站整体的授权）、`total`（有的网站不给，就没有这个字段，看 `more`）、`error`（这个网站出错的原因，例如要 key、额度用完，不影响其他网站）、`notice`（结果不全时的说明，例如 Poly Pizza 有的词只列出了 CC0 模型）、`items`。
    - 每条有 `source`、`id`、`title`、`kind`、`thumb`（网站上的预览图地址）、`page`（原页面）、`tags`；`in_library` 表示库里已经有这个素材（给出库里的路径），`downloaded: true` 表示已经下过，这两种情况都不要再下。
 2. **看**：`python scripts/asset_store.py external-show polyhaven treasure_chest`
-   - 有 `description`、`authors`、`license`（这个素材自己的授权）、`previews`、`note`（下载限制等说明），以及 `options`：可以下的规格，每个有 `key`、`label`、`size`（字节，有时没有）和 `ready`（false 表示这个规格现在下不了）。
-   - **授权**：Poly Haven、ambientCG 是 CC0，可以随便用；其他网站每个素材的授权都不一样（如 CC-BY 要署名、CC-BY-NC 不可商用），一定要把 `license` 告诉用户。
+   - 有 `description`、`authors`、`license`（这个素材自己的授权）、`attribution`（要署名的素材给出的署名文字，CC0 的没有）、`previews`、`note`（下载限制等说明），以及 `options`：可以下的规格，每个有 `key`、`label`、`size`（字节，有时没有）和 `ready`（false 表示这个规格现在下不了）。`options` 为空时（如 itch.io）只能让用户去 `page` 手动下。
+   - **授权**：Poly Haven、ambientCG 是 CC0，可以随便用；其他网站每个素材的授权都不一样（如 CC-BY 要署名、带 NC 的不可商用），一定要把 `license` 告诉用户，有 `attribution` 时一并给出，提醒用户放进游戏的鸣谢里。
 3. **下到素材库**：`python scripts/asset_store.py external-get polyhaven treasure_chest --option fbx/1k`
    - 会让服务器下载，先和用户确认素材、规格和授权。`--option` 用 `external-show` 里 `ready` 为 true 的 `key`；同一个素材有多种规格时，没有特别要求就选小一点的（比如 1K 贴图）。
    - 文件下到素材库的 `_下载` 文件夹，进度和结果用 `downloads` 查看。下完自动扫描，扫完就能在库里搜到。
-   - 409 说要 key 时：Sketchfab、Freesound 下载要先在网页「外部素材」页填 key，告诉用户去填，不要自己设置。
+   - 409 或 `error` 说要 key 时：Sketchfab、Freesound、Poly Pizza 要用户自己账号的 key，告诉用户去网页「外部素材」页右上角「网站账号」里填，不要自己设置。`external-keys` 可以看哪些已经填了。
 
 ## 其他操作（会让服务器干活，用户要求时才做）
 
@@ -76,6 +89,7 @@ python scripts/asset_store.py tasks
 - `tasks`：查看扫描和描述任务在做什么、上次的结果。
 - `download 链接 --title 名字`：让服务器把一个 http/https 下载链接下到素材库的 `_下载` 文件夹（用 aria2，大小不限），下完自动扫描。链接必须是文件本身的直链：贴网页地址会失败（下到网页时标成失败，不入库）。下载前要和用户确认；网盘分享链接下不了。
   - 409 表示下载服务没运行，或 NAS 对它是只读的（要在 `.env` 里设 `ASSET_MOVER_ACCESS=rw`）。
+- `download-cancel ID`：取消排队中或下载中的下载；`download-retry ID`：重试失败或取消了的下载。用户要求时才做。
 - `downloads`：看下载队列。`status` 取值：`queued` 排队、`active` 下载中（`progress` 里有 `done`/`total`/`speed` 字节数）、`done` 完成（`path` 是落地位置）、`duplicate` 完成但库里已有一模一样的文件（`dup_of`），`failed` 失败（`error` 是原因）、`cancelled` 已取消。
 
 ## 出错
@@ -85,7 +99,7 @@ python scripts/asset_store.py tasks
 | 状态码 | 含义 |
 |---|---|
 | 404 | id 不存在，或者文件已从 NAS 删除，需要重新扫描 |
-| 409 | 功能没启用（比如语义搜索、看图描述），或已有任务在跑；外部网站下载时表示这个网站要 key |
+| 409 | 功能没启用（比如语义搜索、看图描述），或已有任务在跑，或下载服务没运行；外部网站下载时表示这个网站要 key |
 | 413 | 包里的文件太大，只能整包下载 |
 | 415 | 这类压缩包不能单独取文件，或者没有缩略图 |
 | 422 | 包里的这个文件取不出来，改为整包下载 |
@@ -119,5 +133,6 @@ GET 请求不需要认证。POST 请求要带请求头 `X-Requested-With: anythi
 | 搜外部网站 | `GET /api/external/search?q=&source=&offset=0`（source 为空：所有网站） |
 | 外部素材详情 | `GET /api/external/{source}/{id}` |
 | 下载外部素材到素材库 | `POST /api/external/{source}/{id}/download`，body 为 `{"option":"fbx/1k"}`（可加 `"root"`） |
+| 哪些网站的 key 已填 | `GET /api/external/keys` |
 
 完整的接口文档在服务的 `/docs` 页面（FastAPI 自动生成）。

@@ -90,3 +90,22 @@ def test_external_ids_cannot_reach_other_routes(monkeypatch):
     calls = _calls(monkeypatch, {})
     assert skill.main(["external-show", "polyhaven", "../../scan"]) == 0
     assert calls[0][0] == "/api/external/polyhaven/..%2F..%2Fscan"
+
+
+def test_downloads_can_be_cancelled_and_retried_and_keys_looked_at(monkeypatch):
+    calls = _calls(monkeypatch, {})
+    assert skill.main(["download-cancel", "7"]) == 0
+    assert skill.main(["download-retry", "7"]) == 0
+    assert skill.main(["external-keys"]) == 0
+    assert calls == [
+        ("/api/downloads/7/cancel", None, {}),
+        ("/api/downloads/7/retry", None, {}),
+        ("/api/external/keys", None, None),
+    ]
+
+
+def test_every_site_the_server_searches_is_in_the_skill():
+    from assetindex.external_web import SOURCES
+
+    text = (SCRIPT.parent.parent / "SKILL.md").read_text(encoding="utf-8")
+    assert [name for name in SOURCES if f"`{name}`" not in text] == []
