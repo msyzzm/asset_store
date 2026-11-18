@@ -121,6 +121,21 @@ def test_same_size_but_different_content_is_no_twin(conn, settings, tmp_path):
     assert find_twin(conn, "art", _base(settings), other, "x/other.mp3") is None
 
 
+@pytest.mark.parametrize("page", [b"<!DOCTYPE html><html><body>login</body></html>", b"\n  <html lang=en>"])
+def test_a_web_page_instead_of_a_file_fails_with_a_hint(conn, settings, rpc, page):
+    download_id = downloads.add(conn, "art", "https://example.org/asset/123")
+    fetcher = _fetcher(conn, settings, rpc)
+    fetcher.tick()
+    rpc.finish("g0", name="123", data=page)
+
+    fetcher.tick()
+
+    row = downloads.get(conn, download_id)
+    assert row["status"] == "failed" and "网页" in row["error"]
+    assert not (_base(settings) / DOWNLOADS).joinpath("123").exists()
+    assert not partial_dir(_base(settings), download_id).exists()
+
+
 def test_a_finished_download_waits_while_a_move_job_runs(conn, settings, rpc):
     download_id = downloads.add(conn, "art", "https://example.org/a.zip")
     busy = {"on": True}

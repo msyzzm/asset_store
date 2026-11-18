@@ -41,6 +41,7 @@ USER_AGENT = "assetindex-fetcher/1.0 (self-hosted game asset library)"
 FREE_MARGIN = 1024**3  # left free on the NAS after a download
 MAX_TWIN_CHECKS = 50  # same-size files hashed when looking for a twin
 MAX_NAME_BYTES = 200
+HTML_SNIFF_BYTES = 512
 ARIA2_ERRORS = {
     "3": "找不到文件（404）",
     "9": "磁盘空间不够",
@@ -120,6 +121,13 @@ def _error_text(status: dict) -> str:
 
 def _clear(folder: Path) -> None:
     shutil.rmtree(folder, ignore_errors=True)
+
+
+def _is_web_page(path: Path) -> bool:
+    """A page (a login form, a site's asset page) where a file was expected."""
+    with path.open("rb") as f:
+        head = f.read(HTML_SNIFF_BYTES).lstrip().lower()
+    return head.startswith((b"<!doctype html", b"<html"))
 
 
 def _resumable(folder: Path) -> bool:
@@ -269,6 +277,9 @@ class Fetcher:
             self._fail(row, f"下载完成，但下载目录里有 {len(files)} 个文件", folder)
             return
         try:
+            if _is_web_page(files[0]):
+                self._fail(row, "下到的是一个网页，不是文件：要贴文件本身的下载直链（网页上下载按钮的链接）", folder)
+                return
             target = _landing(base, safe_name(files[0].name, row["id"]))
             self.move(str(files[0]), str(target), False)
         except OSError as err:
