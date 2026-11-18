@@ -574,12 +574,31 @@ async function openViewer(item) {
 }
 
 async function copyPath(text) {
+  let copied = false;
   try {
-    // Clipboard API needs a secure context (https or localhost).
+    // Clipboard API needs a secure context (https or localhost): not this LAN http page.
     await navigator.clipboard.writeText(text);
-    $('v-copy').textContent = '已复制';
+    copied = true;
   } catch {
-    $('v-copy').textContent = '复制失败，请手动选中上方路径';
+    copied = copyBySelection(text);
+  }
+  $('v-copy').textContent = copied ? '已复制' : '复制失败，请手动选中上方路径';
+}
+
+// The old way, which plain http still allows: select a hidden textarea and copy.
+// It goes inside the open dialog: a modal dialog makes the rest of the page inert.
+function copyBySelection(text) {
+  const area = el('textarea', { readOnly: true });
+  area.value = text;
+  area.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+  $('viewer').append(area);
+  area.select();
+  try {
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  } finally {
+    area.remove();
   }
 }
 
