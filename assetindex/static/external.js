@@ -72,6 +72,7 @@ function renderSource(name, result) {
   ]);
   const section = el('section', { className: 'x-source', id: `x-${name}` }, [head]);
   if (result.error) section.append(el('p', { className: 'x-error', text: `${result.label} 没搜到：${result.error}` }));
+  if (result.notice) section.append(el('p', { className: 'x-notice', text: result.notice }));
   else if (!kept.items.length) section.append(el('p', { className: 'x-empty', text: '没有结果，换个英文词试试。' }));
   section.append(el('div', { className: 'grid' }, kept.items.map(itemCard)));
   const left = result.total == null ? null : result.total - kept.items.length;

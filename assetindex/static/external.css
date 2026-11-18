@@ -15,6 +15,7 @@
 .x-source-head a { margin-left: auto; color: var(--accent); font-size: 13px; }
 .x-error { margin: 8px 20px 0; color: var(--danger); }
 .x-empty { margin: 8px 20px 0; color: var(--muted); }
+.x-notice { margin: 8px 20px 0; padding: 6px 10px; background: var(--surface); border-left: 3px solid var(--busy); }
 .x-source .more { margin-top: 0; }
 
 /* kind on the left, library state on the right, over the picture */

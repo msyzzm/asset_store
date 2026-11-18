@@ -15,6 +15,10 @@ LICENSE = "CC0 或 CC-BY"
 MATCHES_LIBRARY = False  # its ids are random
 API = "https://api.poly.pizza/v1.1"
 PAGE = 24  # its maximum is 32
+CC0_ONLY = 1  # its License filter: 0 = CC-BY, 1 = CC0
+# Its keyword search answers 500 for many words ("tree", "car") whenever their CC-BY
+# models are in the results, but works with only the CC0 ones (seen 2026-11-18).
+CC0_NOTICE = "Poly Pizza 的服务器搜这个词的 CC-BY 模型时出错，这里只列出了 CC0 模型。"
 _ID_CHARS = frozenset("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
 
 _searches = external.TtlCache(600)
@@ -57,17 +61,27 @@ def _models(raw) -> list[dict]:
 def search(q: str, offset: int = 0) -> dict:
     page = offset // PAGE
     params = {"Limit": PAGE, "Page": page}
-    # no keyword: its search wants at least one filter; the CC0 models then
-    url = f"{API}/search/{quote(q, safe='')}?{urlencode(params)}" if q else f"{API}/search?{urlencode({**params, 'License': 1})}"
+    path = f"{API}/search/{quote(q, safe='')}" if q else f"{API}/search"  # no keyword: it wants a filter
     headers = _headers()
 
+    def ask(only_cc0: bool):
+        return external.get_json(f"{path}?{urlencode({**params, 'License': CC0_ONLY} if only_cc0 else params)}",
+                                 headers=headers)
+
     def load():
-        raw = external.get_json(url, headers=headers)
+        notice = ""
+        try:
+            raw = ask(only_cc0=not q)
+        except external.SiteBusy as err:
+            if not (q and "HTTP 500" in str(err)):
+                raise
+            raw, notice = ask(only_cc0=True), CC0_NOTICE
         models = _models(raw)
         for m in models:
             if external.web_url(m.get("Download")):  # whole enough to stand for its detail
                 _details.put(m["ID"], m)
-        return {"items": [_item(m) for m in models], "total": int(raw.get("total") or 0), "next": (page + 1) * PAGE}
+        return {"items": [_item(m) for m in models], "total": int(raw.get("total") or 0), "next": (page + 1) * PAGE,
+                "notice": notice}
 
     return _searches.fetch((q, page), load)
 

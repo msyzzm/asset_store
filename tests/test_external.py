@@ -726,3 +726,19 @@ def test_an_openverse_sound_named_with_an_extension_lands_without_it(client, con
     row = client.post(f"/api/external/openverse_audio/{SONG}/download", json={"option": "original"}, headers=HEADERS).json()
 
     assert row["title"] == "sword-01 MP3" and downloads.parts(conn, row["id"])[0]["out"] == "sword-01.mp3"
+
+
+def test_poly_pizza_falls_back_to_cc0_models_when_its_keyword_search_breaks(client, sites, pizza_key, monkeypatch):
+    real = sites.__call__
+
+    def broken_for_cc_by(url, headers=None):
+        if "/search/tree?" in url and "License=1" not in url:
+            raise external.SiteBusy("网站忙（HTTP 500）")
+        return real(url, headers)
+
+    monkeypatch.setattr(external, "get_json", broken_for_cc_by)
+
+    pp = client.get("/api/external/search", params={"q": "tree", "source": "polypizza"}).json()["sources"]["polypizza"]
+
+    assert pp["error"] is None and pp["items"] and "只列出了 CC0" in pp["notice"]
+    assert any("/search/tree?" in c and "License=1" in c for c in sites.calls)

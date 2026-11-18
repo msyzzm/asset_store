@@ -8,8 +8,8 @@ which tests replace with recorded responses.
 
 An item: {source, id, title, kind, thumb, page, tags}. A detail adds previews,
 description, authors, license, credit, note?, and options: [{key, label, size, ready}].
-A search result with total None does not know its total; `more` says if another page
-may follow; `next`, if given, is the offset to ask for it (rows a site gave but that were
+A search result with total None does not know its total; `notice`, if given, says what
+its results leave out; `more` says if another page may follow; `next`, if given, is the offset to ask for it (rows a site gave but that were
 skipped still count).
 """
 
