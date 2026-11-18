@@ -11,6 +11,7 @@ from assetindex.archive_index import index_archives
 from assetindex.config import Settings
 from assetindex.db import connect
 from assetindex.scanner import scan_root
+from assetindex.tags import Tags, save_tags
 from assetindex.web import create_app
 
 ROBOTS = "02_3D/Characters/Rbots - 机器人角色"
@@ -195,3 +196,44 @@ def test_the_agent_endpoint_browses_without_words(lib):
 
     assert body["total"] == 4 and body["mode"] == "text" and len(body["packs"]) == 2
     assert body["packs"][0]["name"] == "SteamPunk City - 蒸汽朋克城市"
+
+
+DUNGEON = "01_2D/Environments/Dungeon - 地牢瓦片.zip"
+
+
+def _tag(conn):
+    save_tags(conn, "art", DUNGEON, Tags("俯视", "像素", ("地牢",)), "m")
+    save_tags(conn, "art", ROBOTS, Tags("第三人称", "卡通", ()), "m")
+
+
+def test_packs_filter_by_view_and_style(lib):
+    conn, _ = lib
+    _tag(conn)
+
+    assert _paths(packs.search_packs(conn, "", view="俯视")) == [f"art:/{DUNGEON}"]
+    assert _paths(packs.search_packs(conn, "", style="卡通")) == [f"art:/{ROBOTS}"]
+    assert _paths(packs.search_packs(conn, "steam", style="卡通")) == [f"art:/{ROBOTS}"]  # words and a tag
+    assert packs.search_packs(conn, "", view="俯视", style="卡通").total == 0  # both must fit
+
+
+def test_facets_count_packs_by_folder_and_tag(lib):
+    conn, settings = lib
+    _tag(conn)
+
+    facets = TestClient(create_app(settings)).get("/api/packs/facets").json()
+
+    assert {"path": "02_3D", "count": 3} in facets["categories"]
+    assert {"path": "02_3D/Props", "count": 1} in facets["categories"]
+    assert [c["path"] for c in facets["categories"]][:2] == ["01_2D", "01_2D/Environments"]  # a tree, in order
+    assert facets["views"] == [{"value": "俯视", "count": 1}, {"value": "第三人称", "count": 1}]
+    assert facets["styles"] == [{"value": "卡通", "count": 1}, {"value": "像素", "count": 1}]  # most first, then as listed
+    assert facets["tagged"] == 2
+
+
+def test_the_agent_endpoint_filters_by_tag(lib):
+    conn, settings = lib
+    _tag(conn)
+
+    body = TestClient(create_app(settings)).get("/api/agent/packs", params={"view": "俯视"}).json()
+
+    assert [p["name"] for p in body["packs"]] == ["Dungeon - 地牢瓦片.zip"]

@@ -42,7 +42,7 @@ from assetindex.scan_request import is_requested, read_status, request_scan, sto
 from assetindex.scan_request import request_stop as request_scan_stop
 from assetindex.scanlock import is_scan_running
 from assetindex.search import MAX_LIMIT, MAX_QUERY_LENGTH, fetch_items, parse_terms, search
-from assetindex.packs import search_packs
+from assetindex.packs import pack_facets, search_packs
 from assetindex.tags import add_tag_routes
 from assetindex.semantic import NoVectors, VectorIndex, ranked_ids, semantic_search
 from assetindex.sequences import frames_of
@@ -372,7 +372,8 @@ def create_app(settings: Settings) -> FastAPI:
             except NoVectors:
                 raise HTTPException(409, "还没有可用的向量") from None
 
-    def agent_packs(conn: sqlite3.Connection, q: str, category: str, limit: int, offset: int, mode: str):
+    def agent_packs(conn: sqlite3.Connection, q: str, category: str, limit: int, offset: int, mode: str,
+                    view: str = "", style: str = ""):
         """Packs for agents: words first, then (unless mode is "text") what the meaning adds."""
         meaning, used, note = None, "text", None
         if mode != "text" and q.strip():  # no words: browsing, nothing to mean
@@ -380,7 +381,12 @@ def create_app(settings: Settings) -> FastAPI:
                 meaning, used = meaning_ids(conn, q), "text+semantic"
             except HTTPException as err:
                 note = f"语义搜索不可用（{err.detail}），只用了关键词"
-        return search_packs(conn, q, category, limit, offset, meaning), used, note
+        return search_packs(conn, q, category, limit, offset, meaning, view, style), used, note
+
+    @app.get("/api/packs/facets")
+    def api_pack_facets(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+        """The folders and tags the pack page filters by, with their pack counts."""
+        return pack_facets(conn)
 
     add_agent_routes(app, settings, get_conn, resolve, agent_search, scan_state, agent_packs)
     add_tag_routes(app, settings, page_request)

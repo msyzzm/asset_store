@@ -17,7 +17,7 @@ from assetindex.categories import DUPLICATES, TO_DELETE
 from assetindex.classify import under
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.search import _where_with_terms, parse_terms
-from assetindex.tags import tags_of
+from assetindex.tags import STYLES, VIEWS, tags_of
 from assetindex.units import Layout, stored_layout
 
 MAX_HITS = 5  # files shown per pack: enough to see why it matched
@@ -265,11 +265,46 @@ def _meant(req: _Request, ids: list[int], category: str) -> dict[tuple[str, str]
     return _group(req, [where[i] for i in ids if i in where], [], category)
 
 
+def _tagged(conn: sqlite3.Connection, view: str, style: str) -> set[tuple[str, str]]:
+    """(root, path) of the packs tagged with this view and style ("" for any)."""
+    rows = conn.execute(
+        "SELECT root, path FROM pack_tags WHERE (? = '' OR view = ?) AND (? = '' OR style = ?)",
+        (view, view, style, style),
+    )
+    return {(r[0], r[1]) for r in rows}
+
+
+def pack_facets(conn: sqlite3.Connection) -> dict:
+    """What the pack page can filter by: the category folders as a tree, in order, and the
+    view and style tags, each with how many packs it holds."""
+    folders: dict[str, int] = {}
+    for pack in _every_pack(_Request(conn, []), ""):
+        parts = pack.path.split("/")[:-1]
+        for depth in range(1, len(parts) + 1):
+            key = "/".join(parts[:depth])
+            folders[key] = folders.get(key, 0) + 1
+    categories = [{"path": p, "count": folders[p]} for p in sorted(folders, key=lambda p: (p.casefold().split("/"), p))]
+
+    def counted(column: str, order: tuple[str, ...]) -> list[dict]:
+        rows = conn.execute(f"SELECT {column}, COUNT(*) FROM pack_tags GROUP BY {column}").fetchall()
+        rank = {v: i for i, v in enumerate(order)}
+        rows = sorted(rows, key=lambda r: (-r[1], rank.get(r[0], len(order)), r[0]))
+        return [{"value": r[0], "count": r[1]} for r in rows]
+
+    return {
+        "categories": categories,
+        "views": counted("view", VIEWS),
+        "styles": counted("style", STYLES),
+        "tagged": conn.execute("SELECT COUNT(*) FROM pack_tags").fetchone()[0],
+    }
+
+
 def search_packs(
     conn: sqlite3.Connection, query: str, category: str = "", limit: int = 20, offset: int = 0,
-    meaning: list[int] | None = None,
+    meaning: list[int] | None = None, view: str = "", style: str = "",
 ) -> PackResult:
-    """Packs for `query`; `meaning` is semantic search's file ids, best first, if any."""
+    """Packs for `query`; `meaning` is semantic search's file ids, best first, if any.
+    `view` and `style` keep only the packs tagged so (untagged ones drop out)."""
     terms = parse_terms(query)
     req = _Request(conn, terms)
     if terms:
@@ -278,6 +313,9 @@ def search_packs(
         ranked = _ranked(_group(req, rows, terms, category), _meant(req, meaning or [], category))
     else:
         ranked = _every_pack(req, category)
+    if view or style:
+        fits = _tagged(conn, view, style)
+        ranked = [p for p in ranked if (p.root, p.path) in fits]
     start = max(0, offset)
     page = ranked[start : start + max(1, min(limit, MAX_PACKS))]
     return PackResult(total=len(ranked), packs=[describe(req, p) for p in page])

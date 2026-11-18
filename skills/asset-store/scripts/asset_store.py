@@ -99,7 +99,8 @@ def cmd_search(args):
 
 
 def cmd_packs(args):
-    params = {"q": " ".join(args.query), "category": args.category, "mode": args.mode, "limit": args.limit,
+    params = {"q": " ".join(args.query), "category": args.category, "view": args.view, "style": args.style,
+              "mode": args.mode, "limit": args.limit,
               "offset": args.offset}
     return _json(args, "/api/agent/packs", params)
 
@@ -158,6 +159,8 @@ def _parser() -> argparse.ArgumentParser:
     p = sub.add_parser("packs", help="find asset packs (folders, archives): one result per pack, best first")
     p.add_argument("query", nargs="*", help="none: every pack (of --category), by path")
     p.add_argument("--category", default="", help="e.g. 02_3D/Environments or 01_2D")
+    p.add_argument("--view", default="", help="view tag, e.g. 俯视 or 横版 (only tagged packs)")
+    p.add_argument("--style", default="", help="style tag, e.g. 像素 or 卡通 (only tagged packs)")
     p.add_argument("--mode", choices=["auto", "text"], default="auto")
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--offset", type=int, default=0)

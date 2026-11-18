@@ -27,6 +27,12 @@
       <button id="settings-btn" class="btn secondary" type="button" title="看图描述和素材整理用的模型">设置</button>
     </div>
     <nav id="kinds" class="kinds" aria-label="按类型筛选"></nav>
+    <div id="pack-filters" class="filters" role="group" aria-label="按目录和标签筛选素材包" hidden>
+      <select id="f-cat" aria-label="目录"><option value="">全部目录</option></select>
+      <select id="f-view" aria-label="视角标签"><option value="">任意视角</option></select>
+      <select id="f-style" aria-label="风格标签"><option value="">任意风格</option></select>
+      <span id="f-note" class="filters-note"></span>
+    </div>
   </header>
   <section class="tasks" aria-label="任务">
     <div id="task-scan" class="task">

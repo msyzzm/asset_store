@@ -33,7 +33,7 @@ const PACK_PAGE_SIZE = 48;
 const DIM_LABELS = { '2D': '2D', '3D': '3D', audio: '音频' };
 
 const $ = (id) => document.getElementById(id);
-const state = { q: '', kind: '', view: 'packs', prefix: '', offset: 0, requestSeq: 0, viewerSeq: 0, stopPlayer: null, stopModel: null, scanBusy: false, scanTimer: 0, scanSeq: 0, scanWaitingSince: null };
+const state = { q: '', kind: '', view: 'packs', prefix: '', cat: '', angle: '', style: '', offset: 0, requestSeq: 0, viewerSeq: 0, stopPlayer: null, stopModel: null, scanBusy: false, scanTimer: 0, scanSeq: 0, scanWaitingSince: null };
 const frameCache = new Map();
 // Only one card plays at a time; a re-rendered grid never fires mouseleave, so stop it explicitly.
 let stopHover = null;
@@ -265,6 +265,9 @@ async function openPack(pack) {
 
 async function loadPacks(reset, seq, offset) {
   const params = new URLSearchParams({ q: state.q, limit: PACK_PAGE_SIZE, offset });
+  if (state.cat) params.set('category', state.cat);
+  if (state.angle) params.set('view', state.angle);
+  if (state.style) params.set('style', state.style);
   let body;
   try {
     const resp = await fetch(`/api/agent/packs?${params}`);
@@ -295,6 +298,38 @@ function showView() {
   $('view-packs').setAttribute('aria-pressed', String(state.view === 'packs'));
   $('view-files').setAttribute('aria-pressed', String(state.view === 'files'));
   $('kinds').hidden = packs;  // types are for files; a pack holds many
+  $('pack-filters').hidden = !packs;
+  for (const [id, value] of [['f-cat', state.cat], ['f-view', state.angle], ['f-style', state.style]]) {
+    $(id).value = value;
+    $(id).classList.toggle('on', Boolean(value));
+  }
+}
+
+// The folders and tags the pack page filters by; a folder's options are indented under its parent.
+async function loadFacets() {
+  let facets;
+  try {
+    const resp = await fetch('/api/packs/facets');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    facets = await resp.json();
+  } catch (err) {
+    $('f-note').textContent = `筛选项没加载出来：${err.message}`;
+    return;
+  }
+  const option = (value, text) => el('option', { value }, [text]);
+  $('f-cat').append(...facets.categories.map((c) => {
+    const depth = c.path.split('/').length - 1;
+    return option(c.path, `${'　'.repeat(depth)}${basename(c.path)}（${c.count}）`);
+  }));
+  $('f-view').append(...facets.views.map((v) => option(v.value, `${v.value}（${v.count}）`)));
+  $('f-style').append(...facets.styles.map((s) => option(s.value, `${s.value}（${s.count}）`)));
+  $('f-note').textContent = `标签只有打过的 ${facets.tagged} 个包有`;
+  showView();  // the URL's choices, now that their options exist
+}
+
+function setFilter(key, value) {
+  state[key] = value;
+  search();
 }
 
 function setView(view) {
@@ -347,6 +382,9 @@ function syncUrl() {
   if (state.kind) params.set('kind', state.kind);
   if (state.view === 'files') params.set('view', 'files');
   if (state.prefix) params.set('prefix', state.prefix);
+  if (state.cat) params.set('cat', state.cat);
+  if (state.angle) params.set('angle', state.angle);
+  if (state.style) params.set('style', state.style);
   const query = params.toString();
   history.replaceState(null, '', query ? `?${query}` : location.pathname);
 }
@@ -773,6 +811,12 @@ function init() {
   state.kind = params.get('kind') ?? '';
   state.view = params.get('view') === 'files' ? 'files' : 'packs';
   state.prefix = params.get('prefix') ?? '';
+  state.cat = params.get('cat') ?? '';
+  state.angle = params.get('angle') ?? '';
+  state.style = params.get('style') ?? '';
+  $('f-cat').addEventListener('change', (e) => setFilter('cat', e.target.value));
+  $('f-view').addEventListener('change', (e) => setFilter('angle', e.target.value));
+  $('f-style').addEventListener('change', (e) => setFilter('style', e.target.value));
   $('view-packs').addEventListener('click', () => setView('packs'));
   $('view-files').addEventListener('click', () => setView('files'));
 
@@ -796,6 +840,7 @@ function init() {
   $('scan-stop').addEventListener('click', stopScan);
 
   loadStats();
+  loadFacets();
   search();
   refreshScan();
 }

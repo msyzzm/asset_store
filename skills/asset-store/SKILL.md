@@ -79,7 +79,7 @@ GET 请求不需要认证。POST 请求要带请求头 `X-Requested-With: anythi
 
 | 用途 | 请求 |
 |---|---|
-| 按包搜索 | `GET /api/agent/packs?q=&category=&mode=auto&limit=20&offset=0`（q 为空：按路径列出全部包，可配 category 逛某一类） |
+| 按包搜索 | `GET /api/agent/packs?q=&category=&mode=auto&limit=20&offset=0`（q 为空：按路径列出全部包，可配 category 逛某一类；view=俯视、style=像素 等只留打过这个标签的包） |
 | 搜索文件 | `GET /api/agent/search?q=&kind=&mode=auto&limit=20&offset=0` |
 | 详情 | `GET /api/agent/files/{id}` |
 | 包内文件 | `GET /api/agent/files/{id}/entries?q=&limit=&offset=` |
