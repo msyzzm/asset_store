@@ -23,6 +23,8 @@ LICENSES = (  # a part of its license link: how to show it
     ("licenses/by", "CC-BY（要署名）"),
 )
 
+AUDIO_EXTENSIONS = (".wav", ".aif", ".aiff", ".flac", ".mp3", ".ogg", ".m4a")
+
 _searches = external.TtlCache(600)
 _details = external.TtlCache(3600)
 
@@ -43,13 +45,20 @@ def _seconds(value) -> str:
     return f"{value:.1f} 秒" if isinstance(value, (int, float)) else ""
 
 
+def _title(sound: dict) -> str:
+    """Its name without the extension many carry ("DoorCreaking11.flac")."""
+    name = (sound.get("name") or str(sound["id"])).strip()
+    stem = name.rpartition(".")[0].strip() if name.lower().endswith(AUDIO_EXTENSIONS) else name
+    return stem or name
+
+
 def _item(sound: dict) -> dict:
     sound_id = str(sound["id"])
     images = sound.get("images") or {}
     return {
         "source": NAME,
         "id": sound_id,
-        "title": (sound.get("name") or sound_id).strip(),
+        "title": _title(sound),
         "kind": "音效",
         "thumb": external.web_url(images.get("waveform_m")),
         "page": external.web_url(sound.get("url")) or f"https://freesound.org/s/{sound_id}/",
@@ -126,9 +135,7 @@ def option(sound_id: str, key: str) -> dict:
     url = _preview(sound, key)
     if not url:
         raise KeyError(key)
-    name = (sound.get("name") or sound_id).strip()
-    stem = name.rpartition(".")[0] if name.lower().endswith((".wav", ".aif", ".aiff", ".flac", ".mp3", ".ogg", ".m4a")) else name
-    out = safe_name(f"{stem}.{key}", int(sound_id))
+    out = safe_name(f"{_title(sound)}.{key}", int(sound_id))
     try:
         downloads.check_out(out)
     except ValueError:

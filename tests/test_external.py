@@ -552,7 +552,7 @@ def test_freesound_searches_with_the_key_in_a_header(client, sites, keys):
 
     assert (fs["total"], fs["next"], len(fs["items"])) == (2, 24, 2)
     first = fs["items"][0]
-    assert (first["id"], first["title"], first["kind"]) == (SOUND, "Door Creak 01.wav", "音效")
+    assert (first["id"], first["title"], first["kind"]) == (SOUND, "Door Creak 01", "音效")  # no ".wav"
     assert first["thumb"].endswith("_wave_M.png") and not any("fs-key" in c for c in sites.calls)
 
 
