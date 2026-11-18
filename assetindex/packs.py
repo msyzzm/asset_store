@@ -52,7 +52,7 @@ class _Found:
     root: str
     path: str
     is_dir: bool
-    match: str  # "name" | "inside" | "meaning"
+    match: str  # "name" | "inside" | "meaning"; "all" when browsing with no words
     hits: list[str]
 
 
@@ -138,6 +138,15 @@ def _ranked(word: dict, meaning: dict) -> list[_Found]:
         return closeness.get((pack.root, pack.path), unranked), -len(pack.hits), pack.path
 
     return sorted(named, key=lambda p: (-len(p.hits), p.path)) + sorted(rest, key=order)
+
+
+def _every_pack(req: _Request, category: str) -> list[_Found]:
+    """No words: every pack, by path (category, then name), for browsing."""
+    rows = req.conn.execute("SELECT root, rel_path FROM files").fetchall()
+    found = _group(req, rows, [], category)
+    for pack in found.values():
+        pack.match, pack.hits = "all", []
+    return sorted(found.values(), key=lambda p: (p.root, p.path))
 
 
 def _folder_pack(req: _Request, pack: _Found) -> tuple[int, int, int | None, str | None, list[int]]:
@@ -263,11 +272,12 @@ def search_packs(
     """Packs for `query`; `meaning` is semantic search's file ids, best first, if any."""
     terms = parse_terms(query)
     req = _Request(conn, terms)
-    rows = []
     if terms:
         where, params = _where_with_terms(terms, None)
         rows = conn.execute(f"SELECT f.root, f.rel_path FROM files f {where}", params).fetchall()
-    ranked = _ranked(_group(req, rows, terms, category), _meant(req, meaning or [], category))
+        ranked = _ranked(_group(req, rows, terms, category), _meant(req, meaning or [], category))
+    else:
+        ranked = _every_pack(req, category)
     start = max(0, offset)
     page = ranked[start : start + max(1, min(limit, MAX_PACKS))]
     return PackResult(total=len(ranked), packs=[describe(req, p) for p in page])

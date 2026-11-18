@@ -156,4 +156,30 @@ def test_the_agent_endpoint_lists_packs(lib):
 
     assert body["total"] == 3 and body["mode"] == "text" and len(body["packs"]) == 2
     assert body["packs"][0]["name"] == "SteamPunk City - 蒸汽朋克城市"
-    assert client.get("/api/agent/packs", params={"q": ""}).status_code == 422
+
+
+def test_no_words_lists_every_pack_by_path(lib):
+    """The pack page with an empty search box browses the packs, not loose files."""
+    conn, _ = lib
+
+    result = packs.search_packs(conn, "  ")
+
+    assert _paths(result) == [
+        "art:/01_2D/Environments/Dungeon - 地牢瓦片.zip",
+        f"art:/{ROBOTS}",
+        "art:/02_3D/Environments/SteamPunk City - 蒸汽朋克城市",
+        "art:/02_3D/Props/Gear Props - 齿轮道具.zip",
+    ]  # by category and name; nothing set aside
+    assert result.total == 4 and all(p["match"] == "all" and p["hits"] == [] for p in result.packs)
+    assert result.packs[1]["files"] == 12
+    assert _paths(packs.search_packs(conn, "", category="02_3D/Props")) == ["art:/02_3D/Props/Gear Props - 齿轮道具.zip"]
+
+
+def test_the_agent_endpoint_browses_without_words(lib):
+    _, settings = lib
+    client = TestClient(create_app(settings))
+
+    body = client.get("/api/agent/packs", params={"limit": 2, "offset": 2}).json()
+
+    assert body["total"] == 4 and body["mode"] == "text" and len(body["packs"]) == 2
+    assert body["packs"][0]["name"] == "SteamPunk City - 蒸汽朋克城市"

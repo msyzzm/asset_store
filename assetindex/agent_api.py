@@ -101,7 +101,7 @@ def add_agent_routes(
 
     @app.get("/api/agent/packs")
     def agent_packs(
-        q: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH),
+        q: str = Query("", max_length=MAX_QUERY_LENGTH),  # none: every pack, by path
         category: str = Query("", max_length=100),
         mode: Literal["auto", "text"] = "auto",
         limit: int = Query(20, ge=1, le=MAX_AGENT_LIMIT),

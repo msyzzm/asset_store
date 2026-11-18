@@ -156,7 +156,7 @@ def _parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_search)
 
     p = sub.add_parser("packs", help="find asset packs (folders, archives): one result per pack, best first")
-    p.add_argument("query", nargs="+")
+    p.add_argument("query", nargs="*", help="none: every pack (of --category), by path")
     p.add_argument("--category", default="", help="e.g. 02_3D/Environments or 01_2D")
     p.add_argument("--mode", choices=["auto", "text"], default="auto")
     p.add_argument("--limit", type=int, default=20)

@@ -291,7 +291,7 @@ async function loadPacks(reset, seq, offset) {
 }
 
 function showView() {
-  const packs = state.view === 'packs' && Boolean(state.q);
+  const packs = state.view === 'packs';
   $('view-packs').setAttribute('aria-pressed', String(state.view === 'packs'));
   $('view-files').setAttribute('aria-pressed', String(state.view === 'files'));
   $('kinds').hidden = packs;  // types are for files; a pack holds many
@@ -307,7 +307,7 @@ async function load(reset) {
   const seq = ++state.requestSeq;
   const offset = reset ? 0 : state.offset;
   showView();
-  if (state.view === 'packs' && state.q) {
+  if (state.view === 'packs') {  // an empty box browses every pack
     await loadPacks(reset, seq, offset);
     return;
   }

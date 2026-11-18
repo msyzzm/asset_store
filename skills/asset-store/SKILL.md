@@ -21,7 +21,7 @@ python scripts/asset_store.py tasks
 
 0. **先按包找**（找"做某种游戏用的素材"时从这里开始）：`python scripts/asset_store.py packs 蒸汽朋克 --limit 20`
    - 一个素材包（文件夹，或压缩包加它的预览图）只占一条，不会被包里几百个文件刷屏。
-   - 排序：包名里有全部搜索词的在前（`match: name`），其次是包里文件命中的（`match: inside`，`hit_count` 多的在前），最后是按意思找到的（`match: meaning`）。
+   - 排序：包名里有全部搜索词的在前（`match: name`），其次是包里文件命中的（`match: inside`，`hit_count` 多的在前），最后是按意思找到的（`match: meaning`）。不带搜索词时按路径列出全部包（`match: all`）。
    - 每条有 `category`（分类路径）、`dim`（2D/3D/audio）、`engine`（unreal/unity，不知道时为空）、`caption`（画面描述）、`files`、`size`、`hits`（命中的几个文件）、`links`。
    - `--category 02_3D/Environments` 只看某个分类；分类有 `01_2D/*`、`02_3D/*`、`03_Audio/*`、`04_Tools/*`、`05_Reference`。
    - 视角（俯视、横版、等距）一般写不进包名：3D 场景和道具大多能俯视使用，不要因为名字里没有"俯视"就排除。用 `thumb` 看预览图再判断。
@@ -79,7 +79,7 @@ GET 请求不需要认证。POST 请求要带请求头 `X-Requested-With: anythi
 
 | 用途 | 请求 |
 |---|---|
-| 按包搜索 | `GET /api/agent/packs?q=&category=&mode=auto&limit=20&offset=0` |
+| 按包搜索 | `GET /api/agent/packs?q=&category=&mode=auto&limit=20&offset=0`（q 为空：按路径列出全部包，可配 category 逛某一类） |
 | 搜索文件 | `GET /api/agent/search?q=&kind=&mode=auto&limit=20&offset=0` |
 | 详情 | `GET /api/agent/files/{id}` |
 | 包内文件 | `GET /api/agent/files/{id}/entries?q=&limit=&offset=` |

@@ -375,7 +375,7 @@ def create_app(settings: Settings) -> FastAPI:
     def agent_packs(conn: sqlite3.Connection, q: str, category: str, limit: int, offset: int, mode: str):
         """Packs for agents: words first, then (unless mode is "text") what the meaning adds."""
         meaning, used, note = None, "text", None
-        if mode != "text":
+        if mode != "text" and q.strip():  # no words: browsing, nothing to mean
             try:
                 meaning, used = meaning_ids(conn, q), "text+semantic"
             except HTTPException as err:
