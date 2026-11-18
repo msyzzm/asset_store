@@ -50,22 +50,8 @@
       <h2>网站账号</h2>
       <button id="xk-close" class="icon-btn" type="button" aria-label="关闭">✕</button>
     </div>
-    <p class="hint">这几个网站要你自己账号的 key（注册免费）。key 只保存在服务器上，不会再显示出来；留空不改，要删掉就勾「清除」。</p>
-    <form id="xk-form" class="settings-form">
-      <label>Sketchfab API token <span id="xk-sketchfab-state" class="hint"></span>
-        <input name="sketchfab" type="password" autocomplete="new-password"></label>
-      <p class="hint">下载模型要用（搜索不用）。登录 sketchfab.com → 头像 → Settings → Password &amp; API → API Token。</p>
-      <label class="check"><input name="clear-sketchfab" type="checkbox"> 清除 Sketchfab token</label>
-      <label>Freesound API key <span id="xk-freesound-state" class="hint"></span>
-        <input name="freesound" type="password" autocomplete="new-password"></label>
-      <p class="hint">搜索就要用。登录 freesound.org 后打开 freesound.org/apiv2/apply 申请，填好后复制 “Client secret/Api key” 那一栏。</p>
-      <label class="check"><input name="clear-freesound" type="checkbox"> 清除 Freesound key</label>
-      <label>Poly Pizza API key <span id="xk-polypizza-state" class="hint"></span>
-        <input name="polypizza" type="password" autocomplete="new-password"></label>
-      <p class="hint">搜索和下载都要用。登录 poly.pizza 后打开 poly.pizza/settings/api，新建一个应用，复制它的 API key。</p>
-      <label class="check"><input name="clear-polypizza" type="checkbox"> 清除 Poly Pizza key</label>
-      <div class="viewer-actions"><button class="btn" type="submit">保存</button></div>
-    </form>
+    <p class="hint">这几个网站要你自己账号的 key，注册都免费。key 只保存在服务器上，保存后不会再显示出来。</p>
+    <div id="xk-sites" class="xk-sites"></div>
     <p id="xk-status" class="settings-status" aria-live="polite"></p>
   </dialog>
 

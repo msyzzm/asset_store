@@ -199,48 +199,91 @@ async function openDetail(source, id) {
   $('xv-options').replaceChildren(...options);
 }
 
-// ---- the keys Sketchfab and Freesound need ----
+// ---- the keys some sites need: one card each ----
+
+const KEY_SITES = [
+  {
+    site: 'sketchfab', name: 'Sketchfab', field: 'API token', use: '下载模型时用（搜索不用）。',
+    how: ['登录 sketchfab.com', '右上角头像 → Settings', 'Password & API → 复制 API Token'],
+    link: 'https://sketchfab.com/settings/password',
+  },
+  {
+    site: 'freesound', name: 'Freesound', field: 'API key', use: '搜索和下载音效都要用。',
+    how: ['登录 freesound.org', '打开申请页，填表提交', '复制 “Client secret/Api key” 那一栏'],
+    link: 'https://freesound.org/apiv2/apply',
+  },
+  {
+    site: 'polypizza', name: 'Poly Pizza', field: 'API key', use: '搜索和下载模型都要用。',
+    how: ['登录 poly.pizza', '打开 API 设置页，新建一个应用', '复制它的 API key'],
+    link: 'https://poly.pizza/settings/api',
+  },
+];
+
+function keyCard(info, isSet) {
+  const input = el('input', { name: 'key', type: 'password', autocomplete: 'new-password',
+    placeholder: isSet ? '粘贴新的 key 替换（留空不改）' : `粘贴 ${info.name} 的 ${info.field}` });
+  const status = el('p', { className: 'xk-msg', role: 'status' });
+  const save = el('button', { className: 'btn', type: 'submit', text: '保存' });
+  const actions = el('div', { className: 'xk-actions' }, [save]);
+  if (isSet) {
+    const clear = el('button', { className: 'btn secondary', type: 'button', text: '清除' });
+    clear.addEventListener('click', () => saveKey(info, '', status, [save, clear]));
+    actions.append(clear);
+  }
+  const form = el('form', { className: 'xk-form' }, [
+    el('label', { className: 'xk-field' }, [el('span', { text: info.field }), input]),
+    actions,
+  ]);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (!input.value.trim()) { status.textContent = '先粘贴 key 再保存。'; return; }
+    saveKey(info, input.value.trim(), status, [save]);
+  });
+  return el('section', { className: `xk-site${isSet ? ' is-set' : ''}`, ariaLabel: info.name }, [
+    el('header', { className: 'xk-head' }, [
+      el('h3', { text: info.name }),
+      el('span', { className: 'xk-badge', text: isSet ? '已填' : '未填' }),
+      el('a', { href: info.link, target: '_blank', rel: 'noopener noreferrer', text: '去拿 key ↗' }),
+    ]),
+    el('p', { className: 'xk-use', text: info.use }),
+    el('ol', { className: 'xk-how' }, info.how.map((step) => el('li', { text: step }))),
+    form,
+    status,
+  ]);
+}
+
+function renderKeys(set) {
+  $('xk-sites').replaceChildren(...KEY_SITES.map((info) => keyCard(info, Boolean(set[info.site]))));
+}
 
 async function showKeys() {
-  const form = $('xk-form');
-  form.reset();
   $('xk-status').textContent = '';
+  $('xk-sites').replaceChildren(el('p', { className: 'hint', text: '读取中…' }));
   $('x-keys').showModal();
   try {
-    const set = await api('/api/external/keys');
-    for (const [site, has] of Object.entries(set)) $(`xk-${site}-state`).textContent = has ? '（已填）' : '（未填）';
+    renderKeys(await api('/api/external/keys'));
   } catch (err) {
+    $('xk-sites').replaceChildren();
     $('xk-status').textContent = err.message;
   }
 }
 
-async function saveKeys(event) {
-  event.preventDefault();
-  const form = $('xk-form');
-  const body = {};
-  for (const site of ['sketchfab', 'freesound', 'polypizza']) {
-    if (form.elements[`clear-${site}`].checked) body[site] = '';
-    else if (form.elements[site].value.trim()) body[site] = form.elements[site].value.trim();
-  }
-  if (!Object.keys(body).length) {
-    $('xk-status').textContent = '没有要改的。';
-    return;
-  }
+async function saveKey(info, key, status, buttons) {
+  for (const b of buttons) b.disabled = true;
   try {
-    const set = await api('/api/external/keys', { method: 'PUT', headers: HEADERS, body: JSON.stringify(body) });
-    form.reset();
-    for (const [site, has] of Object.entries(set)) $(`xk-${site}-state`).textContent = has ? '（已填）' : '（未填）';
-    $('xk-status').textContent = '已保存。';
+    const set = await api('/api/external/keys', { method: 'PUT', headers: HEADERS, body: JSON.stringify({ [info.site]: key }) });
+    renderKeys(set);
+    $('xk-status').textContent = `${info.name} 的 key 已${key ? '保存' : '清除'}。`;
     $('q').value = state.q;  // the search shown, again, now with the keys
     search();
   } catch (err) {
-    $('xk-status').textContent = err.message;
+    for (const b of buttons) b.disabled = false;
+    status.textContent = err.message;
   }
 }
 
 $('x-keys-btn').addEventListener('click', showKeys);
 $('xk-close').addEventListener('click', () => $('x-keys').close());
-$('xk-form').addEventListener('submit', saveKeys);
 $('x-form').addEventListener('submit', search);
 $('xv-close').addEventListener('click', () => $('x-viewer').close());
 for (const box of document.querySelectorAll('input[name=source]')) box.addEventListener('change', () => search());

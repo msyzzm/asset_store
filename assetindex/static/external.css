@@ -43,6 +43,48 @@
 .xv-options .xv-note { color: var(--muted); font-size: 13px; background: none; padding-left: 0; }
 .xv-options .btn { height: 30px; padding: 0 12px; }
 
+/* 网站账号: one card per site */
+.xk-sites { display: grid; gap: 12px; margin-top: 14px; }
+.xk-site {
+  padding: 14px 16px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border);
+  border-radius: var(--radius);
+}
+.xk-site.is-set { border-left-color: var(--accent); }
+.xk-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.xk-head h3 { margin: 0; font-size: 16px; }
+.xk-head a { margin-left: auto; color: var(--accent); font-size: 13px; }
+.xk-badge {
+  padding: 1px 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.xk-site.is-set .xk-badge { color: var(--accent-text); background: var(--accent); border-color: var(--accent); }
+.xk-use { margin: 6px 0 2px; }
+.xk-how { margin: 0 0 10px; padding-left: 20px; color: var(--muted); font-size: 13px; }
+.xk-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+.xk-field { display: grid; flex: 1; gap: 4px; min-width: 200px; font-size: 13px; color: var(--muted); }
+.xk-field input {
+  height: 34px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.xk-field input:focus-visible { outline: 2px solid var(--select); outline-offset: -1px; }
+.xk-actions { display: flex; gap: 8px; }
+.xk-actions .btn { height: 34px; }
+.xk-msg { min-height: 0; margin: 6px 0 0; color: var(--danger); font-size: 13px; }
+.xk-msg:empty { display: none; }
+
 @media (max-width: 640px) {
   .x-form { order: 3; flex-basis: 100%; }
   .bar .x-form #q { order: 0; flex-basis: auto; }  /* style.css sends the main page's #q to its own row */
