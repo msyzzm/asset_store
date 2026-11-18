@@ -216,6 +216,39 @@ def test_an_archive_with_its_preview_is_compared_by_the_archive(tmp_path, conn):
     assert {f.rel for f in units[("UE/A/Castle.rar", False)]} == {"", "Castle.png"}
 
 
+def test_folder_packs_differing_only_in_their_cover_and_links_are_copies(tmp_path, conn):
+    """Live 2026-11-18: 5 pairs of identical packs (240 MB, 76 MB...) went unnoticed: each
+    copy had its own cover picture at the top, one also a shop link."""
+    root = tmp_path / "lib"
+    for n, name in enumerate(("Skeletons - 强盗", "Skeletons - 村民")):
+        _put(root, f"3D/{name}/Content/mesh.uasset", b"M" * 500)
+        _put(root, f"3D/{name}/Content/tex.uasset", b"T" * 400)
+        _put(root, f"3D/{name}/{name}.png", bytes([n]) * (200 + n))
+    _put(root, "3D/Skeletons - 村民/首页-虚幻4资源站-淘宝网.url", b"[InternetShortcut]")
+    settings = Settings(roots={"lib": root}, data_dir=tmp_path / "data")
+    scan_root(conn, "lib", root)
+
+    hash_pending(conn, settings, "lib")
+    groups = duplicate_units(_units(conn))
+
+    assert [(g.keep, g.others) for g in groups] == [("3D/Skeletons - 强盗", ("3D/Skeletons - 村民",))]
+    assert groups[0].exact
+
+
+def test_packs_with_several_different_pictures_at_the_top_are_not_copies(tmp_path, conn):
+    root = tmp_path / "lib"
+    for n, name in enumerate(("Icons A", "Icons B")):
+        _put(root, f"2D/{name}/data/x.bin", b"X" * 500)
+        _put(root, f"2D/{name}/one.png", bytes([n]) * 300)
+        _put(root, f"2D/{name}/two.png", bytes([n + 5]) * 300)
+    settings = Settings(roots={"lib": root}, data_dir=tmp_path / "data")
+    scan_root(conn, "lib", root)
+
+    hash_pending(conn, settings, "lib")
+
+    assert duplicate_units(_units(conn)) == []
+
+
 def test_copies_set_aside_are_never_kept_and_never_counted():
     from assetindex.dupes import UnitFile
 

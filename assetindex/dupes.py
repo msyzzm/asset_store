@@ -28,6 +28,8 @@ from assetindex.units import Layout, layout
 HASH_MIN_BYTES = 256 * 1024
 SAMPLE_CHUNK = 16 * 1024  # x3 per file: one round trip each, even over NFS
 HASH_BATCH = 32  # files read between two short DB writes
+_COVER_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+_LINK_SUFFIXES = (".url",)
 READ_CHUNK = 1024 * 1024
 TOP_FILE_GROUPS = 50
 # Names that say "I'm the second copy": the other one is kept.
@@ -118,17 +120,34 @@ def sample_candidates(conn: sqlite3.Connection, root: str) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+def aside_in_folder(rels: Iterable[str]) -> set[str]:
+    """Files at a folder pack's top that its copies may differ in: shop links, and its one
+    cover picture when the pack has more in it (each copy often got its own)."""
+    rels = list(rels)
+    top = [r for r in rels if "/" not in r]
+    links = {r for r in top if r.lower().endswith(_LINK_SUFFIXES)}
+    covers = [r for r in top if r.lower().endswith(_COVER_SUFFIXES)]
+    if len(covers) == 1 and len(rels) - len(links) > 1:
+        return links | set(covers)
+    return links
+
+
 def _twin_shaped_units(conn: sqlite3.Connection, root: str, shape_of: Layout) -> set[str]:
     """Units another unit could be identical to: same kind, number of files and total size
-    (a file unit by its main file: the same archive with another preview is still a copy)."""
-    shapes: dict[tuple[str, bool], list[int]] = defaultdict(lambda: [0, 0])
+    (a file unit by its main file: the same archive with another preview is still a copy;
+    a folder without its cover and links)."""
+    members: dict[tuple[str, bool], dict[str, int]] = defaultdict(dict)
     for rel_path, size in conn.execute("SELECT rel_path, size FROM files WHERE root = ?", (root,)):
         unit, is_dir = shape_of.unit_of(rel_path)
         if not is_dir and unit != rel_path:
             continue  # a companion
-        shape = shapes[(unit, is_dir)]
-        shape[0] += 1
-        shape[1] += size
+        members[(unit, is_dir)][rel_path[len(unit) + 1 :] if is_dir else ""] = size
+    shapes = {}
+    for (unit, is_dir), files in members.items():
+        aside = aside_in_folder(files) if is_dir else set()
+        shapes[(unit, is_dir)] = (
+            sum(1 for r in files if r not in aside), sum(s for r, s in files.items() if r not in aside),
+        )
     counts = Counter((is_dir, n, total) for (_, is_dir), (n, total) in shapes.items())
     return {unit for (unit, is_dir), (n, total) in shapes.items() if counts[(is_dir, n, total)] > 1}
 
@@ -284,6 +303,8 @@ def content_key(is_dir: bool, files: list[UnitFile]) -> tuple[str, bool] | None:
     if not is_dir:  # by its main file: an archive with another preview next to it is still a copy
         f = next(f for f in files if not f.rel)  # no name or tree to back up a sample: full hash only
         return (f"f:{f.size}:{f.hash}", True) if f.hash else None
+    aside = aside_in_folder(f.rel for f in files)
+    files = [f for f in files if f.rel not in aside] or files
     digest = hashlib.sha1(usedforsecurity=False)
     for f in sorted(files, key=lambda f: f.rel):
         digest.update(f"{f.rel}\0{f.size}\0{f.content or ''}\n".encode())
