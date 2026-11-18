@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from assetindex.categories import PARTIAL
 from assetindex.kinds import kind_of
 from assetindex.scan_request import ScanStopped, never, no_progress
 from assetindex.sequences import group_sequences, sequence_of
@@ -16,6 +17,7 @@ log = logging.getLogger(__name__)
 
 IGNORED_DIRS: frozenset[str] = frozenset({
     "node_modules", ".git", ".svn", "__pycache__", "@eaDir", "#recycle",
+    PARTIAL,  # downloads still running (assetindex/fetch_job.py)
 })
 UNPACKING_SUFFIX = ".unpacking"  # a folder assetindex/unpack.py is still writing: never a pack
 BATCH_SIZE = 2000

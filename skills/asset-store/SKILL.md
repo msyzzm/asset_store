@@ -56,6 +56,9 @@ python scripts/asset_store.py tasks
 - `caption-stop`：停止描述任务。
 - `scan-stop`：停止正在进行的扫描（还没开始的扫描请求会被撤销）。已扫的保留。
 - `tasks`：查看扫描和描述任务在做什么、上次的结果。
+- `download 链接 --title 名字`：让服务器把一个 http/https 下载链接下到素材库的 `_下载` 文件夹（用 aria2，大小不限），下完自动扫描。链接必须是文件本身的直链，网页地址下下来只是一个 html。下载前要和用户确认；网盘分享链接下不了。
+  - 409 表示下载服务没运行，或 NAS 对它是只读的（要在 `.env` 里设 `ASSET_MOVER_ACCESS=rw`）。
+- `downloads`：看下载队列。`status` 取值：`queued` 排队、`active` 下载中（`progress` 里有 `done`/`total`/`speed` 字节数）、`done` 完成（`path` 是落地位置）、`duplicate` 完成但库里已有一模一样的文件（`dup_of`），`failed` 失败（`error` 是原因）、`cancelled` 已取消。
 
 ## 出错
 
@@ -91,5 +94,8 @@ GET 请求不需要认证。POST 请求要带请求头 `X-Requested-With: anythi
 | 描述图片 | `POST /api/captions`，body 为 `{"root":"nas","prefix":"文件夹","redo":false}` |
 | 停止描述 | `POST /api/captions/stop` |
 | 停止扫描 | `POST /api/scan/stop` |
+| 下载链接到素材库 | `POST /api/downloads`，body 为 `{"url":"https://…/a.zip","title":"可选"}` |
+| 下载队列 | `GET /api/downloads` |
+| 取消、重试下载 | `POST /api/downloads/{id}/cancel`、`POST /api/downloads/{id}/retry` |
 
 完整的接口文档在服务的 `/docs` 页面（FastAPI 自动生成）。

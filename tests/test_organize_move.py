@@ -1,6 +1,7 @@
 import pytest
 
-from assetindex.organize import refresh_units
+from assetindex.caption_job import Scope
+from assetindex.organize import refresh_units, to_classify
 from assetindex.organize_move import Rename, build_plan
 from assetindex.scanner import scan_root
 
@@ -101,6 +102,19 @@ def test_a_move_that_would_merge_two_packs_is_left_out(lib):
 
     assert [m.path for m in plan.moves] == ["UE/道具/Sword.rar"]
     assert [p.path for p in plan.problems] == ["UE/道具/Oak.png"]
+
+
+def test_downloads_are_packs_of_their_own_to_be_sorted_and_moved_out(lib):
+    conn, put = lib
+    put("_下载/Stone Walls.zip", "_下载/Props.zip", "02_3D/Props/Barrel.zip")
+
+    todo = {r["path"] for r in to_classify(conn, Scope(root="lib"))}
+    assert {"_下载/Stone Walls.zip", "_下载/Props.zip"} <= todo  # each one, not "_下载" as one pack
+    _accept(conn, "_下载/Stone Walls.zip", "02_3D/Environments/Stone Walls.zip")
+    plan = build_plan(conn, "lib")
+
+    assert plan.problems == ()
+    assert [(m.path, m.new_path) for m in plan.moves] == [("_下载/Stone Walls.zip", "02_3D/Environments/Stone Walls.zip")]
 
 
 def test_nothing_accepted_nothing_planned(lib):

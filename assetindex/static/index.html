@@ -83,6 +83,15 @@
         <a class="link-btn" href="/organize.html#m-title" title="移动、解包、修复、校验、删除的详情和停止">打开</a>
       </span>
     </div>
+    <div id="task-downloads" class="task">
+      <span class="task-dot" aria-hidden="true"></span>
+      <span class="task-name">下载</span>
+      <span id="downloads-task-text" class="task-text" aria-live="polite"></span>
+      <progress id="downloads-task-bar" class="task-bar" max="1" value="0" hidden></progress>
+      <span class="task-actions">
+        <button id="downloads-open" class="link-btn" type="button" title="贴一个下载链接，下到素材库的 _下载 文件夹">打开</button>
+      </span>
+    </div>
     <div id="task-tags" class="task" hidden>
       <span class="task-dot" aria-hidden="true"></span>
       <span class="task-name">打标签</span>
@@ -181,11 +190,29 @@
     <p id="c-status" class="settings-status" aria-live="polite"></p>
   </dialog>
 
+  <dialog id="downloads" class="viewer settings">
+    <div class="viewer-head">
+      <h2>下载到素材库</h2>
+      <button id="d-close" class="icon-btn" type="button" aria-label="关闭">✕</button>
+    </div>
+    <p class="hint">贴一个文件的下载链接，服务器用 aria2 下载到素材库的 <code>_下载</code> 文件夹，下完自动扫描，之后在「整理」里给它分类。文件大小不限；库里已有一模一样的文件时照样保留，标成「库里已有」，删不删你决定。</p>
+    <form id="d-form" class="settings-form">
+      <label>下载链接 <input name="url" type="url" required placeholder="https://…/素材包.zip" autocomplete="off"></label>
+      <label>备注名（可不填） <input name="title" maxlength="300" autocomplete="off"></label>
+      <div class="viewer-actions">
+        <button class="btn" type="submit">下载</button>
+      </div>
+    </form>
+    <p id="d-status" class="settings-status" aria-live="polite"></p>
+    <ol id="d-list" class="dl-list" aria-label="下载列表"></ol>
+  </dialog>
+
   <script src="app.js"></script>
   <script src="settings.js"></script>
   <script src="captions.js"></script>
   <script src="update.js"></script>
   <script src="organize-bar.js"></script>
   <script src="files-bar.js"></script>
+  <script src="downloads.js"></script>
 </body>
 </html>

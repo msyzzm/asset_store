@@ -29,6 +29,8 @@ UNSORTED = "_Unsorted"  # the model couldn't tell, or answered outside the list
 DUPLICATES = "_Duplicates"  # extra copies of identical units
 TO_DELETE = "_待删除"  # set aside by hand, to be deleted in the NAS's own file manager (its recycle bin works there)
 CATEGORY_PATHS = frozenset(path for path, _ in CATEGORIES) | {UNSORTED}
+DOWNLOADS = "_下载"  # where the fetcher puts finished downloads, one pack each, to be sorted like any other
+PARTIAL = ".partial"  # under DOWNLOADS: downloads still running, never scanned
 
 
 def _with_parents(paths) -> frozenset[str]:
@@ -41,4 +43,4 @@ def _with_parents(paths) -> frozenset[str]:
 
 # The scheme's folders hold packs by definition: a sorted pack there is never mistaken
 # for part of a bigger one, however few packs a category has.
-SCHEME_FOLDERS = _with_parents([*CATEGORY_PATHS, DUPLICATES, TO_DELETE])
+SCHEME_FOLDERS = _with_parents([*CATEGORY_PATHS, DUPLICATES, TO_DELETE, DOWNLOADS])

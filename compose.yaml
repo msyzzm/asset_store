@@ -63,5 +63,19 @@ services:
       - ${ASSET_NAS_PATH:?set ASSET_NAS_PATH in .env}:/assets:${ASSET_MOVER_ACCESS:-ro}
       - asset-data:/data
 
+  # Idle until a link is queued on the downloads page: aria2 (inside this container,
+  # RPC on 127.0.0.1 only) downloads it into the root's _下载 folder. Writes the NAS with
+  # the same switch as the mover (ASSET_MOVER_ACCESS=rw); read-only otherwise, and then
+  # the page says so and refuses new downloads.
+  fetcher:
+    <<: *app
+    command: ["python", "-m", "assetindex", "fetch", "--watch"]
+    healthcheck:
+      disable: true
+    mem_limit: ${FETCHER_MEM_LIMIT:-512m}
+    volumes:
+      - ${ASSET_NAS_PATH:?set ASSET_NAS_PATH in .env}:/assets:${ASSET_MOVER_ACCESS:-ro}
+      - asset-data:/data
+
 volumes:
   asset-data:

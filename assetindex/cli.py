@@ -4,12 +4,13 @@ import argparse
 import logging
 import signal
 import sqlite3
+import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
-from assetindex import attempts, caption_job, move_job, organize, organize_apply, scan_request, tags
+from assetindex import aria2, attempts, caption_job, downloads, fetch_job, move_job, organize, organize_apply, scan_request, tags
 from assetindex.caption import CaptionClient
 from assetindex.archive_index import index_archives
 from assetindex.archive_previews import build_previews
@@ -22,7 +23,7 @@ from assetindex.embed_stage import embed_pending
 from assetindex.embedding import load_config
 from assetindex.extract import find_bsdtar
 from assetindex.scan_request import ScanStatus, ScanStopped
-from assetindex.scanlock import ScanLocked, scan_lock
+from assetindex.scanlock import ScanLocked, is_scan_running, scan_lock
 from assetindex.scanner import scan_root
 
 log = logging.getLogger("assetindex")
@@ -34,6 +35,8 @@ MIN_SCAN_GAP_SECONDS = 60
 # How soon the captioner notices a job started from the web UI.
 CAPTION_POLL_SECONDS = 3
 MOUNT_EVERY_SECONDS = 90
+FETCH_POLL_SECONDS = 2  # how often the fetcher looks at the queue and asks aria2 how far it got
+ARIA2_STOP_SECONDS = 5  # within docker stop's 10 s
 # A running scan rewrites scan.status at most this often per step (plus at each new step).
 PROGRESS_SECONDS = 1.0
 
@@ -360,6 +363,53 @@ def _move_watch() -> int:
         return 0
 
 
+def _fetch_watch() -> int:
+    """The fetcher service: runs aria2c and works through the download queue."""
+    settings = load_settings()
+    binary = aria2.find_aria2c()
+    if binary is None:
+        log.error("aria2c not found: downloads cannot run (rebuild the image)")
+    secret = aria2.new_secret()
+    process = aria2.start_daemon(binary, secret) if binary else None
+    conn = connect(settings.db_path)
+    fetcher = fetch_job.Fetcher(
+        conn, settings, aria2.Aria2(secret=secret),
+        mover_busy=lambda: is_scan_running(settings.data_dir, move_job.LOCK_NAME),
+    )
+    log.info("fetcher waiting for downloads from the web UI")
+    last_mount = 0.0
+    try:
+        while True:
+            if process is not None and process.poll() is not None:
+                log.warning("aria2c exited (%s): starting it again", process.returncode)
+                process = aria2.start_daemon(binary, secret)
+            if time.time() - last_mount > MOUNT_EVERY_SECONDS:  # also a heartbeat: the page knows a fetcher runs
+                try:
+                    roots = {n: move_job.writable(p) for n, p in settings.roots.items()}
+                    downloads.write_mount(settings.data_dir, roots, has_aria2=process is not None)
+                except OSError as err:
+                    log.warning("cannot write fetch.mount: %r", err)
+                last_mount = time.time()
+            if process is not None:
+                try:
+                    downloads.write_progress(settings.data_dir, fetcher.tick())
+                except aria2.Aria2Error as err:  # starting up, or restarting
+                    log.warning("aria2 not answering: %s", err)
+                except Exception:
+                    log.exception("fetcher pass failed")
+            time.sleep(FETCH_POLL_SECONDS)
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        if process is not None:
+            process.terminate()  # aria2 saves its control files on the way out: resumable
+            try:
+                process.wait(ARIA2_STOP_SECONDS)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        conn.close()
+
+
 def _move_once(settings: Settings) -> bool:
     """Run the requested move job, if any; True if one ran. It waits (the request
     stays) while a scan or a model job holds its lock: neither may see files move."""
@@ -577,6 +627,8 @@ def main(argv: list[str] | None = None) -> int:
     tidy.add_argument("--redo", action="store_true", help="also packs that already have an undecided proposal")
     mover = sub.add_parser("move", help="carry out confirmed proposals on request from the web UI (needs the NAS writable)")
     mover.add_argument("--watch", action="store_true", required=True, help="wait for move jobs started from the web UI")
+    fetch = sub.add_parser("fetch", help="download queued links with aria2 into each root's _下载 (needs the NAS writable)")
+    fetch.add_argument("--watch", action="store_true", required=True, help="wait for downloads queued from the web UI")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -600,4 +652,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "move":
         _exit_on_sigterm()  # mid-move: the journal leaves the pack open, settled on the next job or scan
         return _move_watch()
+    if args.cmd == "fetch":
+        _exit_on_sigterm()  # mid-download: aria2 keeps the file's progress, resumed on the next start
+        return _fetch_watch()
     return _serve(args.host, args.port)

@@ -2,8 +2,9 @@
 FROM python:3.13-slim-bookworm
 
 # bsdtar (libarchive) extracts single members of zip/rar/7z archives for previews.
+# aria2 downloads queued links in the fetcher service.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libarchive-tools \
+    && apt-get install -y --no-install-recommends libarchive-tools aria2 \
     && rm -rf /var/lib/apt/lists/*
 
 # 7-Zip (the official 7zz) tests archives whole for the "verify" move job, RAR included:

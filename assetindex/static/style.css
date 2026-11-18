@@ -519,6 +519,20 @@ body {
 
 .caption-bar { width: 100%; margin-top: 12px; }
 
+/* ---- downloads dialog: one line per link, newest work on top ---- */
+.dl-list { display: grid; gap: 2px; max-height: 50vh; margin: 4px 0 0; padding: 0; overflow-y: auto; list-style: none; }
+.dl-item { display: grid; gap: 4px; padding: 8px 10px; border-left: 3px solid var(--border); background: var(--bg); }
+.dl-item.dl-active, .dl-item.dl-queued { border-left-color: var(--busy); }
+.dl-item.dl-done { border-left-color: var(--accent); }
+.dl-item.dl-duplicate { border-left-color: var(--muted); }
+.dl-item.dl-failed { border-left-color: var(--danger); }
+.dl-head { display: flex; gap: 10px; align-items: baseline; min-width: 0; }
+.dl-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.dl-state { flex: none; color: var(--muted); font-family: var(--num); font-size: 13px; }
+.dl-failed .dl-state, .dl-failed .dl-note { color: var(--danger); }
+.dl-bar { width: 100%; }
+.dl-note { margin: 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+
 .muted { color: var(--muted); }
 
 /* ---- phones: search on its own row, task text wraps instead of being cut ---- */

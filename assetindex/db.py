@@ -200,6 +200,23 @@ CREATE TABLE IF NOT EXISTS organize_units (
     updated   REAL,
     PRIMARY KEY (root, path)
 );
+-- Links queued for the fetcher service (see assetindex/downloads.py, fetch_job.py).
+CREATE TABLE IF NOT EXISTS downloads (
+    id       INTEGER PRIMARY KEY,
+    root     TEXT    NOT NULL,
+    url      TEXT    NOT NULL,
+    title    TEXT,
+    source   TEXT,              -- site it was found on, NULL for a pasted link
+    md5      TEXT,              -- given by the site: aria2 checks the file against it
+    size     INTEGER,           -- expected bytes, if known
+    status   TEXT    NOT NULL DEFAULT 'queued',  -- queued | active | done | duplicate | failed | cancelled
+    gid      TEXT,              -- aria2's id while it downloads
+    path     TEXT,              -- where it landed, under the root
+    dup_of   TEXT,              -- an identical file already in the library
+    error    TEXT,
+    created  REAL    NOT NULL,
+    finished REAL
+);
 """
 
 # Columns added after the first release; old databases get them via ALTER TABLE.

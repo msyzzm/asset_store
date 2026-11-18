@@ -143,6 +143,16 @@ def cmd_caption_stop(args):
     return _json(args, "/api/captions/stop", body={})
 
 
+def cmd_download(args):
+    body = {"url": args.link, "title": args.title or None, "root": args.root or None}
+    return _json(args, "/api/downloads", body={k: v for k, v in body.items() if v is not None})
+
+
+def cmd_downloads(args):
+    state = _json(args, "/api/downloads")
+    return {**state, "items": state["items"][: args.limit]}
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="asset_store.py", description="Search and fetch assets from the asset library.")
     parser.add_argument("--url", help=f"server address (default: $ASSET_STORE_URL or {DEFAULT_URL})")
@@ -200,6 +210,15 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--redo", action="store_true")
     p.set_defaults(func=cmd_caption)
     sub.add_parser("caption-stop", help="stop the describe-pictures job").set_defaults(func=cmd_caption_stop)
+
+    p = sub.add_parser("download", help="have the server download a link (http/https) into the library's _下载 folder")
+    p.add_argument("link")
+    p.add_argument("--title", default="", help="a name to show in the download list")
+    p.add_argument("--root", default="", help="root to download into; empty = the first one")
+    p.set_defaults(func=cmd_download)
+    p = sub.add_parser("downloads", help="the download queue: running first, then the latest finished")
+    p.add_argument("--limit", type=int, default=20)
+    p.set_defaults(func=cmd_downloads)
     return parser
 
 
