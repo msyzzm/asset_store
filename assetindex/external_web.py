@@ -1,4 +1,5 @@
-"""Routes for the 外部素材 page: search Poly Haven, ambientCG, OpenGameArt and itch.io, look at one asset,
+"""Routes for the 外部素材 page: search Poly Haven, ambientCG, OpenGameArt, itch.io, Sketchfab
+and Freesound, set the keys the last two need, look at one asset,
 and queue one of its downloads. The server asks the site what to download (the page
 only names the asset and the option), so the queue only ever gets the site's own links."""
 
@@ -11,13 +12,14 @@ from typing import Annotated
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query
 
-from assetindex import downloads, ext_ambientcg, ext_itch, ext_opengameart, ext_polyhaven, external
+from assetindex import (downloads, ext_ambientcg, ext_freesound, ext_itch, ext_keys, ext_opengameart, ext_polyhaven,
+                        ext_sketchfab, external)
 from assetindex.config import Settings
 from assetindex.fetch_web import writable_root
 
 log = logging.getLogger(__name__)
 
-SOURCES = {m.NAME: m for m in (ext_polyhaven, ext_ambientcg, ext_opengameart, ext_itch)}
+SOURCES = {m.NAME: m for m in (ext_polyhaven, ext_ambientcg, ext_opengameart, ext_itch, ext_sketchfab, ext_freesound)}
 MAX_QUERY = 200
 MAX_OFFSET = 10_000
 _ASSET_ID = re.compile(r"[A-Za-z0-9_.-]{1,100}")
@@ -74,6 +76,8 @@ def _ask(module, call, *args):
         return call(*args)
     except KeyError:
         raise HTTPException(404, "网站上没有这个素材或规格") from None
+    except external.NeedsKey as err:
+        raise HTTPException(409, str(err)) from None
     except external.SourceError as err:
         raise HTTPException(502, str(err)) from None
     except Exception:  # an answer shaped unlike what we know
@@ -83,6 +87,21 @@ def _ask(module, call, *args):
 
 def add_external_routes(app: FastAPI, settings: Settings, get_conn: Callable, page_request: Callable) -> None:
     guarded = [Depends(page_request)]
+    ext_keys.use(settings.data_dir)
+
+    @app.get("/api/external/keys")
+    def api_keys() -> dict:
+        return ext_keys.status()
+
+    @app.put("/api/external/keys", dependencies=guarded)
+    def api_save_keys(body: Annotated[dict, Body()]) -> dict:
+        try:
+            return ext_keys.save(body)
+        except ValueError as err:
+            raise HTTPException(422, str(err)) from None
+        except OSError as err:
+            log.error("cannot save the sites' keys: %r", err)
+            raise HTTPException(500, "存不了 key：数据目录写不进去") from None
 
     @app.get("/api/external/search")
     def api_search(
@@ -125,7 +144,8 @@ def add_external_routes(app: FastAPI, settings: Settings, get_conn: Callable, pa
                                                    source=source, source_id=asset_id)
             else:
                 download_id = downloads.add(conn, root, chosen["url"], title=title, source=source,
-                                            source_id=asset_id, md5=chosen["md5"], size=chosen["size"])
+                                            source_id=asset_id, md5=chosen["md5"], size=chosen["size"],
+                                            resolve=chosen.get("resolve"))
         except ValueError as err:
             raise HTTPException(502, f"网站给的下载链接不对：{err}") from None
         return downloads.get(conn, download_id)

@@ -15,13 +15,16 @@
         <input id="q" type="search" placeholder="英文关键词，比如 brick wall、sword、pixel art" autocomplete="off" autofocus>
         <button class="btn" type="submit">搜索</button>
       </form>
+      <button id="x-keys-btn" class="btn secondary" type="button" title="Sketchfab、Freesound 要的 key">网站账号</button>
     </div>
     <div class="x-sources" role="group" aria-label="搜哪些网站">
       <label><input type="checkbox" name="source" value="polyhaven" checked> Poly Haven</label>
       <label><input type="checkbox" name="source" value="ambientcg" checked> ambientCG</label>
       <label><input type="checkbox" name="source" value="opengameart" checked> OpenGameArt</label>
       <label><input type="checkbox" name="source" value="itch" checked> itch.io</label>
-      <span class="filters-note">看中了点开，选规格下载到素材库的 <code>_下载</code>。Poly Haven、ambientCG 都是 CC0；OpenGameArt 授权各异，详情里看；itch.io 只按英文标签列免费素材，要到原页面手动下载。</span>
+      <label><input type="checkbox" name="source" value="sketchfab" checked> Sketchfab</label>
+      <label><input type="checkbox" name="source" value="freesound" checked> Freesound</label>
+      <span class="filters-note">看中了点开，选规格下载到素材库的 <code>_下载</code>。Poly Haven、ambientCG 都是 CC0；OpenGameArt、Sketchfab、Freesound 授权各异，详情里看；itch.io 只按英文标签列免费素材，要到原页面手动下载。</span>
     </div>
   </header>
   <p id="x-hint" class="x-hint" hidden>这些网站只认英文：试试 bricks、grass、rock、wood、sky、sword、pixel art。</p>
@@ -37,6 +40,26 @@
     <h3 class="xv-sub">下载到素材库</h3>
     <ul id="xv-options" class="xv-options"></ul>
     <p id="xv-status" class="settings-status" aria-live="polite"></p>
+  </dialog>
+
+  <dialog id="x-keys" class="viewer settings">
+    <div class="viewer-head">
+      <h2>网站账号</h2>
+      <button id="xk-close" class="icon-btn" type="button" aria-label="关闭">✕</button>
+    </div>
+    <p class="hint">这两个网站要你自己账号的 key（注册免费）。key 只保存在服务器上，不会再显示出来；留空不改，要删掉就勾「清除」。</p>
+    <form id="xk-form" class="settings-form">
+      <label>Sketchfab API token <span id="xk-sketchfab-state" class="hint"></span>
+        <input name="sketchfab" type="password" autocomplete="new-password"></label>
+      <p class="hint">下载模型要用（搜索不用）。登录 sketchfab.com → 头像 → Settings → Password &amp; API → API Token。</p>
+      <label class="check"><input name="clear-sketchfab" type="checkbox"> 清除 Sketchfab token</label>
+      <label>Freesound API key <span id="xk-freesound-state" class="hint"></span>
+        <input name="freesound" type="password" autocomplete="new-password"></label>
+      <p class="hint">搜索就要用。登录 freesound.org 后打开 freesound.org/apiv2/apply 申请，填好后复制 “Client secret/Api key” 那一栏。</p>
+      <label class="check"><input name="clear-freesound" type="checkbox"> 清除 Freesound key</label>
+      <div class="viewer-actions"><button class="btn" type="submit">保存</button></div>
+    </form>
+    <p id="xk-status" class="settings-status" aria-live="polite"></p>
   </dialog>
 
   <script src="external.js"></script>

@@ -1,6 +1,6 @@
 'use strict';
 
-// 外部素材 page: search Poly Haven, ambientCG, OpenGameArt and itch.io through the server, look at an asset,
+// 外部素材 page: search Poly Haven, ambientCG, OpenGameArt, itch.io, Sketchfab and Freesound through the server, look at an asset,
 // queue one of its downloads (the server asks the site for the link).
 
 const HEADERS = { 'X-Requested-With': 'fetch', 'Content-Type': 'application/json' };
@@ -183,7 +183,7 @@ async function openDetail(source, id) {
   const page = el('a', { href: d.page, target: '_blank', rel: 'noopener noreferrer', text: `${d.page} ↗` });
   $('xv-meta').replaceChildren(
     ...metaRow('类型', d.kind),
-    ...metaRow('授权', d.license && (d.license === 'CC0' ? 'CC0（可商用，不用署名）' : `${d.license}（用前看原页面的授权和署名要求）`)),
+    ...metaRow('授权', d.license && (d.license.startsWith('CC0') ? `${d.license}（可商用，不用署名）` : `${d.license}（用前看原页面的授权和署名要求）`)),
     ...metaRow('作者', d.authors),
     ...metaRow('说明', d.description),
     ...metaRow('标签', d.tags.join('、')),
@@ -191,10 +191,53 @@ async function openDetail(source, id) {
     ...metaRow('原页面', page),
   );
   if (d.downloaded) $('xv-status').textContent = '这个素材已经在下载队列里或下载过了。';
-  const options = d.options.length ? d.options.map((o) => optionRow(source, d.id, o)) : [el('li', { text: d.note || '网站没给可下载的文件。' })];
+  const options = d.options.map((o) => optionRow(source, d.id, o));
+  if (d.note || !options.length) options.push(el('li', { className: 'xv-note', text: d.note || '网站没给可下载的文件。' }));
   $('xv-options').replaceChildren(...options);
 }
 
+// ---- the keys Sketchfab and Freesound need ----
+
+async function showKeys() {
+  const form = $('xk-form');
+  form.reset();
+  $('xk-status').textContent = '';
+  $('x-keys').showModal();
+  try {
+    const set = await api('/api/external/keys');
+    for (const [site, has] of Object.entries(set)) $(`xk-${site}-state`).textContent = has ? '（已填）' : '（未填）';
+  } catch (err) {
+    $('xk-status').textContent = err.message;
+  }
+}
+
+async function saveKeys(event) {
+  event.preventDefault();
+  const form = $('xk-form');
+  const body = {};
+  for (const site of ['sketchfab', 'freesound']) {
+    if (form.elements[`clear-${site}`].checked) body[site] = '';
+    else if (form.elements[site].value.trim()) body[site] = form.elements[site].value.trim();
+  }
+  if (!Object.keys(body).length) {
+    $('xk-status').textContent = '没有要改的。';
+    return;
+  }
+  try {
+    const set = await api('/api/external/keys', { method: 'PUT', headers: HEADERS, body: JSON.stringify(body) });
+    form.reset();
+    for (const [site, has] of Object.entries(set)) $(`xk-${site}-state`).textContent = has ? '（已填）' : '（未填）';
+    $('xk-status').textContent = '已保存。';
+    $('q').value = state.q;  // the search shown, again, now with the keys
+    search();
+  } catch (err) {
+    $('xk-status').textContent = err.message;
+  }
+}
+
+$('x-keys-btn').addEventListener('click', showKeys);
+$('xk-close').addEventListener('click', () => $('x-keys').close());
+$('xk-form').addEventListener('submit', saveKeys);
 $('x-form').addEventListener('submit', search);
 $('xv-close').addEventListener('click', () => $('x-viewer').close());
 for (const box of document.querySelectorAll('input[name=source]')) box.addEventListener('change', () => search());

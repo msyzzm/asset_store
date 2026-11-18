@@ -1,16 +1,20 @@
 """The 外部素材 search, against responses recorded from the real sites (tests/fixtures/external)."""
 
 import json
+import urllib.error
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from assetindex import downloads, ext_ambientcg, ext_itch, ext_opengameart, ext_polyhaven, external
+from assetindex import (downloads, ext_ambientcg, ext_freesound, ext_itch, ext_keys, ext_opengameart, ext_polyhaven,
+                        ext_sketchfab, external)
+from assetindex.fetch_job import resolve_link
 from assetindex.scanner import scan_root
 from assetindex.web import create_app
 
 FIXTURES = Path(__file__).parent / "fixtures" / "external"
+REAL_GET_JSON = external.get_json
 HEADERS = {"X-Requested-With": "fetch"}
 HDRI = "kloofendal_48d_partly_cloudy_puresky"
 TEXTURE = "brick_wall_001"
@@ -22,6 +26,9 @@ def _fixture(name: str):
 
 
 OGA_ASSET = "zelda-like-tilesets-and-sprites"
+MODEL_UID = "f39dc69dbbfe49c68045bec2c16e03ba"
+SOUND = "398009"
+SIGNED = "https://sketchfab-prod-media.s3.amazonaws.com/archives/x/file.glb?X-Amz-Signature=abc"
 EMPTY_FEED = '<?xml version="1.0" encoding="UTF-8" ?><rss version="2.0"><channel><title>x</title></channel></rss>'
 
 
@@ -30,10 +37,11 @@ class FakeSites:
 
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.headers: list[dict | None] = []
         self.down: set[str] = set()
 
     def _site(self, url: str) -> str:
-        site = next((s for s in ("polyhaven", "opengameart", "itch.io") if s in url), "ambientcg")
+        site = next((s for s in ("polyhaven", "opengameart", "itch.io", "sketchfab", "freesound") if s in url), "ambientcg")
         if site in self.down:
             raise external.SourceError("连不上网站：TimeoutError")
         return site
@@ -49,9 +57,26 @@ class FakeSites:
             return (FIXTURES / name).read_text(encoding="utf-8")
         raise external.SourceError("网站返回 HTTP 404")
 
-    def __call__(self, url: str):
+    def __call__(self, url: str, headers: dict | None = None):
         self.calls.append(url)
-        self._site(url)
+        self.headers.append(headers)
+        site = self._site(url)
+        if site == "sketchfab":
+            if url.endswith(f"/models/{MODEL_UID}/download"):
+                assert headers == {"Authorization": "Token skf-token"}
+                return {"glb": {"url": SIGNED, "size": 108737136, "expires": 300}}
+            if url.endswith(f"/models/{MODEL_UID}"):
+                return _fixture("sketchfab_model.json")
+            if "/v3/search?" in url:
+                return _fixture("sketchfab_search.json")
+            raise external.SourceError("网站返回 HTTP 404")
+        if site == "freesound":
+            assert headers == {"Authorization": "Token fs-key"}
+            if "/apiv2/search/?" in url:
+                return _fixture("freesound_search.json")
+            if f"/sounds/{SOUND}/" in url:
+                return _fixture("freesound_sound.json")
+            raise external.SourceError("网站返回 HTTP 404")
         if url == f"{ext_polyhaven.API}/assets":
             return _fixture("polyhaven_assets.json")
         if url == f"{ext_polyhaven.API}/info/{HDRI}":
@@ -76,8 +101,11 @@ def sites(monkeypatch):
     monkeypatch.setattr(external, "get_json", fake)
     monkeypatch.setattr(external, "get_text", fake.text)
     monkeypatch.setattr(ext_opengameart, "_gate", external.Gate(0, 0, "OpenGameArt"))
+    monkeypatch.setattr(ext_keys, "_data_dir", None)  # each test's app points it at its own data dir
     for module, names in ((ext_polyhaven, ("_assets", "_details")), (ext_ambientcg, ("_searches", "_details")),
-                          (ext_opengameart, ("_searches", "_details")), (ext_itch, ("_feeds", "_seen"))):
+                          (ext_opengameart, ("_searches", "_details")), (ext_itch, ("_feeds", "_seen")),
+                          (ext_sketchfab, ("_searches", "_details", "_archives")),
+                          (ext_freesound, ("_searches", "_details"))):
         for name in names:
             monkeypatch.setattr(module, name, external.TtlCache(3600))
     return fake
@@ -426,3 +454,123 @@ def test_itch_tells_the_offset_of_its_next_page(client):
     itch = client.get("/api/external/search", params={"q": "pixel art", "source": "itch", "offset": 36}).json()["sources"]["itch"]
 
     assert itch["next"] == 72
+
+
+# ---- keys (Sketchfab, Freesound) ----
+
+
+@pytest.fixture
+def keys(client):
+    assert client.put("/api/external/keys", json={"sketchfab": "skf-token", "freesound": " fs-key "},
+                      headers=HEADERS).json() == {"sketchfab": True, "freesound": True}
+
+
+def test_keys_are_kept_owner_only_and_the_page_only_learns_whether_they_are_set(client, settings, keys):
+    assert client.get("/api/external/keys").json() == {"sketchfab": True, "freesound": True}
+    stored = json.loads((settings.data_dir / ext_keys.FILE_NAME).read_text(encoding="utf-8"))
+    assert stored == {"sketchfab": "skf-token", "freesound": "fs-key"}
+
+    client.put("/api/external/keys", json={"freesound": ""}, headers=HEADERS)
+    assert client.get("/api/external/keys").json() == {"sketchfab": True, "freesound": False}
+
+
+@pytest.mark.parametrize("body", [{"other": "x"}, {"freesound": "a b"}, {"freesound": 5}, {"sketchfab": "钥匙"}])
+def test_unusable_keys_are_refused(client, body):
+    assert client.put("/api/external/keys", json=body, headers=HEADERS).status_code == 422
+
+
+def test_setting_keys_needs_the_page_header(client):
+    assert client.put("/api/external/keys", json={"freesound": "x"}).status_code == 403
+
+
+# ---- Sketchfab ----
+
+
+def test_sketchfab_searches_downloadable_models_with_their_formats(client, sites):
+    skf = client.get("/api/external/search", params={"q": "sword", "source": "sketchfab"}).json()["sources"]["sketchfab"]
+
+    assert (skf["total"], skf["more"], skf["next"], len(skf["items"])) == (None, True, 24, 3)
+    first = skf["items"][0]
+    assert (first["id"], first["title"], first["kind"]) == (MODEL_UID, "The Sword Of Victory", "模型")
+    assert first["thumb"].startswith("https://media.sketchfab.com/") and first["thumb"].endswith("/448x252.jpeg")  # the smallest at least 256 wide
+    assert any("downloadable=true" in c and "cursor=0" in c for c in sites.calls)
+
+
+def test_sketchfab_detail_shows_license_and_the_formats_its_search_listed(client):
+    client.get("/api/external/search", params={"q": "sword", "source": "sketchfab"})
+
+    body = client.get(f"/api/external/sketchfab/{MODEL_UID}").json()
+
+    assert body["license"] == "CC0 Public Domain" and body["authors"] == "Arms Museum"
+    assert [o["key"] for o in body["options"]] == ["glb", "gltf", "usdz", "source"]
+    assert body["options"][0]["size"] == 108737136 and "API token" in body["note"]
+
+
+def test_sketchfab_download_needs_the_token_and_keeps_how_to_ask_for_the_link(client, conn, writable):
+    url = f"/api/external/sketchfab/{MODEL_UID}/download"
+    response = client.post(url, json={"option": "glb"}, headers=HEADERS)
+    assert response.status_code == 409 and "API token" in response.json()["detail"]
+
+    client.put("/api/external/keys", json={"sketchfab": "skf-token"}, headers=HEADERS)
+    row = client.post(url, json={"option": "glb"}, headers=HEADERS).json()
+
+    stored = conn.execute("SELECT url, resolve FROM downloads WHERE id = ?", (row["id"],)).fetchone()
+    assert stored["url"].startswith("https://sketchfab.com/3d-models/")
+    assert stored["resolve"] == f"sketchfab:{MODEL_UID}:glb" and row["title"] == "The Sword Of Victory GLB"
+
+
+def test_the_fetcher_gets_a_fresh_sketchfab_link_with_the_token(client, sites, keys):
+    url, name = resolve_link(f"sketchfab:{MODEL_UID}:glb", "The Sword Of Victory GLB")
+
+    assert (url, name) == (SIGNED, "The Sword Of Victory GLB.glb")
+    with pytest.raises(external.SourceError, match="gltf"):
+        resolve_link(f"sketchfab:{MODEL_UID}:gltf", "x")  # a format the site did not give
+
+
+def test_a_sketchfab_token_the_site_refuses_reads_as_such(client, keys, monkeypatch):
+    def refuse(request, timeout=None):
+        raise urllib.error.HTTPError(request.full_url, 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr(external.urllib.request, "urlopen", refuse)
+    monkeypatch.setattr(external, "get_json", REAL_GET_JSON)
+
+    with pytest.raises(external.SourceError, match="key 不对"):
+        ext_sketchfab.resolve(MODEL_UID, "glb", "x")
+
+
+# ---- Freesound ----
+
+
+def test_freesound_needs_its_key_to_search(client):
+    fs = client.get("/api/external/search", params={"q": "door", "source": "freesound"}).json()["sources"]["freesound"]
+
+    assert "API key" in fs["error"]
+
+
+def test_freesound_searches_with_the_key_in_a_header(client, sites, keys):
+    fs = client.get("/api/external/search", params={"q": "door", "source": "freesound"}).json()["sources"]["freesound"]
+
+    assert (fs["total"], fs["next"], len(fs["items"])) == (2, 24, 2)
+    first = fs["items"][0]
+    assert (first["id"], first["title"], first["kind"]) == (SOUND, "Door Creak 01.wav", "音效")
+    assert first["thumb"].endswith("_wave_M.png") and not any("fs-key" in c for c in sites.calls)
+
+
+def test_freesound_detail_offers_its_previews_and_says_the_original_is_by_hand(client, keys):
+    body = client.get(f"/api/external/freesound/{SOUND}").json()
+
+    assert body["license"] == "CC-BY（要署名）" and body["authors"] == "someone"
+    assert [o["key"] for o in body["options"]] == ["ogg", "mp3"] and "WAV" in body["note"]
+
+
+def test_a_freesound_preview_downloads_named_after_the_sound(client, conn, keys, writable):
+    row = client.post(f"/api/external/freesound/{SOUND}/download", json={"option": "mp3"}, headers=HEADERS).json()
+
+    parts = downloads.parts(conn, row["id"])
+    assert [(p["url"], p["out"]) for p in parts] == [("https://cdn.freesound.org/previews/398/398009_1234-hq.mp3",
+                                                      "Door Creak 01.mp3")]
+
+
+def test_freesound_licenses_read_plainly():
+    assert ext_freesound._license("http://creativecommons.org/licenses/by-nc/3.0/") == "CC-BY-NC（署名，不可商用）"
+    assert ext_freesound._license("http://creativecommons.org/publicdomain/zero/1.0/") == "CC0"

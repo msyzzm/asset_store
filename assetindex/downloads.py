@@ -25,6 +25,7 @@ MAX_PARTS = 500
 MAX_OUT = 400
 MAX_OUT_DEPTH = 8
 MAX_NAME_BYTES = 255  # one file or folder name, on most file systems
+_RESOLVE = re.compile(r"[a-z]{1,20}:[A-Za-z0-9_.-]{1,100}:[a-z0-9]{1,20}")
 _BAD_NAME = re.compile(r'[\x00-\x1f\x7f\\:*?"<>|]')
 OPEN = ("queued", "active")  # still to finish
 ENDED = ("done", "duplicate", "failed", "cancelled")
@@ -51,8 +52,12 @@ def _md5(value) -> str | None:
 
 
 def add(conn: sqlite3.Connection, root: str, url, title=None, source=None, md5=None, size=None,
-        source_id=None, now: float | None = None) -> int:
+        source_id=None, now: float | None = None, resolve=None) -> int:
+    """`resolve` ("site:id:format"): the fetcher asks the site for the link each time it
+    starts the download, `url` being the asset's page (Sketchfab's links expire)."""
     url = check_url(url)
+    if resolve is not None and not (isinstance(resolve, str) and _RESOLVE.fullmatch(resolve)):
+        raise ValueError("下载方式格式不对")
     if title is not None and not isinstance(title, str):
         raise ValueError("标题格式不对")
     for value in (source, source_id):
@@ -62,9 +67,10 @@ def add(conn: sqlite3.Connection, root: str, url, title=None, source=None, md5=N
         raise ValueError("大小格式不对")
     with conn:
         cur = conn.execute(
-            "INSERT INTO downloads (root, url, title, source, source_id, md5, size, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO downloads (root, url, title, source, source_id, md5, size, created, resolve) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (root, url, (title or "").strip()[:MAX_TITLE] or None, source, source_id, _md5(md5), size,
-             time.time() if now is None else now),
+             time.time() if now is None else now, resolve),
         )
     return cur.lastrowid
 

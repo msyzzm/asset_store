@@ -141,6 +141,23 @@ def _resumable(folder: Path) -> bool:
     return all(f"{name}.aria2" in names for name in names if not name.endswith(".aria2"))
 
 
+def resolve_link(spec: str, title: str) -> tuple[str, str]:
+    """The link and file name of a download whose link is asked for at each start
+    ("sketchfab:<uid>:<format>"). Raises SourceError, KeyError or ValueError."""
+    site, _, rest = spec.partition(":")
+    asset_id, _, fmt = rest.partition(":")
+    if site == "sketchfab":
+        from assetindex import ext_sketchfab  # imports this module
+
+        return ext_sketchfab.resolve(asset_id, fmt, title)
+    raise ValueError(f"不认识的下载方式：{site}")
+
+
+LINK_REUSE_SECONDS = 120  # a link asked for lately serves again (Sketchfab's live ~300 s)
+LINK_RETRY_SECONDS = 60  # the site unreachable or busy: ask again after this
+MAX_RELINKS = 3  # a download whose link expired midway gets a fresh one this many times
+
+
 class Fetcher:
     """One pass over the queue per tick(); the caller loops. `run_later(fn, *args)`
     runs the duplicate check (a thread by default; tests pass one that runs at once)."""
@@ -155,8 +172,12 @@ class Fetcher:
         move: Callable[[str, str, bool], None] = move_no_replace,
         now: Callable[[], float] = time.time,
         run_later: Callable | None = None,
+        resolve: Callable[[str, str], tuple[str, str]] = resolve_link,
     ) -> None:
-        self.conn, self.settings, self.rpc = conn, settings, rpc
+        self.conn, self.settings, self.rpc, self.resolve = conn, settings, rpc, resolve
+        self._links: dict[int, tuple[float, str, str]] = {}  # download id: (when, link, file name)
+        self._link_waits: dict[int, float] = {}  # download id: when to ask its site again
+        self._relinks: dict[int, int] = {}  # download id: fresh links it got after an error
         self.mover_busy, self.free, self.move, self.now = mover_busy, free, move, now
         self.run_later = run_later or ThreadPoolExecutor(max_workers=1, thread_name_prefix="twins").submit
 
@@ -311,9 +332,15 @@ class Fetcher:
         if not _resumable(folder):
             log.warning("download %s lost its aria2 control file: starting it over", row["id"])
             _clear(folder)
+        url, out = row["url"], None
+        if row["resolve"]:  # a link that expires: a fresh one at each start (resumes keep the file)
+            link = self._link(row, folder)
+            if link is None:
+                return
+            url, out = link
         try:
             folder.mkdir(parents=True, exist_ok=True)
-            gid = self.rpc.add(row["url"], folder, USER_AGENT, row["md5"])
+            gid = self.rpc.add(url, folder, USER_AGENT, row["md5"], out=out)
         except OSError as err:
             self._fail(row, f"建不了下载目录：{err!r}")
             return
@@ -331,6 +358,28 @@ class Fetcher:
         if not recorded:  # cancelled meanwhile
             self.rpc.forget(gid)
             _clear(folder)
+
+    def _link(self, row, folder: Path) -> tuple[str, str] | None:
+        """The download's link and file name from its site; None meanwhile if the site is
+        down (asked again in a while) or for good if it refuses (the download fails)."""
+        now = self.now()
+        cached = self._links.get(row["id"])
+        if cached and now - cached[0] < LINK_REUSE_SECONDS:
+            return cached[1], cached[2]
+        if self._link_waits.get(row["id"], 0) > now:
+            return None
+        try:
+            url, out = self.resolve(row["resolve"], row["title"] or f"download-{row['id']}")
+        except Exception as err:  # the site's answer, whatever it is
+            if getattr(err, "transient", False):
+                log.info("download %s: its site is down, asking again later: %s", row["id"], err)
+                self._link_waits[row["id"]] = now + LINK_RETRY_SECONDS
+                return None
+            log.warning("download %s: no link from the site: %r", row["id"], err)
+            self._fail(row, f"网站没给下载链接：{err}", folder)
+            return None
+        self._links[row["id"]] = (now, url, out)
+        return url, out
 
     def _follow_active(self) -> dict[int, dict]:
         progress = {}
@@ -355,6 +404,13 @@ class Fetcher:
             if state == "complete":
                 if not self.mover_busy():  # never add files while a move job rearranges the root
                     self._finish(row, base)
+            elif state == "error" and row["resolve"] and self._relinks.get(row["id"], 0) < MAX_RELINKS:
+                # its link may have expired midway (a slow download, a dropped connection): a fresh one, resumed
+                log.info("download %s failed (%s): asking for a fresh link", row["id"], _error_text(status))
+                self._relinks[row["id"]] = self._relinks.get(row["id"], 0) + 1
+                self._links.pop(row["id"], None)
+                self.rpc.forget(row["gid"])
+                self._hand_over(row, base)
             elif state in ("error", "removed"):
                 self._fail(row, _error_text(status), partial_dir(base, row["id"]))
             else:

@@ -10,7 +10,8 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
-from assetindex import aria2, attempts, caption_job, downloads, fetch_job, move_job, organize, organize_apply, scan_request, tags
+from assetindex import (aria2, attempts, caption_job, downloads, ext_keys, fetch_job, move_job, organize, organize_apply,
+                        scan_request, tags)
 from assetindex.caption import CaptionClient
 from assetindex.archive_index import index_archives
 from assetindex.archive_previews import build_previews
@@ -370,6 +371,7 @@ def _fetch_watch() -> int:
     if binary is None:
         log.error("aria2c not found: downloads cannot run (rebuild the image)")
     secret = aria2.new_secret()
+    ext_keys.use(settings.data_dir)  # the Sketchfab token, to ask for its download links
     process = aria2.start_daemon(binary, secret) if binary else None
     conn = connect(settings.db_path)
     fetcher = fetch_job.Fetcher(

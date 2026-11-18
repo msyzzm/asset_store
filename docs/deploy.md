@@ -343,9 +343,9 @@ sudo deploy/updater/install.sh
 - 失败原因会写在列表里（404、要登录、校验不符、下到的是网页而不是文件等），可以「重试」。网盘分享链接、要登录的网站下不了。
 - aria2 只在容器内的 127.0.0.1 上听命令，每次启动换一个随机密钥；BT 和 metalink 一律不跟。
 
-## 外部素材（Poly Haven、ambientCG、OpenGameArt、itch.io）
+## 外部素材（Poly Haven、ambientCG、OpenGameArt、itch.io、Sketchfab、Freesound）
 
-页头「外部素材」打开搜索页：同时搜 Poly Haven 和 ambientCG 的 CC0 免费素材（HDRI、PBR 材质、模型）、OpenGameArt 的素材（2D、3D、音乐、音效），以及 itch.io 某个标签下的免费素材。点卡片看大图和可选规格，点「下载」就进上面的下载队列，下到 `_下载`。每个网站的结果到了就先显示。
+页头「外部素材」打开搜索页：同时搜 Poly Haven 和 ambientCG 的 CC0 免费素材（HDRI、PBR 材质、模型）、OpenGameArt 的素材（2D、3D、音乐、音效），itch.io 某个标签下的免费素材、Sketchfab 的可下载模型、Freesound 的音效。点卡片看大图和可选规格，点「下载」就进上面的下载队列，下到 `_下载`。每个网站的结果到了就先显示。
 
 - 这些网站只认英文关键词；输入中文时页面会提示。
 - 服务器（web 容器）要能上外网：搜索、详情都是服务器去问网站；缩略图和大图由你的浏览器直接从网站的 CDN 加载。
@@ -355,6 +355,9 @@ sudo deploy/updater/install.sh
 - 多文件的下载里每个文件单独记账：哪个文件 aria2 报告下完了才算完成；重启后只补没下完的，丢了进度记录的半截文件删掉重下。任何一个文件失败，整个下载算失败，可以重试。多文件下载落地时不做「库里已有」的比对。
 - OpenGameArt 没有接口，服务器读它的搜索页和素材页（按下载量排序）。它要求每 10 秒最多请求一次：服务器排队发请求，搜完马上点开详情可能要等几秒；排队超过 25 秒就报“等一会儿再试”。结果缓存 10 分钟，详情缓存 1 小时。
 - OpenGameArt 的授权各不相同（CC0、CC-BY、GPL 等），详情里写着，用之前看原页面的署名要求。每个文件可以单独下，多于一个文件时还有「全部文件」；都下到 `_下载/<素材名 文件名>/` 一个文件夹里。它的素材不标「已有」（编号是英文单词，没法按文件名比对）。
+- Sketchfab、Freesound 要你自己账号的 key（注册免费），在搜索页右上角「网站账号」里填。key 只存在服务器数据目录的 `external.keys`（只有属主能读），页面只显示“已填/未填”。
+- Sketchfab：搜索不要 token，只列作者允许下载的模型；下载要 API token（sketchfab.com → Settings → Password & API）。可选 GLB、glTF、USDZ、原始文件。它的下载链接几分钟就过期，所以队列里只记“哪个模型、哪种格式”，下载器每次开始、重试、断点续传前都用 token 现要一个新链接。授权各异（CC0、CC-BY、CC-BY-NC 等），CC-BY 要署名作者和 Sketchfab，NC 不可商用。
+- Freesound：搜索就要 API key（freesound.org/apiv2/apply 申请）。原始文件要 OAuth 登录，程序拿不到，所以能下的是高质量试听版（OGG 约 192kbps、MP3 约 128kbps），下到 `_下载/<声音名 格式>/` 里；要原始文件就点原页面手动下。授权各异，详情里写着是否要署名、能否商用。
 - itch.io 不让程序搜索和下载：输入的词当作标签（`pixel art` → `pixel-art`），列出这个标签下最受欢迎的免费素材，每页 36 个；不填就列全站的。点开只有封面和简介，要点原页面到 itch.io 上手动下载，下好后放进素材库。
 
 ## 给 AI agent 用

@@ -238,7 +238,7 @@ def test_a_download_cancelled_while_being_handed_over_is_not_revived(conn, setti
     download_id = downloads.add(conn, "art", "https://example.org/a.zip")
     real_add = rpc.add
 
-    def add_then_cancel(*args):
+    def add_then_cancel(*args, **kwargs):
         gid = real_add(*args)
         downloads.cancel(conn, download_id)  # the web server, between our read and our write
         return gid
@@ -255,7 +255,7 @@ def test_a_download_cancelled_while_being_handed_over_is_not_revived(conn, setti
 def test_while_aria2_does_not_answer_queued_downloads_wait(conn, settings, rpc):
     download_id = downloads.add(conn, "art", "https://example.org/a.zip")
 
-    def unreachable(*args):
+    def unreachable(*args, **kwargs):
         raise Aria2Unreachable("starting")
 
     rpc.add = unreachable
@@ -463,3 +463,126 @@ def test_a_download_of_several_files_without_room_is_refused(conn, settings, rpc
 ])
 def test_safe_name(name, expected):
     assert safe_name(name, 7) == expected
+
+
+# ---- links that expire (Sketchfab): asked for at each start ----
+
+
+SPEC = "sketchfab:" + "a" * 32 + ":glb"
+
+
+def _expiring(conn):
+    return downloads.add(conn, "art", "https://sketchfab.com/3d-models/x", title="Crate GLB", source="sketchfab",
+                         resolve=SPEC)
+
+
+def test_a_link_that_expires_is_asked_for_at_each_start_under_the_name_given(conn, settings, rpc):
+    asked = []
+
+    def resolve(spec, title):
+        asked.append((spec, title))
+        return f"https://cdn.example.org/{len(asked)}.glb?sig=x", "Crate GLB.glb"
+
+    clock = [100.0]
+    download_id = _expiring(conn)
+    fetcher = _fetcher(conn, settings, rpc, resolve=resolve)
+    fetcher.now = lambda: clock[0]
+    fetcher.tick()
+    rpc.jobs.clear()  # the container restarted: the first link has expired by now
+    clock[0] += 600
+    fetcher.tick()
+
+    assert asked == [(SPEC, "Crate GLB"), (SPEC, "Crate GLB")]
+    assert [a[0] for a in rpc.added] == ["https://cdn.example.org/1.glb?sig=x", "https://cdn.example.org/2.glb?sig=x"]
+    assert rpc.added[1][3] == "Crate GLB.glb" and downloads.get(conn, download_id)["status"] == "active"
+
+
+def test_a_link_the_site_will_not_give_fails_the_download_and_retry_asks_again(conn, settings, rpc):
+    answers = [ValueError("网站不认这个 key（HTTP 401）"), ("https://cdn.example.org/1.glb", "Crate GLB.glb")]
+
+    def resolve(spec, title):
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    download_id = _expiring(conn)
+    fetcher = _fetcher(conn, settings, rpc, resolve=resolve)
+    fetcher.tick()
+    row = downloads.get(conn, download_id)
+    assert row["status"] == "failed" and "HTTP 401" in row["error"] and not rpc.added
+
+    assert downloads.retry(conn, download_id)
+    fetcher.tick()
+    assert downloads.get(conn, download_id)["status"] == "active" and rpc.added[0][0] == "https://cdn.example.org/1.glb"
+
+
+def test_plain_links_are_not_asked_for(conn, settings, rpc):
+    downloads.add(conn, "art", "https://example.org/a.zip")
+
+    _fetcher(conn, settings, rpc, resolve=lambda spec, title: pytest.fail("asked")).tick()
+
+    assert rpc.added[0][0] == "https://example.org/a.zip"
+
+
+class _Busy(Exception):
+    transient = True
+
+
+def test_a_site_down_while_asked_for_a_link_leaves_the_download_waiting_and_asks_again_later(conn, settings, rpc):
+    clock, asked = [100.0], []
+
+    def resolve(spec, title):
+        asked.append(clock[0])
+        if len(asked) == 1:
+            raise _Busy("连不上网站：TimeoutError")
+        return "https://cdn.example.org/1.glb", "Crate GLB.glb"
+
+    download_id = _expiring(conn)
+    fetcher = _fetcher(conn, settings, rpc, resolve=resolve)
+    fetcher.now = lambda: clock[0]
+    fetcher.tick()
+    fetcher.tick()  # too soon to ask again
+    assert downloads.get(conn, download_id)["status"] == "queued" and asked == [100.0]
+
+    clock[0] += 61
+    fetcher.tick()
+    assert downloads.get(conn, download_id)["status"] == "active" and len(asked) == 2
+
+
+def test_a_link_asked_for_lately_serves_again_while_aria2_does_not_answer(conn, settings, rpc):
+    asked = []
+
+    def resolve(spec, title):
+        asked.append(spec)
+        return "https://cdn.example.org/1.glb", "Crate GLB.glb"
+
+    def unreachable(*args, **kwargs):
+        raise Aria2Unreachable("starting")
+
+    _expiring(conn)
+    fetcher = _fetcher(conn, settings, rpc, resolve=resolve)
+    rpc.add = unreachable
+    for _ in range(3):
+        with pytest.raises(Aria2Unreachable):
+            fetcher.tick()
+
+    assert len(asked) == 1
+
+
+def test_a_download_whose_link_expired_midway_gets_a_fresh_one_a_few_times_then_fails(conn, settings, rpc):
+    links = iter(f"https://cdn.example.org/{n}.glb" for n in range(10))
+    clock = [100.0]
+    download_id = _expiring(conn)
+    fetcher = _fetcher(conn, settings, rpc, resolve=lambda spec, title: (next(links), "Crate GLB.glb"))
+    fetcher.now = lambda: clock[0]
+    fetcher.tick()
+
+    for n in range(4):
+        gid = conn.execute("SELECT gid FROM downloads WHERE id = ?", (download_id,)).fetchone()["gid"]
+        rpc.jobs[gid].update(status="error", errorCode="22")  # 403: the link expired
+        fetcher.tick()
+
+    row = downloads.get(conn, download_id)
+    assert [a[0] for a in rpc.added] == [f"https://cdn.example.org/{n}.glb" for n in range(4)]
+    assert row["status"] == "failed"

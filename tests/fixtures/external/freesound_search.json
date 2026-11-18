@@ -1,0 +1,64 @@
+{
+ "_note": "SYNTHETIC, shaped after the API docs (no key to record a real answer)",
+ "count": 2,
+ "next": null,
+ "previous": null,
+ "results": [
+  {
+   "id": 398009,
+   "url": "https://freesound.org/people/someone/sounds/398009/",
+   "name": "Door Creak 01.wav",
+   "tags": [
+    "door",
+    "creak",
+    "wood"
+   ],
+   "description": "An old wooden door creaking.",
+   "username": "someone",
+   "license": "https://creativecommons.org/licenses/by/4.0/",
+   "type": "wav",
+   "filesize": 1234567,
+   "duration": 3.25,
+   "previews": {
+    "preview-hq-mp3": "https://cdn.freesound.org/previews/398/398009_1234-hq.mp3",
+    "preview-lq-mp3": "https://cdn.freesound.org/previews/398/398009_1234-lq.mp3",
+    "preview-hq-ogg": "https://cdn.freesound.org/previews/398/398009_1234-hq.ogg",
+    "preview-lq-ogg": "https://cdn.freesound.org/previews/398/398009_1234-lq.ogg"
+   },
+   "images": {
+    "waveform_m": "https://cdn.freesound.org/displays/398/398009_1234_wave_M.png",
+    "waveform_l": "https://cdn.freesound.org/displays/398/398009_1234_wave_L.png",
+    "spectral_m": "https://cdn.freesound.org/displays/398/398009_1234_spec_M.jpg",
+    "spectral_l": "https://cdn.freesound.org/displays/398/398009_1234_spec_L.jpg"
+   }
+  },
+  {
+   "id": 12,
+   "url": "https://freesound.org/people/someone/sounds/398009/",
+   "name": "Knock",
+   "tags": [
+    "door",
+    "creak",
+    "wood"
+   ],
+   "description": "An old wooden door creaking.",
+   "username": "someone",
+   "license": "http://creativecommons.org/licenses/by-nc/3.0/",
+   "type": "wav",
+   "filesize": 1234567,
+   "duration": 3.25,
+   "previews": {
+    "preview-hq-mp3": "https://cdn.freesound.org/previews/398/398009_1234-hq.mp3",
+    "preview-lq-mp3": "https://cdn.freesound.org/previews/398/398009_1234-lq.mp3",
+    "preview-hq-ogg": "https://cdn.freesound.org/previews/398/398009_1234-hq.ogg",
+    "preview-lq-ogg": "https://cdn.freesound.org/previews/398/398009_1234-lq.ogg"
+   },
+   "images": {
+    "waveform_m": "https://cdn.freesound.org/displays/398/398009_1234_wave_M.png",
+    "waveform_l": "https://cdn.freesound.org/displays/398/398009_1234_wave_L.png",
+    "spectral_m": "https://cdn.freesound.org/displays/398/398009_1234_spec_M.jpg",
+    "spectral_l": "https://cdn.freesound.org/displays/398/398009_1234_spec_L.jpg"
+   }
+  }
+ ]
+}

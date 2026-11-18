@@ -32,16 +32,34 @@ _CJK = re.compile(r"[㐀-鿿豈-﫿]")
 class SourceError(Exception):
     """The site did not answer, or answered with something unexpected."""
 
+    transient = False  # worth asking again in a while (unreachable, busy)
 
-def get_json(url: str):
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
+
+class SiteBusy(SourceError):
+    """The site is unreachable or busy (timeouts, 429, 5xx) for now."""
+
+    transient = True
+
+
+class NeedsKey(SourceError):
+    """The site needs a key (an API token) that is not set on the 外部素材 page."""
+
+
+def get_json(url: str, headers: dict | None = None):
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json", **(headers or {})})
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
             return json.loads(response.read())
     except urllib.error.HTTPError as err:
+        if err.code in (401, 403) and headers:
+            raise SourceError(f"网站拒绝了（HTTP {err.code}）：key 不对（到「网站账号」里检查），或这个素材不让下载") from None
+        if err.code == 429 or err.code >= 500:
+            raise SiteBusy(f"网站忙（HTTP {err.code}）") from None
         raise SourceError(f"网站返回 HTTP {err.code}") from None
-    except (OSError, ValueError) as err:
-        raise SourceError(f"连不上网站：{err.__class__.__name__}") from None
+    except OSError as err:
+        raise SiteBusy(f"连不上网站：{err.__class__.__name__}") from None
+    except ValueError as err:
+        raise SourceError(f"网站返回的内容看不懂：{err.__class__.__name__}") from None
 
 
 def get_text(url: str) -> str:
