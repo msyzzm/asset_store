@@ -151,3 +151,16 @@ def test_a_job_unpacks_just_the_paths_asked_for(lib, tmp_path):
     with pytest.raises(ValueError):
         move_job.parse({"action": "apply", "root": "lib", "paths": ["C/Tiger.rar"]}, settings)
     conn.close()
+
+
+def test_7z_and_zip_go_through_7zz_when_it_is_there(lib, monkeypatch):
+    root, tool = lib
+    monkeypatch.setattr(unpack.verify, "sevenzip", lambda: "7zz")
+    for name in ("Tiger.7z", "Lion.zip", "x.tar"):
+        (root / "C" / name).write_bytes(b"pack")
+
+    assert unpack.unpack_one(root, "C/Tiger.7z", PASSWORD, [], move=fake_move) == "C/Tiger"
+    assert unpack.unpack_one(root, "C/Lion.zip", PASSWORD, [], move=fake_move) == "C/Lion"
+    assert {call[-1].replace("\\", "/").rpartition("/")[2] for call in tool.calls} >= {"Tiger.7z", "Lion.zip"}
+    with pytest.raises(unpack.UnpackError, match="只解"):
+        unpack.unpack_one(root, "C/x.tar", PASSWORD, [], move=fake_move)

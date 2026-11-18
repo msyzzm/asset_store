@@ -113,7 +113,7 @@ def parse_listing(text: str) -> tuple[int, int]:
     return files, sizes
 
 
-def rar_contents(src: Path, password: str) -> tuple[int, int]:
+def listing_7zz(src: Path, password: str) -> tuple[int, int]:
     done = run_7zz(["l", "-slt", "-bd", f"-p{password}", "--", str(src)])
     if done.returncode != 0:
         raise UnpackError(f"列不出包里的文件：{_said(done, password)}")
@@ -126,7 +126,7 @@ def rar_contents(src: Path, password: str) -> tuple[int, int]:
     return listed
 
 
-def extract_rar(src: Path, out: Path, password: str) -> None:
+def extract_7zz(src: Path, out: Path, password: str) -> None:
     """Exit code 0 or nothing: with a wrong password the names and sizes still list fine."""
     done = run_7zz(["x", "-bd", "-y", f"-p{password}", f"-o{out}", "--", str(src)])
     if done.returncode != 0:
@@ -184,12 +184,17 @@ def unpack_one(
     src = base / rel
     if not src.is_file():
         raise UnpackError("压缩包已经不在了（可能已经解开，等扫描更新）")
-    is_rar = rel.lower().endswith(".rar")
-    extract = extract or (extract_rar if is_rar else extract_7z)
+    suffix = src.suffix.lower()
+    if suffix not in (".rar", ".zip", ".7z"):
+        raise UnpackError("只解 7z、rar、zip")
+    # 7-Zip for everything when it is there (fast, and the only one for rar and zip);
+    # py7zr, slow on big solid packs, only for 7z without it.
+    by_7zz = suffix != ".7z" or verify.sevenzip() is not None
+    extract = extract or (extract_7zz if by_7zz else extract_7z)
     folder_rel = rel.rpartition(".")[0]
     dest = base / folder_rel
     try:
-        expected = rar_contents(src, password) if is_rar else contents(src, password)
+        expected = listing_7zz(src, password) if by_7zz else contents(src, password)
     except UnpackError:
         raise
     except Exception as err:  # py7zr has no single error for a wrong password

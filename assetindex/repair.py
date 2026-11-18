@@ -182,8 +182,8 @@ def _take_from_others(srcs: list[Path], names: list[str], tmp: Path, password: s
 def _build_rar(base: Path, srcs: list[Path], tmp: Path, password: str, should_stop, report, free) -> None:
     """The first copy unpacked whole (7zz writes a damaged member too, and names it), each
     damaged member then taken from another copy. On any failure `tmp` is gone again."""
-    expected = unpack.rar_contents(srcs[0], password)  # also refuses volume sets
-    if any(unpack.rar_contents(src, password) != expected for src in srcs[1:]):
+    expected = unpack.listing_7zz(srcs[0], password)  # also refuses volume sets
+    if any(unpack.listing_7zz(src, password) != expected for src in srcs[1:]):
         raise RepairError("几份包里的文件不一样，不能拼成一份")
     if free(base) < expected[1] + unpack.MIN_FREE_BYTES:
         raise RepairError(f"NAS 剩余空间不够：要 {expected[1] / 1e9:.1f} GB，还要留 {unpack.MIN_FREE_BYTES / 1e9:.0f} GB")
