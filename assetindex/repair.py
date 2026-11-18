@@ -27,6 +27,7 @@ from assetindex.organize_apply import _taken, move_no_replace
 from assetindex.scanner import UNPACKING_SUFFIX
 
 CHUNK = 1 << 20
+NO_PASSWORD = "none"  # for packs not locked: 7zz must never stop to ask for one
 BAD_MEMBER = re.compile(r"^ERROR: (?:CRC Failed|Data Error)(?: in encrypted file\. Wrong password\?)? : (.+)$", re.MULTILINE)
 ERROR_COUNT = re.compile(r"Sub items Errors: (\d+)")
 Mover = Callable[[str, str, bool], None]
@@ -154,9 +155,40 @@ def _said(done: subprocess.CompletedProcess) -> str:
     return (done.stdout + b"\n" + done.stderr).decode("utf-8", "replace")
 
 
-def _take_from_others(srcs: list[Path], names: list[str], tmp: Path, password: str, should_stop) -> list[str]:
+def _parts(path: str) -> tuple[str, ...]:
+    return PurePosixPath(path.replace("\\", "/")).parts
+
+
+def _counterpart(name: str, size: int, crc: str, entries: list[tuple[str, int, str]]) -> str | None:
+    """The member of another copy that is `name`: same file name, size and CRC (the CRC the
+    damaged copy's header expects: another file of the same name and size will not have
+    it), and the most folders in common counting from the end (copies may sit under other
+    top folders, "太空Pack/Pack/a" and "Pack/Pack/a"). None if there is none, or two as good."""
+    want = _parts(name)
+    best, best_score, tied = None, 0, False
+    for path, their_size, their_crc in entries:
+        other = _parts(path)
+        if their_size != size or not other or other[-1] != want[-1]:
+            continue
+        if crc and their_crc and crc != their_crc:
+            continue
+        score = 0
+        while score < min(len(want), len(other)) and want[-1 - score] == other[-1 - score]:
+            score += 1
+        if score > best_score:
+            best, best_score, tied = path, score, False
+        elif score == best_score:
+            tied = True
+    if best is None or tied or best_score < min(2, len(want)):
+        return None
+    return best
+
+
+def _take_from_others(srcs: list[Path], names: list[str], expected: dict[str, tuple[int, str]], tmp: Path,
+                      password: str, should_stop) -> list[str]:
     """The damaged members taken whole from the other copies into `tmp`, one 7zz run per
-    copy; those no copy holds whole. Their scratch folder is hidden from the scanner too."""
+    copy, each found there by `_counterpart`; those no copy holds whole. Their scratch
+    folder is hidden from the scanner too."""
     scratch = tmp.parent / (tmp.name.removesuffix(UNPACKING_SUFFIX) + ".one" + UNPACKING_SUFFIX)
     left = list(names)
     try:
@@ -165,26 +197,37 @@ def _take_from_others(srcs: list[Path], names: list[str], tmp: Path, password: s
                 break
             if should_stop():
                 raise Stopped("手动停止了，什么都没改")
+            entries = unpack.entries_7zz(src, password)
+            pairs = {n: c for n in left if (c := _counterpart(n, *expected.get(n, (-1, "")), entries))}
+            if not pairs:
+                continue
+            for theirs in pairs.values():
+                _safe(theirs)
             shutil.rmtree(scratch, ignore_errors=True)
             scratch.mkdir()
-            done = unpack.run_7zz(["x", "-bd", "-y", "-spd", f"-p{password}", f"-o{scratch}", "--", str(src), *left])
-            still_bad = set() if done.returncode == 0 else set(_bad_members(_said(done)) or left)
-            for name in [n for n in left if n not in still_bad and (scratch / _safe(n)).is_file()]:
+            run = ["x", "-bd", "-y", "-spd", f"-p{password}", f"-o{scratch}", "--", str(src), *pairs.values()]
+            done = unpack.run_7zz(run)
+            still_bad = set() if done.returncode == 0 else set(_bad_members(_said(done)) or pairs.values())
+            for name, theirs in pairs.items():
+                if theirs in still_bad or not (scratch / _safe(theirs)).is_file():
+                    continue
                 target = tmp / _safe(name)
                 target.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(scratch / _safe(name), target)
+                os.replace(scratch / _safe(theirs), target)
                 left.remove(name)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     return left
 
 
-def _build_rar(base: Path, srcs: list[Path], tmp: Path, password: str, should_stop, report, free) -> None:
+def _build_7zz(base: Path, srcs: list[Path], tmp: Path, password: str, should_stop, report, free) -> None:
     """The first copy unpacked whole (7zz writes a damaged member too, and names it), each
-    damaged member then taken from another copy. On any failure `tmp` is gone again."""
-    expected = unpack.listing_7zz(srcs[0], password)  # also refuses volume sets
-    if any(unpack.listing_7zz(src, password) != expected for src in srcs[1:]):
-        raise RepairError("几份包里的文件不一样，不能拼成一份")
+    damaged member then taken from another copy, of any format. The copies need not list
+    the same files: the first one's list is what the result must hold. On any failure
+    `tmp` is gone again."""
+    entries = unpack.entries_7zz(srcs[0], password)  # also refuses volume sets
+    wanted = {path: (size, crc) for path, size, crc in entries}
+    expected = (len(entries), sum(size for _, size, _ in entries))
     if free(base) < expected[1] + unpack.MIN_FREE_BYTES:
         raise RepairError(f"NAS 剩余空间不够：要 {expected[1] / 1e9:.1f} GB，还要留 {unpack.MIN_FREE_BYTES / 1e9:.0f} GB")
     shutil.rmtree(tmp, ignore_errors=True)  # ours, left by a crash
@@ -199,7 +242,7 @@ def _build_rar(base: Path, srcs: list[Path], tmp: Path, password: str, should_st
             raise RepairError("每个文件都报错，多半是密码不对")
         for name in bad:
             _safe(name)
-        left = _take_from_others(srcs[1:], bad, tmp, password, should_stop)
+        left = _take_from_others(srcs[1:], bad, wanted, tmp, password, should_stop)
         if left:
             raise RepairError(f"「{left[0]}」每一份都坏了，修不了")
         got = unpack._counted(tmp)
@@ -216,26 +259,27 @@ def repair_one(
     free=unpack.free_bytes, should_stop: Callable[[], bool] = lambda: False,
     report: Callable[[int, int], None] = lambda done, total: None, password: str | None = None,
 ) -> str:
-    """The rebuilt folder's path (the first copy's name without its suffix). Copies are all
-    zip, or all rar (locked ones need `password`)."""
+    """The rebuilt folder's path (the first copy's name without its suffix). Copies are
+    zip, 7z or rar, mixed or not (any rar needs `password`); all-zip goes through
+    zipfile, the rest through 7zz."""
     srcs = [base / rel for rel in rels]
     suffixes = {src.suffix.lower() for src in srcs}
-    if len(srcs) < 2 or any(not src.is_file() for src in srcs) or suffixes not in ({".zip"}, {".rar"}):
-        raise RepairError("要两份以上还在的 zip，或两份以上还在的 rar")
+    if len(srcs) < 2 or any(not src.is_file() for src in srcs) or not suffixes <= {".zip", ".7z", ".rar"}:
+        raise RepairError("要两份以上还在的 zip、7z 或 rar")
     folder_rel = rels[0].rpartition(".")[0]
     dest = base / folder_rel
     if _taken(dest):
         raise RepairError(f"「{folder_rel}」已经有了，不往里面写")
     tmp = dest.parent / f".{dest.name}{UNPACKING_SUFFIX}"
-    if suffixes == {".rar"}:
-        if not password:
+    if suffixes == {".zip"}:
+        _build(base, srcs, tmp, should_stop, report, free)  # the zips are closed again: they can move
+    else:
+        if ".rar" in suffixes and not password:
             raise RepairError("修复 rar 要带密码（没加密的包，7-Zip 会忽略它）")
         try:
-            _build_rar(base, srcs, tmp, password, should_stop, report, free)
+            _build_7zz(base, srcs, tmp, password or NO_PASSWORD, should_stop, report, free)
         except unpack.UnpackError as err:
             raise RepairError(str(err)) from None
-    else:
-        _build(base, srcs, tmp, should_stop, report, free)  # the zips are closed again: they can move
     top = list(tmp.iterdir())
     keep = top[0] if len(top) == 1 and top[0].is_dir() else tmp
     move(str(keep), str(dest), True)

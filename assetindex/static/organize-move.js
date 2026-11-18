@@ -20,14 +20,18 @@ function mountText(mount) {
 
 function moveJobText(job) {
   if (job.running) {
-    const what = { undo: '正在撤销', recover: '正在收尾上次中断的移动', unpack: '正在解开带密码的包', verify: '正在校验压缩包', purge: '正在删除待删除里的文件' }[job.action] ?? '正在移动';
+    const what = {
+      undo: '正在撤销', recover: '正在收尾上次中断的移动', unpack: '正在解包', verify: '正在校验压缩包',
+      purge: '正在删除待删除里的文件', repair: '正在修复损坏的包',
+    }[job.action] ?? '正在移动';
     return job.total ? `${what} ${job.done}/${job.total}…` : `${what}…`;
   }
   if (job.requested) return job.waiting ? '已提交，等扫描或整理分析结束后开始…' : '已提交，mover 马上开始…';
   if (!job.finished) return '';
   const what = {
-    undo: `撤销了 ${job.moved} 个包`, recover: '收尾完成', unpack: `解开了 ${job.moved} 个带密码的包，等扫描完再分析它们`,
+    undo: `撤销了 ${job.moved} 个包`, recover: '收尾完成', unpack: `解开了 ${job.moved} 个包，等扫描完再分析它们`,
     verify: `校验了 ${job.total} 个压缩包，${job.moved} 个完好`, purge: `永久删除了 ${job.moved} 个文件`,
+    repair: job.moved ? '修好了 1 个包，原来的几份副本放进了待删除' : '没修成',
   }[job.action] ?? `移动了 ${job.moved} 个包`;
   const problems = job.problems.length ? `，${job.problems.length} 个没动（原因见下）` : '';
   const ending = job.error ? `。${job.error}` : job.stopped ? '，已手动停止。' : '。';

@@ -20,6 +20,7 @@ from PIL import Image
 
 from assetindex import attempts
 from assetindex.archives import ArchiveError, read_unity_previews
+from assetindex.categories import DUPLICATES, TO_DELETE
 from assetindex.extract import ExtractError, ExtractTimeout, read_member
 from assetindex.scan_request import ScanStopped, never, no_progress
 from assetindex.sequences import sequence_of
@@ -40,6 +41,8 @@ log = logging.getLogger(__name__)
 
 SHEET_IMAGES = 9
 STAGE = "preview"
+MAX_POSTPONED = 3  # scans in a row an archive's preview may time out before it is given up
+ASIDE = (TO_DELETE + "/", DUPLICATES + "/")  # archives on their way out get no preview
 SPARE_CANDIDATES = 6  # replacements for images that fail to extract or decode
 ARCHIVE_TIME_BUDGET_SECONDS = 60
 # Opened at full cover size: a lone image is the whole cover, and compose_sheet
@@ -183,6 +186,15 @@ def _inside_root(root: Path, rel_path: str) -> Path | None:
     return path if path.is_relative_to(root_real) else None
 
 
+def _postpone(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    """Count one more scan whose preview timed out; False once that makes MAX_POSTPONED."""
+    with conn:
+        conn.execute("UPDATE archives SET preview_postponed = IFNULL(preview_postponed, 0) + 1 WHERE file_id = ?",
+                     (row["id"],))
+    count = conn.execute("SELECT preview_postponed FROM archives WHERE file_id = ?", (row["id"],)).fetchone()[0]
+    return count < MAX_POSTPONED
+
+
 def _is_rebuild(row: sqlite3.Row) -> bool:
     """A sheet from an older SHEET_VERSION, as opposed to a first attempt."""
     return row["preview_state"] == 1
@@ -223,6 +235,7 @@ def build_previews(
         """,
         (root_name, SHEET_VERSION),
     ).fetchall()
+    rows = [r for r in rows if not r["rel_path"].startswith(ASIDE)]  # on their way out: no picture needed
     built = empty = skipped = 0
     for i, row in enumerate(rows):
         progress("previews", i, len(rows))
@@ -240,8 +253,16 @@ def build_previews(
         if attempts.begin(conn, row["id"], STAGE):
             try:
                 images = _render(conn, row, archive, thumb_dir, tool)
-            except (OSError, MemoryError, _PreviewPending) as err:
-                # NAS hiccup, disk full, memory pressure, timeouts: retry next scan.
+            except _PreviewPending as err:
+                # Timeouts: retried next scan, but a big solid 7z times out every time.
+                if _postpone(conn, row):
+                    skipped += 1
+                    continue
+                log.warning("previews for %r timed out %d scans in a row; given up: %r",
+                            row["rel_path"], MAX_POSTPONED, err)
+                images = []
+            except (OSError, MemoryError) as err:
+                # NAS hiccup, disk full, memory pressure: retry next scan.
                 log.warning("previews for %r postponed: %r", row["rel_path"], err)
                 skipped += 1
                 continue

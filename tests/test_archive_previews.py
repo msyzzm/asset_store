@@ -238,6 +238,36 @@ def test_timeouts_leave_preview_pending(conn, preview_root, tmp_path, monkeypatc
     assert _state(conn, "sounds.zip") == 0  # nothing to try at all
 
 
+def test_an_archive_timing_out_scan_after_scan_is_given_up(conn, preview_root, tmp_path, monkeypatch):
+    """A big solid 7z times out every time: it must not cost every scan minutes for ever."""
+    from assetindex import archive_previews
+    from assetindex.extract import ExtractTimeout
+
+    def slow(*args, **kwargs):
+        raise ExtractTimeout("too slow")
+
+    monkeypatch.setattr(archive_previews, "read_member", slow)
+    for _ in range(archive_previews.MAX_POSTPONED - 1):
+        _build(conn, preview_root, tmp_path / "thumbs", tool="bsdtar")
+        assert _state(conn, "icons.zip") is None
+    _build(conn, preview_root, tmp_path / "thumbs", tool="bsdtar")
+
+    assert _state(conn, "icons.zip") == 0  # nothing to show, not tried again
+
+
+def test_archives_set_aside_get_no_previews(conn, tmp_path):
+    root = tmp_path / "packs"
+    for folder in ("_待删除", "_Duplicates", "02_3D"):
+        _zip(root / folder / "icons.zip", {"Icons/sword.png": _png()})
+
+    stats = _build(conn, root, tmp_path / "thumbs", tool="bsdtar")
+
+    states = dict(conn.execute(
+        "SELECT f.rel_path, a.preview_state FROM archives a JOIN files f ON f.id = a.file_id").fetchall())
+    assert states["_待删除/icons.zip"] is None and states["_Duplicates/icons.zip"] is None
+    assert stats.built + stats.empty + stats.skipped == 1  # only the one in 02_3D was looked at
+
+
 @needs_bsdtar
 def test_failed_entry_extraction_is_not_retried_immediately(preview_root, tmp_path, monkeypatch):
     from assetindex import web

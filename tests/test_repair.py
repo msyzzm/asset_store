@@ -257,6 +257,83 @@ def test_every_member_failing_means_a_wrong_password(rars, monkeypatch):
         repair.repair_one(rars, RARS, {}, move=fake_move)
 
 
+# A zip and a 7z of one pack (Space Creator Pro): other top folders, the zip holding more,
+# each with another member damaged.
+ZIP_FILES = {"太空Pack/Pack/Content/a.uasset": b"a" * 10, "太空Pack/Pack/Content/b.uasset": b"bb",
+             "太空Pack/Pack/Content/c.uasset": b"ccc"}
+SEVEN_FILES = {"Pack/Pack/Content/a.uasset": b"a" * 10, "Pack/Pack/Content/b.uasset": b"bb"}
+
+
+class FakeMixed7zz:
+    def __init__(self, archives):
+        self.archives = archives  # archive name -> (files, the member damaged in it)
+
+    def __call__(self, args):
+        src = next(a for a in args if a.endswith((".zip", ".7z", ".rar")))
+        files, bad = self.archives[src.replace("\\", "/").rpartition("/")[2]]
+        if args[0] == "l":
+            blocks = "\n\n".join(f"Path = {p}\nSize = {len(d)}\nAttributes = A" for p, d in files.items())
+            return subprocess.CompletedProcess(args, 0, f"\n----------\n{blocks}\n".encode(), b"")
+        out = next(a[2:] for a in args if a.startswith("-o"))
+        wanted = args[args.index(src) + 1 :] or list(files)
+        for member in wanted:
+            os.makedirs(os.path.dirname(os.path.join(out, member)), exist_ok=True)
+            with open(os.path.join(out, member), "wb") as f:
+                f.write(b"?" * len(files[member]) if member == bad else files[member])
+        if bad not in wanted:
+            return subprocess.CompletedProcess(args, 0, b"Everything is Ok", b"")
+        return subprocess.CompletedProcess(args, 2, f"ERROR: CRC Failed : {bad}\nSub items Errors: 1\n".encode(), b"")
+
+
+@pytest.fixture
+def mixed(tmp_path, monkeypatch):
+    root = tmp_path / "lib"
+    (root / "P" / "太空").mkdir(parents=True)
+    (root / "P" / "插件").mkdir(parents=True)
+    (root / "P" / "太空" / "Pack.zip").write_bytes(b"zip")
+    (root / "P" / "插件" / "Pack.7z").write_bytes(b"7z")
+    monkeypatch.setattr(unpack, "run_7zz", FakeMixed7zz({
+        "Pack.zip": (ZIP_FILES, "太空Pack/Pack/Content/a.uasset"),
+        "Pack.7z": (SEVEN_FILES, "Pack/Pack/Content/b.uasset"),
+    }))
+    return root
+
+
+MIXED = ["P/太空/Pack.zip", "P/插件/Pack.7z"]
+
+
+def test_a_zip_is_mended_from_a_7z_whose_paths_differ(mixed):
+    new = repair.repair_one(mixed, MIXED, {}, move=fake_move)
+
+    assert new == "P/太空/Pack"
+    folder = mixed / new
+    assert (folder / "Pack/Content/a.uasset").read_bytes() == b"a" * 10  # from the 7z
+    assert (folder / "Pack/Content/c.uasset").read_bytes() == b"ccc"  # only the zip has it
+    assert sorted(os.listdir(mixed / "_待删除")) == ["Pack.7z", "Pack.zip"]
+
+
+def test_a_member_no_other_copy_holds_is_not_guessed(mixed, monkeypatch):
+    monkeypatch.setattr(unpack, "run_7zz", FakeMixed7zz({
+        "Pack.zip": (ZIP_FILES, "太空Pack/Pack/Content/c.uasset"),  # the 7z has no c.uasset
+        "Pack.7z": (SEVEN_FILES, "Pack/Pack/Content/b.uasset"),
+    }))
+
+    with pytest.raises(repair.RepairError, match="c.uasset"):
+        repair.repair_one(mixed, MIXED, {}, move=fake_move)
+    assert sorted(os.listdir(mixed / "P")) == ["太空", "插件"] and not (mixed / "_待删除").exists()
+
+
+def test_a_counterpart_must_have_the_same_size_and_crc():
+    entries = [("X/Pack/a.uasset", 9, "AA"), ("Y/Other/a.uasset", 10, "AA"), ("Pack/a.uasset", 10, "AA")]
+
+    assert repair._counterpart("太空Pack/Pack/a.uasset", 10, "AA", entries) == "Pack/a.uasset"
+    assert repair._counterpart("太空Pack/Pack/a.uasset", 11, "AA", entries) is None
+    assert repair._counterpart("Z/a.uasset", 10, "", [("A/a.uasset", 10, ""), ("B/a.uasset", 10, "")]) is None  # a tie
+    # Same name and size somewhere else, but not the bytes the damaged copy expects:
+    other = [("Other/Materials/Default.mat", 10, "BB")]
+    assert repair._counterpart("Pack/Materials/Default.mat", 10, "AA", other) is None
+
+
 def test_a_rar_repair_job_takes_the_password(rars, tmp_path):
     settings = Settings(roots={"lib": rars}, data_dir=tmp_path / "data")
     conn = connect(settings.db_path)

@@ -107,31 +107,44 @@ def _is_folder(fields: dict[str, str]) -> bool:
     return fields.get("Folder") == "+" or bool(FOLDER_ATTRIBUTES.search(fields.get("Attributes", "")))
 
 
+def parse_entries(text: str) -> list[tuple[str, int, str]]:
+    """(path, size, CRC) of every file (not folder) in `7zz l -slt` output; the CRC is
+    "" where the format gives none."""
+    _, _, members = text.replace("\r\n", "\n").partition("\n----------\n")
+    found = []
+    for block in members.split("\n\n"):
+        fields = dict(line.split(" = ", 1) for line in block.splitlines() if " = " in line)
+        if "Path" in fields and not _is_folder(fields):
+            found.append((fields["Path"], int(fields.get("Size") or 0), fields.get("CRC", "").strip().upper()))
+    return found
+
+
 def parse_listing(text: str) -> tuple[int, int]:
     """(files, bytes) from `7zz l -slt`: the blocks after the "----------" line, one per
     member, as "Key = value" lines. A folder says "Folder = +" in rar and zip, but in 7z
     only through its attributes ("D..." or a unix "drwx...")."""
-    _, _, members = text.replace("\r\n", "\n").partition("\n----------\n")
-    files = sizes = 0
-    for block in members.split("\n\n"):
-        fields = dict(line.split(" = ", 1) for line in block.splitlines() if " = " in line)
-        if "Path" in fields and not _is_folder(fields):
-            files += 1
-            sizes += int(fields.get("Size") or 0)
-    return files, sizes
+    entries = parse_entries(text)
+    return len(entries), sum(entry[1] for entry in entries)
 
 
 def listing_7zz(src: Path, password: str) -> tuple[int, int]:
+    entries = entries_7zz(src, password)
+    return len(entries), sum(entry[1] for entry in entries)
+
+
+def entries_7zz(src: Path, password: str) -> list[tuple[str, int, str]]:
+    """(path, size, CRC) of every file in the archive. Refuses volume sets and listings with
+    no files (an empty pack, or output we cannot read: never swap it for an empty folder)."""
     done = run_7zz(["l", "-slt", "-bd", f"-p{password}", "--", str(src)])
     if done.returncode != 0:
         raise UnpackError(f"列不出包里的文件：{_said(done, password)}")
     text = done.stdout.decode("utf-8", "replace")
     if MULTIVOLUME.search(text):
         raise UnpackError("分卷的 rar 不解（几个分卷要一起解）")
-    listed = parse_listing(text)
-    if listed[0] == 0:  # an empty pack, or output we cannot read: never swap it for an empty folder
+    entries = parse_entries(text)
+    if not entries:
         raise UnpackError("7zz 没列出任何文件")
-    return listed
+    return entries
 
 
 def extract_7zz(src: Path, out: Path, password: str) -> None:

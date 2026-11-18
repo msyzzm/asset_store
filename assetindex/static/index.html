@@ -68,6 +68,21 @@
         <a class="link-btn" href="/organize.html">打开</a>
       </span>
     </div>
+    <div id="task-files" class="task">
+      <span class="task-dot" aria-hidden="true"></span>
+      <span class="task-name">文件操作</span>
+      <span id="files-task-text" class="task-text" aria-live="polite"></span>
+      <progress id="files-task-bar" class="task-bar" max="1" value="0" hidden></progress>
+      <span class="task-actions">
+        <a class="link-btn" href="/organize.html#m-title" title="移动、解包、修复、校验、删除的详情和停止">打开</a>
+      </span>
+    </div>
+    <div id="task-tags" class="task" hidden>
+      <span class="task-dot" aria-hidden="true"></span>
+      <span class="task-name">打标签</span>
+      <span id="tags-task-text" class="task-text" aria-live="polite"></span>
+      <progress id="tags-task-bar" class="task-bar" max="1" value="0" hidden></progress>
+    </div>
   </section>
   <p id="summary" class="summary"></p>
   <main id="grid" class="grid"></main>
@@ -145,5 +160,6 @@
   <script src="captions.js"></script>
   <script src="update.js"></script>
   <script src="organize-bar.js"></script>
+  <script src="files-bar.js"></script>
 </body>
 </html>

@@ -209,6 +209,7 @@ ADDED_COLUMNS = (
     ("files", "seq_frames", "INTEGER"),
     ("archives", "preview_state", "INTEGER"),
     ("archives", "sheet_version", "INTEGER"),
+    ("archives", "preview_postponed", "INTEGER"),  # scans whose preview timed out, in a row
 )
 # Created after migration, since they reference added columns.
 POST_MIGRATION_SQL = (
