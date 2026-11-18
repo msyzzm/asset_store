@@ -522,7 +522,7 @@ body {
 /* ---- downloads dialog: one line per link, newest work on top ---- */
 .dl-list { display: grid; gap: 2px; max-height: 50vh; margin: 4px 0 0; padding: 0; overflow-y: auto; list-style: none; }
 .dl-item { display: grid; gap: 4px; padding: 8px 10px; border-left: 3px solid var(--border); background: var(--bg); }
-.dl-item.dl-active, .dl-item.dl-queued { border-left-color: var(--busy); }
+.dl-item.dl-active, .dl-item.dl-queued, .dl-item.dl-uploading { border-left-color: var(--busy); }
 .dl-item.dl-done { border-left-color: var(--accent); }
 .dl-item.dl-duplicate { border-left-color: var(--muted); }
 .dl-item.dl-failed { border-left-color: var(--danger); }

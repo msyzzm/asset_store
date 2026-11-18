@@ -193,7 +193,7 @@
 
   <dialog id="downloads" class="viewer settings">
     <div class="viewer-head">
-      <h2>下载到素材库</h2>
+      <h2>下载、上传到素材库</h2>
       <button id="d-close" class="icon-btn" type="button" aria-label="关闭">✕</button>
     </div>
     <p class="hint">贴一个文件的下载链接，服务器用 aria2 下载到素材库的 <code>_下载</code> 文件夹，下完自动扫描，之后在「整理」里给它分类。文件大小不限；库里已有一模一样的文件时照样保留，标成「库里已有」，删不删你决定。</p>
@@ -205,6 +205,15 @@
       </div>
     </form>
     <p id="d-status" class="settings-status" aria-live="polite"></p>
+    <p class="hint">也可以从这台电脑上传：几个文件各算一条，一个文件夹整体算一个包（保留子文件夹，隐藏文件不传）。同样放进 <code>_下载</code>、自动扫描。传的时候别关页面，没有续传。</p>
+    <div class="viewer-actions">
+      <button id="u-files" class="btn" type="button">上传文件…</button>
+      <button id="u-folder" class="btn" type="button">上传文件夹…</button>
+      <input id="u-files-input" type="file" multiple hidden>
+      <input id="u-folder-input" type="file" webkitdirectory hidden>
+    </div>
+    <progress id="u-bar" class="task-bar dl-bar" hidden></progress>
+    <p id="u-status" class="settings-status" aria-live="polite"></p>
     <ol id="d-list" class="dl-list" aria-label="下载列表"></ol>
   </dialog>
 
@@ -215,5 +224,6 @@
   <script src="organize-bar.js"></script>
   <script src="files-bar.js"></script>
   <script src="downloads.js"></script>
+  <script src="uploads.js"></script>
 </body>
 </html>

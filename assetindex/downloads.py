@@ -27,7 +27,7 @@ MAX_OUT_DEPTH = 8
 MAX_NAME_BYTES = 255  # one file or folder name, on most file systems
 _RESOLVE = re.compile(r"[a-z]{1,20}:[A-Za-z0-9_.-]{1,100}:[a-z0-9]{1,20}")
 _BAD_NAME = re.compile(r'[\x00-\x1f\x7f\\:*?"<>|]')
-OPEN = ("queued", "active")  # still to finish
+OPEN = ("queued", "active", "uploading")  # still to finish (uploading: see uploads.py)
 ENDED = ("done", "duplicate", "failed", "cancelled")
 _COLUMNS = "id, root, url, title, source, source_id, md5, size, status, path, dup_of, error, created, finished"
 
@@ -75,13 +75,13 @@ def add(conn: sqlite3.Connection, root: str, url, title=None, source=None, md5=N
     return cur.lastrowid
 
 
-def check_out(out) -> str:
+def check_out(out, max_len: int = MAX_OUT, max_depth: int = MAX_OUT_DEPTH) -> str:
     """A part's path inside its download's folder, as a site gave it: relative, plain
     names only (no "..", no drive or backslash, no hidden or odd characters)."""
-    if not isinstance(out, str) or not 0 < len(out.encode()) <= MAX_OUT:
+    if not isinstance(out, str) or not 0 < len(out.encode()) <= max_len:
         raise ValueError("文件路径不对")
     names = out.split("/")
-    if len(names) > MAX_OUT_DEPTH or out.lower().endswith(".aria2") or any(
+    if len(names) > max_depth or out.lower().endswith(".aria2") or any(
             not n or n.startswith(".") or n != n.strip() or _BAD_NAME.search(n) or len(n.encode()) > MAX_NAME_BYTES
             for n in names):
         raise ValueError(f"文件路径不对：{out[:100]}")
@@ -155,11 +155,12 @@ def cancel(conn: sqlite3.Connection, download_id: int, now: float | None = None)
 
 
 def retry(conn: sqlite3.Connection, download_id: int) -> bool:
-    """Failed or cancelled, and stopped by the fetcher: queued again, from scratch."""
+    """Failed or cancelled, and stopped by the fetcher: queued again, from scratch.
+    Never an upload: its files are on the sender's side."""
     with conn:
         cur = conn.execute(
             "UPDATE downloads SET status = 'queued', error = NULL, finished = NULL "
-            "WHERE id = ? AND status IN ('failed', 'cancelled') AND gid IS NULL",
+            "WHERE id = ? AND status IN ('failed', 'cancelled') AND gid IS NULL AND source IS NOT 'upload'",
             (download_id,),
         )
         if cur.rowcount == 1:  # its folder was cleared: every part again

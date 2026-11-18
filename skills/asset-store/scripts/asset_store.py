@@ -11,6 +11,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -20,6 +21,7 @@ DEFAULT_URL = "http://127.0.0.1:8000"
 TIMEOUT_SECONDS = 300  # downloads of big archives and extractions can take a while
 CHUNK_BYTES = 1024 * 1024
 WRITE_HEADERS = {"X-Requested-With": "asset-store-skill", "Content-Type": "application/json"}
+UPLOAD_WAIT_SECONDS = 5  # a running move job holds an upload's landing back: asked again after this
 
 
 class ApiError(Exception):
@@ -36,6 +38,11 @@ def _open(args, path: str, params: dict | None = None, body: dict | None = None,
         url += "?" + urllib.parse.urlencode({k: v for k, v in params.items() if v not in (None, "")})
     data = json.dumps(body).encode() if body is not None else None
     request = urllib.request.Request(url, data=data, headers=WRITE_HEADERS if data is not None else {}, method=method)
+    return _send(request)
+
+
+def _send(request: urllib.request.Request):
+    url = request.full_url
     try:
         return urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS)
     except urllib.error.HTTPError as err:
@@ -159,6 +166,60 @@ def cmd_download_cancel(args):
 
 def cmd_download_retry(args):
     return _json(args, f"/api/downloads/{args.id}/retry", body={})
+
+
+def _upload_files(path: Path) -> tuple[list[tuple[str, Path]], list[str]]:
+    """The files to send, as (path inside the upload, local path), and the hidden ones left out."""
+    if path.is_file():
+        return [(path.name, path)], []
+    files, skipped = [], []
+    for local in sorted(path.rglob("*")):
+        if not local.is_file():
+            continue
+        rel = local.relative_to(path).as_posix()
+        (skipped.append(rel) if any(n.startswith(".") for n in rel.split("/")) else files.append((rel, local)))
+    return files, skipped
+
+
+def _put_file(args, path: str, local: Path) -> None:
+    with local.open("rb") as f:
+        headers = {"X-Requested-With": WRITE_HEADERS["X-Requested-With"], "Content-Type": "application/octet-stream",
+                   "Content-Length": str(local.stat().st_size)}
+        _send(urllib.request.Request(_base(args) + path, data=f, headers=headers, method="PUT")).close()
+
+
+def _finish_upload(args, upload_id: int) -> dict:
+    while True:  # a move job ends; giving up would throw away what was sent
+        try:
+            return _json(args, f"/api/uploads/{upload_id}/finish", body={})
+        except ApiError as err:
+            if "整理正在移动" not in str(err):
+                raise
+            time.sleep(UPLOAD_WAIT_SECONDS)
+
+
+def cmd_upload(args):
+    path = Path(args.path)
+    if not path.exists():
+        raise ValueError(f"没有这个文件或文件夹：{path}")
+    files, skipped = _upload_files(path)
+    if not files:
+        raise ValueError("文件夹里没有可上传的文件")
+    body = {"files": [{"path": rel, "size": local.stat().st_size} for rel, local in files], "root": args.root or None}
+    if path.is_dir():
+        body = {"folder": True, "name": args.name or path.resolve().name, **body}
+    upload = _json(args, "/api/uploads", body={k: v for k, v in body.items() if v is not None})
+    try:
+        for idx, (_, local) in enumerate(files):
+            _put_file(args, f"/api/uploads/{upload['id']}/files/{idx}", local)
+        result = _finish_upload(args, upload["id"])
+    except BaseException:
+        try:  # nothing half-sent left on the NAS
+            _json(args, f"/api/downloads/{upload['id']}/cancel", body={})
+        except (ApiError, OSError):
+            pass
+        raise
+    return {**result, "skipped": skipped}
 
 
 def cmd_external_keys(args):
@@ -470,6 +531,11 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--title", default="", help="a name to show in the download list")
     p.add_argument("--root", default="", help="root to download into; empty = the first one")
     p.set_defaults(func=cmd_download)
+    p = sub.add_parser("upload", help="send a local file or folder into the library's _下载 folder (a folder = one pack)")
+    p.add_argument("path")
+    p.add_argument("--name", default="", help="the pack's name for a folder; empty = the folder's own name")
+    p.add_argument("--root", default="", help="root to upload into; empty = the first one")
+    p.set_defaults(func=cmd_upload)
     p = sub.add_parser("downloads", help="the download queue: running first, then the latest finished")
     p.add_argument("--limit", type=int, default=20)
     p.set_defaults(func=cmd_downloads)

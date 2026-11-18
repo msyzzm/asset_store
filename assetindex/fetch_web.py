@@ -2,19 +2,29 @@
 retry. The downloading itself happens in the fetcher service (assetindex/fetch_job.py)."""
 
 import sqlite3
+import time
 from collections.abc import Callable
 from typing import Annotated
 
 from fastapi import Body, Depends, FastAPI, HTTPException
 
-from assetindex import downloads
+from assetindex import downloads, uploads
 from assetindex.config import Settings
+
+SWEEP_SECONDS = 60  # how often listing the downloads also drops abandoned uploads
+
+
+def _progress(conn: sqlite3.Connection, row: dict, progress: dict) -> dict | None:
+    if row["status"] == "active":
+        return progress.get(row["id"])
+    if row["status"] == "uploading":
+        return uploads.progress(conn, row["id"], row["size"])
+    return None
 
 
 def download_state(conn: sqlite3.Connection, data_dir) -> dict:
     progress = downloads.read_progress(data_dir)
-    items = [{**row, "progress": progress.get(row["id"]) if row["status"] == "active" else None}
-             for row in downloads.recent(conn)]
+    items = [{**row, "progress": _progress(conn, row, progress)} for row in downloads.recent(conn)]
     return {"mount": downloads.read_mount(data_dir), "counts": downloads.counts(conn), "items": items}
 
 
@@ -50,9 +60,13 @@ def queue_download(conn: sqlite3.Connection, settings: Settings, raw) -> dict:
 
 def add_fetch_routes(app: FastAPI, settings: Settings, get_conn: Callable, page_request: Callable) -> None:
     guarded = [Depends(page_request)]
+    swept = {"at": float("-inf")}
 
     @app.get("/api/downloads")
     def api_downloads(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+        if time.monotonic() - swept["at"] >= SWEEP_SECONDS:
+            swept["at"] = time.monotonic()
+            uploads.sweep(conn, settings)
         return download_state(conn, settings.data_dir)
 
     @app.post("/api/downloads", status_code=201, dependencies=guarded)
@@ -61,16 +75,22 @@ def add_fetch_routes(app: FastAPI, settings: Settings, get_conn: Callable, page_
 
     @app.post("/api/downloads/{download_id}/cancel", dependencies=guarded)
     def api_cancel(download_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
-        if downloads.get(conn, download_id) is None:
+        row = downloads.get(conn, download_id)
+        if row is None:
             raise HTTPException(404, "没有这个下载")
         if not downloads.cancel(conn, download_id):
             raise HTTPException(409, "这个下载已经结束了")
+        if row["source"] == uploads.SOURCE and row["root"] in settings.roots:  # no fetcher clears these
+            uploads.clear(settings, row)
         return downloads.get(conn, download_id)
 
     @app.post("/api/downloads/{download_id}/retry", dependencies=guarded)
     def api_retry(download_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
-        if downloads.get(conn, download_id) is None:
+        row = downloads.get(conn, download_id)
+        if row is None:
             raise HTTPException(404, "没有这个下载")
+        if row["source"] == uploads.SOURCE:
+            raise HTTPException(409, "上传的文件在你电脑上：重新上传")
         if not downloads.retry(conn, download_id):
             raise HTTPException(409, "只有失败或取消的下载能重试（取消后稍等几秒）")
         return downloads.get(conn, download_id)

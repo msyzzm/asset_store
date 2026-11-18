@@ -7,7 +7,7 @@
 const DL_POLL_MS = 2000;
 const DL_IDLE_POLL_MS = 15000;
 const DL_STATUS = {
-  queued: '排队中', active: '下载中', done: '完成', duplicate: '完成，库里已有一样的',
+  queued: '排队中', active: '下载中', uploading: '上传中', done: '完成', duplicate: '完成，库里已有一样的',
   failed: '失败', cancelled: '已取消',
 };
 const dl = { timer: 0 };
@@ -23,6 +23,10 @@ function dlProgressText(p) {
 }
 
 function dlRowText(state) {
+  const uploading = state.items.filter((i) => i.status === 'uploading');  // the web server takes these, no fetcher needed
+  if (uploading.length) {
+    return `正在上传 ${dlName(uploading[0])}${uploading.length > 1 ? `，还有 ${uploading.length - 1} 个` : ''}`;
+  }
   if (!state.mount) return '下载服务没在运行（更新一次后会自动启动）';
   if (!Object.values(state.mount.roots).some(Boolean)) return 'NAS 对下载服务是只读的（.env 里设 ASSET_MOVER_ACCESS=rw）';
   const active = state.items.filter((i) => i.status === 'active');
@@ -56,15 +60,18 @@ function dlItem(item) {
   const name = document.createElement('span');
   name.className = 'dl-name';
   name.textContent = dlName(item);
-  name.title = item.url;
+  name.title = item.source === 'upload' ? '从你的电脑上传' : item.url;
   const status = document.createElement('span');
   status.className = 'dl-state';
-  status.textContent = item.status === 'active' ? dlProgressText(item.progress) : DL_STATUS[item.status];
+  const running = item.status === 'active' || item.status === 'uploading';
+  status.textContent = running ? dlProgressText(item.progress) : DL_STATUS[item.status];
   head.append(name, status);
-  if (item.status === 'queued' || item.status === 'active') head.append(dlButton('取消', 'cancel', item.id));
-  if (item.status === 'failed' || item.status === 'cancelled') head.append(dlButton('重试', 'retry', item.id));
+  if (running || item.status === 'queued') head.append(dlButton('取消', 'cancel', item.id));
+  if ((item.status === 'failed' || item.status === 'cancelled') && item.source !== 'upload') {
+    head.append(dlButton('重试', 'retry', item.id));
+  }
   li.append(head);
-  if (item.status === 'active') {
+  if (running) {
     const bar = document.createElement('progress');
     bar.className = 'task-bar dl-bar';
     bar.max = Math.max(1, item.progress?.total ?? 0);
@@ -82,7 +89,7 @@ function dlItem(item) {
 }
 
 function renderDownloads(state) {
-  const busy = state.items.some((i) => i.status === 'active' || i.status === 'queued');
+  const busy = state.items.some((i) => ['active', 'queued', 'uploading'].includes(i.status));
   const row = $('task-downloads');
   row.classList.toggle('busy', busy);
   row.classList.toggle('failed', !busy && state.items[0]?.status === 'failed');

@@ -1,6 +1,7 @@
 # Copy .env.example to .env and edit it, then: docker compose up -d --build
 # All services share one image and one data volume. The scanner writes the index; the
-# web process reads it and writes on-demand thumbnails.
+# web process reads it and writes on-demand thumbnails (and, with ASSET_MOVER_ACCESS=rw,
+# uploads into the NAS's _下载 folder).
 
 x-app: &app
   build: .
@@ -16,7 +17,8 @@ x-app: &app
     ASSET_ROOTS: ${ASSET_ROOTS:-nas=/assets}
     ASSET_THUMB_CACHE_MB: ${ASSET_THUMB_CACHE_MB:-4096}
   volumes:
-    # The NAS, read-only: nothing here ever writes to it.
+    # The NAS, read-only. Services that write it (web for uploads, mover, fetcher) override
+    # this with ASSET_MOVER_ACCESS.
     - ${ASSET_NAS_PATH:?set ASSET_NAS_PATH in .env}:/assets:ro
     # Index + thumbnails. Must be local disk (SQLite WAL and file locks break on NFS).
     - asset-data:/data
@@ -30,6 +32,11 @@ services:
       - "${ASSET_BIND:-0.0.0.0}:${ASSET_PORT:-8000}:8000"
     # Up to 4 thumbnail renders of 50-megapixel images at once, ~200 MB each while decoding.
     mem_limit: ${WEB_MEM_LIMIT:-2g}
+    # Read-only unless ASSET_MOVER_ACCESS=rw: then uploads from the page are written into the
+    # root's _下载 folder (assetindex/uploads.py); nothing else in web writes the NAS.
+    volumes:
+      - ${ASSET_NAS_PATH:?set ASSET_NAS_PATH in .env}:/assets:${ASSET_MOVER_ACCESS:-ro}
+      - asset-data:/data
 
   scanner:
     <<: *app

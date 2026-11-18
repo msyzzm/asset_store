@@ -170,3 +170,79 @@ def test_every_server_route_is_in_the_skill(tmp_path):
         and not any(r.path.startswith(s) for s in skipped)
     )
     assert missing == []
+
+
+def _upload_calls(monkeypatch, fail_put=False):
+    calls = []
+
+    def fake_json(args, path, params=None, body=None):
+        calls.append((path, body))
+        return {"id": 9, "status": "uploading"} if path == "/api/uploads" else {"id": 9, "status": "done"}
+
+    def fake_put(args, path, local):
+        if fail_put:
+            raise skill.ApiError("HTTP 422: 文件没传完整")
+        calls.append((path, local.read_bytes()))
+
+    monkeypatch.setattr(skill, "_json", fake_json)
+    monkeypatch.setattr(skill, "_put_file", fake_put)
+    return calls
+
+
+def test_a_folder_is_uploaded_as_one_pack_without_hidden_files(monkeypatch, tmp_path, capsys):
+    pack = tmp_path / "Knight Pack"
+    (pack / "sub").mkdir(parents=True)
+    (pack / "sub" / "a.png").write_bytes(b"1")
+    (pack / "b.txt").write_bytes(b"22")
+    (pack / ".DS_Store").write_bytes(b"x")
+    (pack / ".git").mkdir()
+    (pack / ".git" / "HEAD").write_bytes(b"x")
+    calls = _upload_calls(monkeypatch)
+
+    assert skill.main(["upload", str(pack)]) == 0
+
+    assert calls == [
+        ("/api/uploads", {"folder": True, "name": "Knight Pack",
+                          "files": [{"path": "b.txt", "size": 2}, {"path": "sub/a.png", "size": 1}]}),
+        ("/api/uploads/9/files/0", b"22"),
+        ("/api/uploads/9/files/1", b"1"),
+        ("/api/uploads/9/finish", {}),
+    ]
+    assert json.loads(capsys.readouterr().out)["skipped"] == [".DS_Store", ".git/HEAD"]
+
+
+def test_one_file_is_uploaded_as_itself(monkeypatch, tmp_path):
+    (tmp_path / "a.zip").write_bytes(b"abc")
+    calls = _upload_calls(monkeypatch)
+
+    assert skill.main(["upload", str(tmp_path / "a.zip"), "--root", "nas"]) == 0
+
+    assert calls[0] == ("/api/uploads", {"files": [{"path": "a.zip", "size": 3}], "root": "nas"})
+
+
+def test_a_failed_upload_is_cancelled(monkeypatch, tmp_path):
+    (tmp_path / "a.zip").write_bytes(b"abc")
+    calls = _upload_calls(monkeypatch, fail_put=True)
+
+    assert skill.main(["upload", str(tmp_path / "a.zip")]) == 1
+
+    assert calls[-1] == ("/api/downloads/9/cancel", {})
+
+
+def test_an_upload_waits_for_a_move_job_and_is_not_cancelled(monkeypatch, tmp_path):
+    (tmp_path / "a.zip").write_bytes(b"abc")
+    calls, busy = [], [2]
+
+    def fake_json(args, path, params=None, body=None):
+        calls.append(path)
+        if path.endswith("/finish") and busy[0]:
+            busy[0] -= 1
+            raise skill.ApiError("HTTP 409: 整理正在移动文件：等它结束再放进 _下载")
+        return {"id": 9, "status": "done"}
+
+    monkeypatch.setattr(skill, "_json", fake_json)
+    monkeypatch.setattr(skill, "_put_file", lambda args, path, local: None)
+    monkeypatch.setattr(skill.time, "sleep", lambda s: None)
+
+    assert skill.main(["upload", str(tmp_path / "a.zip")]) == 0
+    assert calls.count("/api/uploads/9/finish") == 3 and not any("cancel" in c for c in calls)

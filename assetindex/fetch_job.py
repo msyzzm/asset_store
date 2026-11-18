@@ -459,17 +459,21 @@ class Fetcher:
         self.run_later(self._mark_twin, row["id"], row["root"], rel)
 
     def _mark_twin(self, download_id: int, root: str, rel: str) -> None:
-        """A duplicate check on its own connection (it runs on another thread)."""
-        base = self._base(root)
-        conn = connect(self.settings.db_path, init_schema=False)
-        try:
-            twin = find_twin(conn, root, base, base / rel, rel)
-            if twin:
-                with conn:
-                    conn.execute("UPDATE downloads SET status = 'duplicate', dup_of = ? WHERE id = ? AND status = 'done'",
-                                 (twin, download_id))
-                log.info("download %s is the same as %s", download_id, twin)
-        except Exception:
-            log.exception("duplicate check of download %s failed", download_id)
-        finally:
-            conn.close()
+        mark_twin(self.settings, download_id, root, rel)
+
+
+def mark_twin(settings: Settings, download_id: int, root: str, rel: str) -> None:
+    """A duplicate check on its own connection (it runs on another thread)."""
+    base = settings.roots[root].resolve()
+    conn = connect(settings.db_path, init_schema=False)
+    try:
+        twin = find_twin(conn, root, base, base / rel, rel)
+        if twin:
+            with conn:
+                conn.execute("UPDATE downloads SET status = 'duplicate', dup_of = ? WHERE id = ? AND status = 'done'",
+                             (twin, download_id))
+            log.info("download %s is the same as %s", download_id, twin)
+    except Exception:
+        log.exception("duplicate check of download %s failed", download_id)
+    finally:
+        conn.close()
