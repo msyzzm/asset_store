@@ -25,6 +25,7 @@
         <button id="view-files" class="view-btn" type="button" aria-pressed="false" title="一个文件一条，只按文件名和路径找">文件</button>
       </div>
       <a class="btn secondary" href="/external.html" title="在 Poly Haven、ambientCG 搜免费素材，选中的下载到素材库">外部素材</a>
+      <button id="upload-open" class="btn secondary" type="button" title="从这台电脑上传文件或文件夹到素材库的 _下载；也可以直接拖到页面上">上传</button>
       <button id="settings-btn" class="btn secondary" type="button" title="看图模型和语义搜索的接口">设置</button>
     </div>
     <nav id="kinds" class="kinds" aria-label="按类型筛选"></nav>
@@ -205,7 +206,7 @@
       </div>
     </form>
     <p id="d-status" class="settings-status" aria-live="polite"></p>
-    <p class="hint">也可以从这台电脑上传：几个文件各算一条，一个文件夹整体算一个包（保留子文件夹，隐藏文件不传）。同样放进 <code>_下载</code>、自动扫描。传的时候别关页面，没有续传。</p>
+    <p class="hint">也可以从这台电脑上传：几个文件各算一条，一个文件夹整体算一个包（保留子文件夹，隐藏文件和名字带 <code>\ : * ? " &lt; &gt; |</code> 的文件不传），也可以直接拖到页面上。同样放进 <code>_下载</code>、自动扫描。传的时候别关页面，没有续传。</p>
     <div class="viewer-actions">
       <button id="u-files" class="btn" type="button">上传文件…</button>
       <button id="u-folder" class="btn" type="button">上传文件夹…</button>

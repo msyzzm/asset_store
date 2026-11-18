@@ -531,6 +531,7 @@ body {
 .dl-state { flex: none; color: var(--muted); font-family: var(--num); font-size: 13px; }
 .dl-failed .dl-state, .dl-failed .dl-note { color: var(--danger); }
 .dl-bar { width: 100%; }
+body.drop-target { outline: 3px dashed var(--select); outline-offset: -6px; }
 .dl-note { margin: 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 
 .muted { color: var(--muted); }
