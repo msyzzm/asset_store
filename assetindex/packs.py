@@ -23,6 +23,8 @@ from assetindex.units import Layout, stored_layout
 MAX_HITS = 5  # files shown per pack: enough to see why it matched
 MAX_PACKS = 50
 MAX_CAPTION_IDS = 500
+LONE_MAX_FILES = 12  # a folder of more is a folder, whatever it holds
+LONE_EXTRAS = frozenset({"png", "jpg", "jpeg", "gif", "webp", "bmp", "url", "txt", "html", "htm", "lnk", "pdf"})
 ASIDE = (TO_DELETE + "/", DUPLICATES + "/")
 DIMS = (("01_2D/", "2D"), ("02_3D/", "3D"), ("03_Audio/", "audio"))
 UNREAL_EXTS = ("uasset", "umap")
@@ -179,6 +181,23 @@ def _folder_pack(req: _Request, pack: _Found) -> tuple[int, int, int | None, str
     return files, size, thumb[0] if thumb else None, engine[0] if engine else _engine_of(found_ext), ids
 
 
+def _lone_archive(req: _Request, pack: _Found, files: int) -> sqlite3.Row | None:
+    """The one archive a folder pack holds when the rest is pictures, readmes or links (588
+    live folders, 2026-11-17: a UE pack's .rar in a folder of its name); else None."""
+    if files > LONE_MAX_FILES:
+        return None
+    low, high = under(pack.path)
+    rows = req.conn.execute(
+        "SELECT f.id, f.rel_path, f.ext, a.preview_state FROM files f LEFT JOIN archives a ON a.file_id = f.id"
+        " WHERE f.root = ? AND f.rel_path >= ? AND f.rel_path < ?",
+        (pack.root, low, high),
+    ).fetchall()
+    archives = [r for r in rows if r["ext"] in LISTABLE_ARCHIVE_EXTS]
+    if len(archives) != 1 or any(r["ext"] not in LONE_EXTRAS for r in rows if r not in archives):
+        return None
+    return archives[0]
+
+
 def _engine_of(exts) -> str | None:
     exts = {(e or "").lower() for e in exts}
     if exts & set(UNREAL_EXTS):
@@ -220,6 +239,9 @@ def describe(req: _Request, pack: _Found) -> dict:
     if pack.is_dir:
         files, size, thumb, engine, ids = _folder_pack(req, pack)
         kind = "folder"
+        own = _lone_archive(req, pack, files)  # then the card shows it and a click opens it
+        if own is not None and thumb is None and own["preview_state"] == 1:
+            thumb = own["id"]
     else:
         rows = _file_members(req, pack)
         own = next((r for r in rows if r["rel_path"] == pack.path), None)
@@ -238,7 +260,8 @@ def describe(req: _Request, pack: _Found) -> dict:
         inside = entry_hits(req.conn, own["id"], own["rel_path"], req.terms) if req.terms else []
         hits = inside + [h for h in hits if h != name]
     return {
-        "id": own["id"] if own is not None else None,  # the archive or file itself; None for a folder
+        # The archive or file itself; for a folder, the one archive it holds, else None.
+        "id": own["id"] if own is not None else None,
         "path": f"{pack.root}:/{pack.path}",
         "name": name,
         "category": category,

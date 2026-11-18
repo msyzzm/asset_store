@@ -198,6 +198,26 @@ def test_the_agent_endpoint_browses_without_words(lib):
     assert body["packs"][0]["name"] == "SteamPunk City - 蒸汽朋克城市"
 
 
+def test_a_folder_holding_one_archive_shows_and_opens_that_archive(lib):
+    """588 live folders hold just one archive: the card shows its sheet, a click opens it."""
+    conn, settings = lib
+    root = settings.roots["art"]
+    _zip(root / "01_2D/UI/Spell Icons - 法术图标/150FantasyIcons.zip", ["icons/fire.png", "icons/ice.png"])
+    _write(root / "01_2D/UI/Spell Icons - 法术图标/More.url", b"ad")
+    scan_root(conn, "art", root)
+    index_archives(conn, "art", root)
+    zid = conn.execute("SELECT id FROM files WHERE name = '150FantasyIcons.zip'").fetchone()[0]
+    conn.execute("UPDATE archives SET preview_state = 1 WHERE file_id = ?", (zid,))  # its sheet is built
+    conn.commit()
+
+    pack = packs.search_packs(conn, "法术图标").packs[0]
+
+    assert pack["kind"] == "folder" and pack["id"] == zid  # opens as the archive
+    assert pack["links"]["thumb"] == f"/api/files/{zid}/thumb" and pack["links"]["detail"] == f"/api/agent/files/{zid}"
+    city = packs.search_packs(conn, "蒸汽朋克").packs[0]
+    assert city["id"] is None and "detail" not in city["links"]  # a real folder stays a folder
+
+
 DUNGEON = "01_2D/Environments/Dungeon - 地牢瓦片.zip"
 
 

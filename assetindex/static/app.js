@@ -243,9 +243,10 @@ function packCard(pack) {
   return node;
 }
 
-// A folder pack lists what it holds; an archive (or a lone file) opens as in the file list.
+// A folder pack lists what it holds; an archive (or a lone file, or a folder that only
+// holds one archive: pack.id is that archive) opens as in the file list.
 async function openPack(pack) {
-  if (pack.kind === 'folder') {
+  if (pack.kind === 'folder' && !pack.id) {
     $('q').value = '';
     state.kind = '';
     state.prefix = pack.path.slice(pack.path.indexOf(':/') + 2);
