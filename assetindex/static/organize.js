@@ -199,7 +199,7 @@ function row(item) {
   if ((item.target || item.error) && item.status !== 'accepted' && !item.dup_of) actions.push(actionButton('重新分析', () => decide([item.path], 'redo')));
   const setAside = item.path.startsWith('_待删除/') || (item.status === 'accepted' && item.category === '_待删除');
   if (!setAside) actions.push(actionButton('标为待删除', async () => {
-    if (!window.confirm(`把「${item.path}」标为待删除？执行整理时会移到 _待删除/，你在群晖 File Station 里检查后再删（那样能进回收站）。`)) return;
+    if (!window.confirm(`把「${item.path}」标为待删除？确定后马上移到 _待删除/，你在群晖 File Station 里检查后再删（那样能进回收站）。`)) return;
     await post('/api/organize/units/target', { root: view.root, path: item.path, target: `_待删除/${name}` });
     afterChange();
   }));
@@ -258,6 +258,7 @@ const reload = () => load(true);
 function afterChange() {
   refresh();
   reload();
+  refreshMoves();  // a confirmed pack starts moving right away
 }
 
 const DECIDE_BATCH = 500;  // the server takes at most this many paths per request
@@ -279,7 +280,7 @@ function showAcceptAll() {
 
 async function acceptAll() {
   const what = view.q ? `「${view.category}」里路径或目标含「${view.q}」的` : `「${view.category}」里`;
-  if (!confirm(`确认${what}全部 ${view.total} 个包？确认后在「执行整理」里才会真正移动，确认前可以撤回。`)) return;
+  if (!confirm(`确认${what}全部 ${view.total} 个包？确认后马上移动到建议的位置，之后可以在移动记录里撤销。`)) return;
   const r = await post('/api/organize/units/accept-all', { root: view.root, show: view.show, category: view.category, q: view.q });
   $('o-count').textContent = `已确认 ${r.changed} 个`;
   afterChange();

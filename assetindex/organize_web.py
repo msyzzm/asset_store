@@ -19,6 +19,7 @@ from assetindex.caption import load_config
 from assetindex.classify import CATEGORIES, DUPLICATES, TO_DELETE, UNSORTED, file_suffix, name_clashes, target_for, under
 from assetindex.config import Settings
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
+from assetindex.move_web import start_apply
 from assetindex.scanlock import is_scan_running
 from assetindex.thumbs import EMBEDDED_PREVIEW_EXTS
 from assetindex.units import companions_by_unit, is_container_name
@@ -287,7 +288,8 @@ def add_organize_routes(app: FastAPI, settings: Settings, get_conn: Callable, pa
             changed = sum(conn.execute(_DECIDE_SQL[body.action], (body.root, p)).rowcount for p in body.paths)
             if body.action in ("accept", "reject"):
                 _keep_folders_whole(conn, body.root, body.paths)
-        return {"changed": changed}
+        moving = body.action == "accept" and changed > 0 and start_apply(data_dir, body.root)
+        return {"changed": changed, "moving": moving}
 
     @app.post("/api/organize/units/accept-all", dependencies=guarded)
     def api_accept_all(body: Annotated[AcceptAll, Body()], conn: sqlite3.Connection = Depends(get_conn)) -> dict:
@@ -300,7 +302,7 @@ def add_organize_routes(app: FastAPI, settings: Settings, get_conn: Callable, pa
             ).fetchall()
             paths = [r["path"] for r in rows]
             _keep_folders_whole(conn, body.root, paths)
-        return {"changed": len(paths)}
+        return {"changed": len(paths), "moving": bool(paths) and start_apply(data_dir, body.root)}
 
     @app.post("/api/organize/units/target", dependencies=guarded)
     def api_retarget(body: Annotated[Retarget, Body()], conn: sqlite3.Connection = Depends(get_conn)) -> dict:
@@ -328,7 +330,7 @@ def add_organize_routes(app: FastAPI, settings: Settings, get_conn: Callable, pa
                 (category, name, target, body.root, body.path),
             )
             _keep_folders_whole(conn, body.root, [body.path])
-        return {"target": target}
+        return {"target": target, "moving": start_apply(data_dir, body.root)}
 
     @app.post("/api/organize/units/keep", dependencies=guarded)
     def api_keep(body: Annotated[UnitRef, Body()], conn: sqlite3.Connection = Depends(get_conn)) -> dict:

@@ -1,4 +1,5 @@
 import os
+from dataclasses import replace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -145,3 +146,50 @@ def test_a_journal_of_an_unknown_root_never_borrows_another_root(env):
     done = move_job.run(conn, settings, {"action": "recover", "root": "lib"}, move=fake_move)
 
     assert done.error is None and (root / "UE/道具/Bow.rar").exists()  # left alone, and not blocking
+
+
+def test_packs_confirmed_while_a_job_ran_are_moved_next(env):
+    conn, settings, _ = env
+    done = move_job.run(conn, settings, {"action": "apply", "root": "lib"}, move=fake_move)
+    assert move_job.follow_up(conn, settings, done) is None  # nothing more confirmed
+    with conn:
+        conn.execute("UPDATE organize_units SET status = 'accepted', target = '02_3D/Props/盾.rar' WHERE path = 'UE/道具/Shield.rar'")
+
+    assert move_job.follow_up(conn, settings, replace(done, stopped=True)) is None
+    assert move_job.follow_up(conn, settings, replace(done, error="x")) is None
+    assert move_job.follow_up(conn, settings, replace(done, moved=0)) is None  # moving got nowhere: no endless retry
+    assert move_job.follow_up(conn, settings, done) == "lib"
+    assert move_job.follow_up(conn, settings, done) is None  # already asked
+    assert move_job.take(settings.data_dir) == {"action": "apply", "root": "lib"}
+
+
+def test_confirming_a_proposal_starts_moving_when_the_mover_is_free(env):
+    conn, settings, _ = env
+    client = TestClient(create_app(settings))
+    with conn:
+        for name in ("Shield", "Bow"):
+            conn.execute("UPDATE organize_units SET status = 'proposed', target = ? WHERE path = ?",
+                         (f"02_3D/Props/{name}.rar", f"UE/道具/{name}.rar"))
+
+    def accept(path):
+        return client.post("/api/organize/units/decide", headers=PAGE,
+                           json={"root": "lib", "paths": [path], "action": "accept"}).json()
+
+    assert accept("UE/道具/Shield.rar") == {"changed": 1, "moving": False}  # no mover running
+    move_job.write_mount(settings.data_dir, {"lib": False})
+    assert accept("UE/道具/Bow.rar")["moving"] is False  # read-only: confirmed, not moved
+    assert not move_job.is_requested(settings.data_dir)
+
+    move_job.write_mount(settings.data_dir, {"lib": True})
+    done = client.post("/api/organize/units/target", headers=PAGE,
+                       json={"root": "lib", "path": "UE/道具/Shield.rar", "target": "02_3D/Props/大盾"}).json()
+    assert done["moving"] is True and move_job.take(settings.data_dir) == {"action": "apply", "root": "lib"}
+
+    move_job.request(settings.data_dir, {"action": "verify", "root": "lib", "paths": ["UE/道具/Bow.rar"]})
+    with conn:
+        conn.execute("UPDATE organize_units SET status = 'proposed' WHERE path = 'UE/道具/Bow.rar'")
+    assert accept("UE/道具/Bow.rar")["moving"] is False  # another job waits: follow_up moves it after
+    assert move_job.take(settings.data_dir)["action"] == "verify"
+    reject = client.post("/api/organize/units/decide", headers=PAGE,
+                         json={"root": "lib", "paths": ["UE/道具/Bow.rar"], "action": "reject"}).json()
+    assert reject["moving"] is False

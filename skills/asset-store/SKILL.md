@@ -101,15 +101,19 @@ python scripts/asset_store.py tasks
 **只读，随时可以用**：`stats`（各类文件数）、`organize`（分析进度、上次报告、`categories` 可用的分类、`counts` 各状态的包数）、`units`、`unit-pictures`、`splits`、`moves`（文件任务：正在做的、历史、`mount` 里 NAS 是否可写、`unsettled` 中断未收尾的次数）、`move-plan`、`trash`、`locked`、`tags`、`settings`、`update`。
 
 **只改整理建议、不动文件**：照用户说的做，做完告诉用户改了什么。
-- 流程：`organize-start --root nas [--prefix 文件夹]` 让看图模型分析（找重复的包，给每个包提议分类和名字；很慢、占用模型，先和用户确认范围）→ `units --root nas --show proposed` 看提议（每条有 `path`、`category`、`name`、`target` 目标路径、`reason`、`status`、`dup_of`）→ 审核 → 移动。
-- `decide accept|reject|reset|redo --root nas 路径…`：接受、拒绝、撤回决定、让模型重新分析。
+- 流程：`organize-start --root nas [--prefix 文件夹]` 让看图模型分析（找重复的包，给每个包提议分类和名字；很慢、占用模型，先和用户确认范围）→ `units --root nas --show proposed` 看提议（每条有 `path`、`category`、`name`、`target` 目标路径、`reason`、`status`、`dup_of`）→ 审核 → 接受（接受就马上移动，见下）。
+- `decide reject|reset|redo --root nas 路径…`：拒绝、撤回决定、让模型重新分析。
+
+**接受提议 = 马上移动文件**（mover 可写时，服务器一接受就开始移动；正在移动时接受的，移完这批接着移）：和下面一样，每次都要用户明确同意，先告诉用户哪些包移到哪里。
+- `decide accept --root nas 路径…`：接受提议。
 - `accept-all --root nas --category 01_2D/UI`：接受列表里这一类的全部提议。先用 `units` 告诉用户有多少个。
-- `retarget --root nas 路径 01_2D/UI/新名字`：改目标（分类用 `organize` 返回的 `categories`）。目标写 `_待删除/名字` 就是标记为要删除。
+- `retarget --root nas 路径 01_2D/UI/新名字`：改目标并接受（分类用 `organize` 返回的 `categories`）。目标写 `_待删除/名字` 就是马上移进 `_待删除`。
+- 返回里 `moving` 为 true 表示已开始移动；进度看 `moves`。
 - `keep`（重复的包改为保留这一份）、`split`（文件夹里每个子文件夹各算一个包）、`join`（整个文件夹算一个包）、`unsplit`（撤销拆开）。
 - `tag --root nas 包路径…` 让模型给包打视角、画风、题材标签（也占模型）。
 
 **动 NAS 上的文件、改服务器：每次都要用户明确同意**
-- `move apply --root nas`：把已接受的提议真正移动到目标位置。先跑 `move-plan --root nas`，把要移动的包数、文件数和 `problems`（移不了的原因）告诉用户，用户说移动再执行。进度看 `moves`。
+- `move apply --root nas`：把已接受但还没移动的包（比如上次移动出错、被停止，或当时 NAS 只读）移到目标位置。`move-plan --root nas` 看有哪些和 `problems`（移不了的原因）。
 - `move undo --root nas --journal 20261118-101500.jsonl`：撤销某一次移动（名字在 `moves` 的 `history` 里）。
 - `move recover --root nas`：`unsettled` 大于 0 时，把上次中断的移动收尾。
 - `move unpack --root nas --password 密码 [--limit N] [路径…]`：把带密码的压缩包解成文件夹（`locked` 列出哪些可以解），原压缩包放进 `_待删除`。

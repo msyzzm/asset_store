@@ -286,7 +286,7 @@ def test_redo_sends_a_pack_back_to_the_model_but_not_a_decided_one(env):
     done = client.post("/api/organize/units/decide", headers=PAGE,
                        json={"root": "lib", "paths": ["2D/Ice Pack", "2D/Fire Pack", "2D/Fire Pack (1)"], "action": "redo"})
 
-    assert done.json() == {"changed": 1}  # the accepted one and the duplicate stay as they are
+    assert done.json() == {"changed": 1, "moving": False}  # the accepted one and the duplicate stay as they are
     units = _units(client)
     assert units["2D/Ice Pack"]["status"] == "todo" and units["2D/Ice Pack"]["target"] is None
     assert units["2D/Fire Pack"]["status"] == "accepted" and units["2D/Fire Pack (1)"]["dup_of"]
@@ -304,7 +304,7 @@ def test_accept_a_whole_category_as_listed(env):
     done = client.post("/api/organize/units/accept-all", headers=PAGE,
                        json={"root": "lib", "show": "proposed", "category": "01_2D/VFX"})
 
-    assert done.json() == {"changed": len(vfx)}
+    assert done.json() == {"changed": len(vfx), "moving": False}
     after = _units(client)
     assert all(after[p]["status"] == "accepted" for p in vfx)
     assert all(after[p]["status"] == "proposed" for p in proposed if p not in vfx)
@@ -335,7 +335,7 @@ def test_accept_all_takes_only_what_the_list_shows(env):
     by_search = client.post("/api/organize/units/accept-all", headers=PAGE,
                             json={"root": "lib", "show": "proposed", "category": "01_2D/VFX", "q": "no such text"})
 
-    assert nothing.json() == {"changed": 0} and by_search.json() == {"changed": 0}
+    assert nothing.json() == {"changed": 0, "moving": False} and by_search.json() == {"changed": 0, "moving": False}
     assert _units(client)["2D/Ice Pack"]["status"] == "rejected"
 
 

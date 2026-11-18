@@ -28,6 +28,20 @@ def move_state(data_dir) -> dict:
     return {"requested": requested, "waiting": requested and busy, **asdict(status)}
 
 
+def start_apply(data_dir, root: str) -> bool:
+    """Move the confirmed packs of `root` now: confirming a proposal is the go-ahead. Only
+    when the mover runs, may write there and has no job; a job running or waiting leaves
+    them to move_job.follow_up. True if a move was requested."""
+    mount = move_job.read_mount(data_dir)
+    if not mount or not mount.get(root):
+        return False
+    state = move_state(data_dir)
+    if state["running"] or state["requested"]:
+        return False
+    move_job.request(data_dir, {"action": "apply", "root": root})
+    return True
+
+
 def add_move_routes(app: FastAPI, settings: Settings, get_conn: Callable, page_request: Callable) -> None:
     data_dir = settings.data_dir
     guarded = [Depends(page_request)]

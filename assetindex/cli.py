@@ -445,14 +445,18 @@ def _run_move(settings: Settings, raw) -> None:
     log.info("move job %r", {k: v for k, v in raw.items() if k != "password"} if isinstance(raw, dict) else raw)
     conn = connect(settings.db_path)
     try:
-        final = move_job.run(conn, settings, raw, should_stop=lambda: move_job.stop_requested(data_dir), report=report)
-    except Exception as err:
-        log.exception("move job failed")
-        final = move_job.MoveStatus(error=f"出错中断：{err!r}（中途的包下次会先收尾）", finished=time.time())
+        try:
+            final = move_job.run(conn, settings, raw, should_stop=lambda: move_job.stop_requested(data_dir), report=report)
+        except Exception as err:
+            log.exception("move job failed")
+            final = move_job.MoveStatus(error=f"出错中断：{err!r}（中途的包下次会先收尾）", finished=time.time())
+        report(final)
+        log.info("move job done: moved %d, %d problems, error %r", final.moved, len(final.problems), final.error)
+        root = move_job.follow_up(conn, settings, final)
+        if root:
+            log.info("packs in %s confirmed meanwhile: moving them next", root)
     finally:
         conn.close()
-    report(final)
-    log.info("move job done: moved %d, %d problems, error %r", final.moved, len(final.problems), final.error)
 
 
 def _run_organize(settings: Settings, raw) -> None:

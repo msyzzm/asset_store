@@ -1,9 +1,10 @@
 'use strict';
 
-// Organize page, "执行整理": the move plan, moving the confirmed packs, undoing a run.
+// Organize page, "执行整理": confirmed packs move right away (the server starts it); here
+// their progress, moving what was left, undoing a run.
 // Uses api, post, el and view from organize.js. Paths come from the NAS: text only.
 
-const move = { timer: 0, seq: 0, plan: null, state: null, wasBusy: false, trash: null, trashSeq: 0 };
+const move = { timer: 0, seq: 0, state: null, wasBusy: false, trash: null, trashSeq: 0 };
 const ROOT_WAIT_MS = 300;
 
 function when(epoch) {
@@ -13,9 +14,9 @@ function when(epoch) {
 function mountText(mount) {
   if (mount == null) return '移动要用服务器上新加的 mover 服务：更新一次后它会自动启动。';
   if (!mount[view.root]) {
-    return 'NAS 现在对 mover 是只读的，只能看移动计划。建议都确认完后，在服务器的 .env 里设 ASSET_MOVER_ACCESS=rw，再运行 docker compose up -d。';
+    return 'NAS 现在对 mover 是只读的：确认的建议先记着，不会移动。在服务器的 .env 里设 ASSET_MOVER_ACCESS=rw，再运行 docker compose up -d，然后点「移动已确认的」。';
   }
-  return 'mover 可以写 NAS：确认过的包可以移动了。每次移动都有记录，可以撤销。';
+  return '确认一个建议，就马上把那个包移到分类文件夹；正在移动时确认的，移完这批接着移。每次移动都有记录，可以撤销。';
 }
 
 function moveJobText(job) {
@@ -53,7 +54,7 @@ function renderMoveState(data) {
   $('m-job-problems').replaceChildren(...problemList(job.problems ?? []));
   $('m-stop').hidden = !busy || job.action === 'recover';  // settling cannot be stopped halfway
   $('m-start').hidden = busy;
-  $('m-start').disabled = !writable || !move.plan?.moves;
+  $('m-start').disabled = !writable;
   $('m-unpack').disabled = !writable || busy;
   $('m-purge').disabled = !writable || busy;
   $('m-recover').hidden = !data.unsettled || busy;
@@ -87,7 +88,6 @@ async function refreshMoves() {
     const data = await api('/api/organize/moves');
     if (seq !== move.seq) return;
     const finished = move.wasBusy && !(data.job.running || data.job.requested);
-    if (finished) { move.plan = null; $('m-plan-view').hidden = true; }  // things moved: the plan is old
     busy = renderMoveState(data);
     if (finished) { afterChange(); refreshLocked(); refreshTrash(); }
     move.wasBusy = busy;
@@ -97,32 +97,6 @@ async function refreshMoves() {
   }
   clearTimeout(move.timer);
   move.timer = setTimeout(refreshMoves, busy ? POLL_BUSY_MS : POLL_IDLE_MS);
-}
-
-async function showPlan() {
-  $('m-plan').disabled = true;
-  $('m-plan-summary').textContent = '正在检查移动计划…';
-  $('m-plan-view').hidden = false;
-  try {
-    const plan = await api(`/api/organize/moves/plan?${new URLSearchParams({ root: view.root })}`);
-    move.plan = plan;
-    const held = plan.problems.length ? `；${plan.problems.length} 个已确认的包先不动，原因见下` : '';
-    $('m-plan-summary').textContent = plan.moves
-      ? `可以移动 ${plan.moves} 个已确认的包（共 ${plan.files} 个文件）${held}。`
-      : `没有可以移动的包：先在下面确认建议${held}。`;
-    $('m-plan-problems').replaceChildren(...problemList(plan.problems));
-    $('m-plan-problems-box').hidden = !plan.problems.length;
-    $('m-plan-sample').replaceChildren(...plan.sample.map((m) => el('li', {}, [
-      el('span', { className: 'org-move-path', text: m.path }), el('span', { className: 'arrow', text: ' → ' }), el('strong', { text: m.target }),
-      ...(m.renames.length > 1 ? [el('span', { className: 'muted', text: `（连同 ${m.renames.length - 1} 个预览图或分卷）` })] : []),
-    ])));
-    $('m-plan-sample-box').hidden = !plan.sample.length;
-    if (move.state) renderMoveState(move.state);
-  } catch (err) {
-    $('m-plan-summary').textContent = `检查失败：${err.message}`;
-  } finally {
-    $('m-plan').disabled = false;
-  }
 }
 
 async function startMove(body, question) {
@@ -138,7 +112,7 @@ async function startMove(body, question) {
 
 async function startApply() {
   $('m-start').disabled = true;
-  try {  // the plan as it is now: proposals may have been confirmed since it was shown
+  try {
     const plan = await api(`/api/organize/moves/plan?${new URLSearchParams({ root: view.root })}`);
     if (!plan.moves) { $('m-error').textContent = '现在没有可以移动的包。'; return; }
     await startMove({ action: 'apply', root: view.root },
@@ -203,14 +177,13 @@ async function startUnpack(event) {
 function initMoves() {
   $('m-unpack-form').addEventListener('submit', startUnpack);
   $('m-purge').addEventListener('click', startPurge);
-  $('m-plan').addEventListener('click', showPlan);
   $('m-start').addEventListener('click', startApply);
   $('m-recover').addEventListener('click', () => startMove({ action: 'recover', root: view.root }));
   $('m-stop').addEventListener('click', async () => {
     try { await post('/api/organize/moves/stop', {}); } catch (err) { $('m-error').textContent = `没能停止：${err.message}`; }
     refreshMoves();
   });
-  $('o-form').root.addEventListener('change', () => { move.plan = null; $('m-plan-view').hidden = true; refreshMoves(); refreshLocked(); refreshTrash(); });
+  $('o-form').root.addEventListener('change', () => { refreshMoves(); refreshLocked(); refreshTrash(); });
   refreshMoves();
   refreshLocked();
   refreshTrash();

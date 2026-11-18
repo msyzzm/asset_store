@@ -14,7 +14,7 @@
     </div>
   </header>
   <main class="organize">
-    <p class="org-notice">这一步只生成整理建议：找出重复的包，给每个包建议一个分类和名字。<strong>不会移动任何文件</strong>，确认过的建议在下一步才会执行。</p>
+    <p class="org-notice">这一步只生成整理建议：找出重复的包，给每个包建议一个分类和名字。分析<strong>不会移动任何文件</strong>；在下面的列表里点「确认」，才会马上把那个包移到建议的位置（可以在移动记录里撤销）。</p>
 
     <section class="org-summary" id="o-summary" aria-live="polite"></section>
     <details class="org-damaged" id="o-damaged" hidden></details>
@@ -35,8 +35,7 @@
       <h2 id="m-title">执行整理</h2>
       <p id="m-mount" class="hint"></p>
       <div class="org-move-actions">
-        <button id="m-plan" class="btn secondary" type="button">查看移动计划</button>
-        <button id="m-start" class="btn" type="button" disabled>开始移动</button>
+        <button id="m-start" class="btn secondary" type="button" disabled title="确认过但还没移动的包（比如上次移动出错或被停止）">移动已确认的</button>
         <button id="m-recover" class="btn secondary" type="button" hidden>收尾上次中断的移动</button>
         <button id="m-stop" class="btn secondary" type="button" hidden>停止</button>
       </div>
@@ -44,11 +43,6 @@
       <p id="m-status" class="org-status" aria-live="polite"></p>
       <p id="m-error" class="org-move-error" role="alert"></p>
       <ul id="m-job-problems" class="org-move-list"></ul>
-      <div id="m-plan-view" hidden>
-        <p id="m-plan-summary"></p>
-        <details id="m-plan-problems-box" hidden><summary>先不动的包</summary><ul id="m-plan-problems" class="org-move-list"></ul></details>
-        <details id="m-plan-sample-box" hidden><summary>要移动的包（前 200 个）</summary><ul id="m-plan-sample" class="org-move-list"></ul></details>
-      </div>
       <div id="m-locked" class="org-locked" hidden>
         <h3>带密码的压缩包</h3>
         <p id="m-locked-summary" class="hint"></p>

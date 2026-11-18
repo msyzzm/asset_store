@@ -126,6 +126,21 @@ def stop_requested(data_dir: Path) -> bool:
     return (data_dir / STOP_NAME).exists()
 
 
+def follow_up(conn: sqlite3.Connection, settings: Settings, final: MoveStatus) -> str | None:
+    """After a job: packs confirmed while it ran (confirming is the go-ahead to move) are
+    moved next. Not after a stop or an error, nor after a move that moved nothing: what
+    is left cannot be moved now. The root asked for, if any."""
+    if final.stopped or final.error or is_requested(settings.data_dir):
+        return None
+    if final.action == "apply" and not final.moved:
+        return None
+    for root, path in settings.roots.items():
+        if writable(path.resolve()) and build_plan(conn, root).moves:
+            request(settings.data_dir, {"action": "apply", "root": root})
+            return root
+    return None
+
+
 def write_status(data_dir: Path, status: MoveStatus) -> None:
     write_json_atomic(data_dir / STATUS_NAME, asdict(status))
 
