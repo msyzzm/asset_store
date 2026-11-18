@@ -197,6 +197,21 @@ def test_old_names_lose_junk_sources_and_notes_are_not_sorted(lib, server):
     assert row["name"] == "冰霜特效" and row["target"] == "01_2D/VFX/冰霜特效"
 
 
+def test_a_proposal_to_stay_put_needs_no_one_to_accept_it(lib):
+    """Live 2026-11-17: 10 of 12 packs to confirm had an arrow to where they already were."""
+    conn, _, _ = lib
+    conn.execute("INSERT OR REPLACE INTO organize_units (root, path, is_dir, files, size, signature, status, updated)"
+                 " VALUES ('lib', '01_2D/VFX/冰霜特效', 1, 1, 1, 's', 'todo', 0), ('lib', '2D/Ice Pack', 1, 1, 1, 's', 'todo', 0)")
+    conn.commit()
+
+    organize.save_proposal(conn, "lib", "01_2D/VFX/冰霜特效", "01_2D/VFX", "冰霜特效", "r", "m")
+    organize.save_proposal(conn, "lib", "2D/Ice Pack", "01_2D/VFX", "冰霜特效 2", "r", "m")
+
+    rows = _rows(conn)
+    assert rows["01_2D/VFX/冰霜特效"]["status"] == "accepted" and rows["01_2D/VFX/冰霜特效"]["reason"] == "r"
+    assert rows["2D/Ice Pack"]["status"] == "proposed"  # a real move still waits for the user
+
+
 def test_request_files(tmp_path):
     organize.request_job(tmp_path, Scope("lib", "2D"))
     assert organize.is_requested(tmp_path)

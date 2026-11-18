@@ -185,13 +185,14 @@ def save_proposal(conn: sqlite3.Connection, root: str, path: str, category: str,
         return
     with conn:
         target = target_for(category, name, bool(row["is_dir"]), _taken(conn, root, path))
+        status = "accepted" if target == path else "proposed"  # staying put: nothing to ask about
         conn.execute(
             """
             UPDATE organize_units SET category = ?, name = ?, target = ?, reason = ?, model = ?, error = NULL,
-                status = 'proposed', updated = ?
+                status = ?, updated = ?
             WHERE root = ? AND path = ? AND status NOT IN ('accepted', 'rejected')
             """,
-            (category, name, target, reason, model, time.time(), root, path),
+            (category, name, target, reason, model, status, time.time(), root, path),
         )
 
 
