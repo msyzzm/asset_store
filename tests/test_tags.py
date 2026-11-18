@@ -59,6 +59,16 @@ def test_an_answer_becomes_tags():
         tags.parse_tags("  ")
 
 
+def test_a_model_that_thinks_aloud_first_is_read_from_its_last_json():
+    """Live 2026-11-17: "auto" sometimes lands on a reasoning model that talks before it answers."""
+    said = ('好的，我现在需要处理这个素材包的标签。格式是 {"view": "视角", ...}，先看路径：01_2D/Environments，'
+            '文件名里有像素地图 Tileset。所以：{"view": "俯视", "style": "像素", "themes": "城市"}')
+
+    assert tags.parse_tags(said) == tags.Tags("俯视", "像素", ("城市",))
+    assert tags.ANSWER_TOKENS >= 1000  # room to think and still answer
+    assert tags.build_prompt("路径：01_2D/X").rstrip().endswith("JSON。")  # reminded last, after the facts
+
+
 def test_a_job_tags_the_packs_asked_for_and_search_shows_them(lib):
     conn, settings = lib
     model = FakeModel([

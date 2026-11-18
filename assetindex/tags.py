@@ -9,6 +9,7 @@ packs to tag: tried on a few first, then on all.
 
 import json
 import logging
+import re
 import sqlite3
 import time
 from collections.abc import Callable
@@ -32,7 +33,8 @@ VIEWS = ("俯视", "等距", "横版", "第一人称", "第三人称", "不限")
 STYLES = ("写实", "卡通", "像素", "低多边形", "风格化", "手绘", "其他")
 MAX_THEMES = 5
 MAX_THEME_CHARS = 12
-ANSWER_TOKENS = 200
+ANSWER_TOKENS = 1500  # 200 was cut short when "auto" landed on a model that reasons first
+FLAT_OBJECT = re.compile(r"\{[^{}]*\}")
 ANSWER_SHOWN = 80  # chars of an answer without JSON kept in its error: why it went wrong
 MAX_PATHS = 5000
 MAX_ERROR_CHARS = 300
@@ -76,20 +78,27 @@ def build_prompt(facts: str) -> str:
         f"画风：只能选一个：{'、'.join(STYLES)}。\n"
         f"题材：1 到 {MAX_THEMES} 个词，用顿号分隔，比如「蒸汽朋克、维多利亚、城市」「中世纪、地牢」「科幻、太空站」。\n\n"
         '只输出一个 JSON，不要别的文字：{"view": "视角", "style": "画风", "themes": "题材"}\n\n'
-        f"素材包信息：\n{facts}"
+        f"素材包信息：\n{facts}\n\n"
+        "再说一次：直接回答，只输出那一个 JSON。"
     )
 
 
 def parse_tags(text: str) -> Tags:
-    """The model's JSON answer, checked; ValueError if there is none."""
-    start, end = text.find("{"), text.rfind("}")
-    if start < 0 or end <= start:
+    """The model's JSON answer, checked; ValueError if there is none. The last flat {...}
+    that parses: a model that thinks aloud first may quote the format on its way."""
+    found = FLAT_OBJECT.findall(text)
+    if not found:
         said = " ".join(text.split())[:ANSWER_SHOWN] or "（空）"
         raise ValueError(f"回答里没有 JSON：{said}")
-    try:
-        data = json.loads(text[start : end + 1])
-    except ValueError:
-        raise ValueError("回答里的 JSON 不完整") from None
+    data = None
+    for candidate in reversed(found):
+        try:
+            data = json.loads(candidate)
+            break
+        except ValueError:
+            continue
+    if data is None:
+        raise ValueError("回答里的 JSON 不完整")
     if not isinstance(data, dict):
         raise ValueError("回答不是 JSON 对象")
     view, style, themes = data.get("view"), data.get("style"), data.get("themes")
