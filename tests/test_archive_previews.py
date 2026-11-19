@@ -3,6 +3,7 @@ import os
 import tarfile
 import zipfile
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -487,3 +488,16 @@ def test_hdr_skies_make_a_cover_and_a_loose_thumbnail(tmp_path):
 
         assert _state_of(settings, "skies.zip") == 1 and kind == "image"
         assert client.get(f"/api/files/{ids['loose.hdr']}/thumb").status_code == 200
+
+
+@needs_bsdtar
+def test_exr_maps_make_a_cover(conn, tmp_path):
+    from tests.test_exr import make_exr
+
+    root = tmp_path / "packs"
+    rough = make_exr(tmp_path, {"Y": np.full((8, 8), 0.5)})
+    _zip(root / "crate.zip", {"textures/crate_rough_1k.exr": rough, "crate.blend": b"x"})
+
+    stats = _build(conn, root, tmp_path / "thumbs")
+
+    assert stats.built == 1 and _state(conn, "crate.zip") == 1

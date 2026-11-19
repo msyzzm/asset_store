@@ -55,13 +55,15 @@ CELL_BOX = THUMB_SIZE
 # 3: .svg and .obj are drawn too.
 # 4: .fbx, .glb and .gltf are drawn too.
 # 5: .hdr is read too.
-SHEET_VERSION = 5
+# 6: .exr is read too.
+SHEET_VERSION = 6
 SHEET_LAYOUT_VERSION = 2
 RETRIES = (
     # svg, obj: drawn since; uasset, eps: crowded out by .txt/.mtl and the like until then.
     (3, ("svg", "obj", "uasset", "eps")),
     (4, ("fbx", "glb", "gltf")),
     (5, ("hdr",)),
+    (6, ("exr",)),
 )
 UNITY_PREVIEW_BOX = (128, 128)
 MAX_UNITY_PREVIEWS = 2000

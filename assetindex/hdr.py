@@ -34,7 +34,7 @@ def render_hdr(data: bytes) -> bytes | None:
     except _NotHdr as err:
         log.debug("cannot read hdr: %s", err)
         return None
-    image = Image.fromarray(_tone_map(rgbe), "RGB")
+    image = Image.fromarray(tone_map(_light(rgbe)), "RGB")
     out = io.BytesIO()
     image.save(out, "PNG")
     return out.getvalue()
@@ -115,10 +115,14 @@ class _Scanlines:
         return np.frombuffer(out, np.uint8) if keep else None
 
 
-def _tone_map(rgbe: np.ndarray) -> np.ndarray:
+def _light(rgbe: np.ndarray) -> np.ndarray:
     exponent = rgbe[..., 3].astype(np.int32)
-    light = np.where(exponent[..., None] > 0,
-                     np.ldexp(rgbe[..., :3].astype(np.float32) + 0.5, exponent[..., None] - 136), 0.0)
+    return np.where(exponent[..., None] > 0,
+                    np.ldexp(rgbe[..., :3].astype(np.float32) + 0.5, exponent[..., None] - 136), 0.0)
+
+
+def tone_map(light: np.ndarray) -> np.ndarray:
+    """Linear light (rows, cols, 3) as 8-bit screen colours."""
     luminance = light @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
     average = float(np.exp(np.mean(np.log(luminance + 1e-6))))
     scaled = light * (KEY / max(average, 1e-6))
