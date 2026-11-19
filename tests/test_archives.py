@@ -136,6 +136,11 @@ def test_entries_are_capped(tmp_path, monkeypatch):
         ("rar", ["Pack 4.27/Content/M.umap"], ("unreal", None)),  # segment must be just the version
         ("zip", ["Assets/FX.prefab", "Assets/FX.prefab.meta"], ("unity", None)),
         ("zip", ["Pack/FX.unitypackage"], ("unity", None)),
+        # Kenney-style: plain models with a Unity package thrown in are for any engine.
+        ("zip", ["Models/FBX/desk.fbx", "Unity package/Furniture Pack.unitypackage"], (None, None)),
+        ("zip", ["Models/GLB/desk.GLB", "Furniture.unitypackage"], (None, None)),
+        # A Unity project folder holding models is still a Unity pack.
+        ("zip", ["Assets/M/desk.fbx", "Assets/M/desk.fbx.meta"], ("unity", None)),
         ("zip", ["a.png"], (None, None)),
     ],
 )

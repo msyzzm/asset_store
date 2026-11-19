@@ -98,7 +98,26 @@ def index_archives(
         finally:
             attempts.finish(conn, row["id"], STAGE)
     progress("archives", len(rows), len(rows))
+    _recheck_unity(conn, root_name)
     return ArchiveStats(**counts)
+
+
+def _recheck_unity(conn: sqlite3.Connection, root_name: str) -> None:
+    """Unchanged archives are not relisted, so redo the Unity guess from the stored entries
+    (the rule got stricter on 2026-11-19: models plus a bonus .unitypackage are for any engine)."""
+    rows = conn.execute(
+        "SELECT f.id, f.ext FROM files f JOIN archives a ON a.file_id = f.id"
+        " WHERE f.root = ? AND a.engine = 'unity' AND f.ext != 'unitypackage'",
+        (root_name,),
+    ).fetchall()
+    for row in rows:
+        paths = [r[0] for r in conn.execute("SELECT path FROM archive_entries WHERE file_id = ?", (row["id"],))]
+        engine, version = archives.detect_engine(row["ext"], paths)
+        if engine != "unity":
+            with conn:
+                conn.execute(
+                    "UPDATE archives SET engine = ?, engine_version = ? WHERE file_id = ?", (engine, version, row["id"])
+                )
 
 
 def _misnamed(root: Path, row: sqlite3.Row) -> bool:

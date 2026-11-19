@@ -222,3 +222,17 @@ def test_an_archive_that_failed_under_the_wrong_name_is_read_again_once(conn, tm
     third = index_archives(conn, "art", root)
 
     assert first.failed == 2 and (second.listed, second.failed) == (1, 1) and third.unchanged == 2
+
+
+def test_unchanged_archive_gets_its_engine_rechecked(conn, tmp_path):
+    root = tmp_path / "packs"
+    _zip(root / "kenney_furniture.zip", ["Models/FBX/desk.fbx", "Unity package/Furniture.unitypackage"])
+    _index(conn, root)
+    # An older rule called it a Unity pack; the file itself has not changed since.
+    conn.execute("UPDATE archives SET engine = 'unity'")
+    conn.commit()
+
+    stats = index_archives(conn, "art", root)
+
+    assert stats.unchanged == 1
+    assert conn.execute("SELECT engine FROM archives").fetchone()[0] is None

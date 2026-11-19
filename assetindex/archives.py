@@ -17,7 +17,7 @@ from pathlib import Path
 import py7zr
 import rarfile
 
-from assetindex.kinds import LISTABLE_ARCHIVE_EXTS
+from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, kind_of
 from assetindex.scanner import IGNORED_DIRS, is_utf8
 
 ARCHIVE_EXTS = LISTABLE_ARCHIVE_EXTS
@@ -235,7 +235,9 @@ def detect_engine(ext: str, paths: Iterable[str]) -> tuple[str | None, str | Non
                     return "unreal", match.group(1)
         return "unreal", None
     has_unity_assets = "meta" in suffixes and any("Assets" in p.split("/")[:-1] for p in paths)
-    if "unitypackage" in suffixes or has_unity_assets:
+    # A .unitypackage beside plain models is a bonus (Kenney packs): the pack is for any engine.
+    unity_only = "unitypackage" in suffixes and not any(kind_of(s) == "model" for s in suffixes)
+    if unity_only or has_unity_assets:
         return "unity", None
     return None, None
 
