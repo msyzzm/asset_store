@@ -15,6 +15,8 @@ from PIL import Image
 
 from assetindex.eps import MAX_EPS_BYTES, find_preview
 from assetindex.kinds import THUMBNAIL_EXTS
+from assetindex.obj_model import MAX_OBJ_BYTES, render_obj
+from assetindex.svg import MAX_SVG_BYTES, render_svg
 from assetindex.uasset import MAX_UASSET_BYTES, find_thumbnail
 
 THUMB_SIZE = (320, 320)
@@ -37,8 +39,9 @@ MAX_ARCHIVE_IMAGE_BYTES = 20 * 1024**2
 THUMB_DECODERS = ("PNG", "JPEG", "GIF", "WEBP", "BMP", "TGA", "PSD", "TIFF")
 
 
-# Files that aren't images but carry one: an .uasset's editor thumbnail, an .eps preview.
-EMBEDDED_PREVIEW_EXTS = frozenset({"uasset", "eps"})
+# Files Pillow can't open that still give a picture: an .uasset's editor thumbnail, an
+# .eps preview, an .svg or .obj drawn by us.
+EMBEDDED_PREVIEW_EXTS = frozenset({"uasset", "eps", "svg", "obj"})
 
 
 def source_limit(ext: str) -> int | None:
@@ -49,6 +52,10 @@ def source_limit(ext: str) -> int | None:
         return MAX_UASSET_BYTES
     if ext == "eps":
         return MAX_EPS_BYTES
+    if ext == "svg":
+        return MAX_SVG_BYTES
+    if ext == "obj":
+        return MAX_OBJ_BYTES
     return None
 
 
@@ -58,6 +65,10 @@ def preview_image_bytes(ext: str, data: bytes) -> bytes | None:
         return find_thumbnail(data)
     if ext == "eps":
         return find_preview(data)
+    if ext == "svg":
+        return render_svg(data)
+    if ext == "obj":
+        return render_obj(data)
     return data
 
 

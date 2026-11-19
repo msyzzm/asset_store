@@ -48,9 +48,15 @@ ARCHIVE_TIME_BUDGET_SECONDS = 60
 # Opened at full cover size: a lone image is the whole cover, and compose_sheet
 # shrinks them for a 2x2 or 3x3 grid.
 CELL_BOX = THUMB_SIZE
-# Bump when sheets should look different: built ones are redone on the next scan.
+# Written with each attempt. Built sheets older than SHEET_LAYOUT_VERSION are redone on
+# the next scan; archives found empty before DRAWN_VERSION are retried if they hold
+# a kind of file drawn since.
 # 2: a single image fills the cover instead of sitting half-size in the middle.
-SHEET_VERSION = 2
+# 3: .svg and .obj are drawn too.
+SHEET_VERSION = 3
+SHEET_LAYOUT_VERSION = 2
+DRAWN_VERSION = 3
+DRAWN_EXTS = ("svg", "obj")
 UNITY_PREVIEW_BOX = (128, 128)
 MAX_UNITY_PREVIEWS = 2000
 MAX_UNITY_PREVIEW_BYTES = 512 * 1024
@@ -77,12 +83,12 @@ def _ext(path: str) -> str:
 
 def choose_candidates(entries: Iterable[tuple[int, str, int]], limit: int) -> list[tuple[int, str]]:
     """Pick images for a sheet: one per frame sequence, round-robin across folders.
-    Real images come first; embedded previews (.uasset, .eps: often missing, and the
-    whole file must be extracted to find one) after."""
+    Real images come first; files a picture is got from (.uasset, .eps: often missing,
+    and the whole file must be extracted to find one; .svg, .obj: drawn) fill up after."""
     entries = list(entries)  # may be a generator; iterated twice below
     images = [e for e in entries if _ext(e[1]) not in EMBEDDED_PREVIEW_EXTS]
-    embedded = [e for e in entries if _ext(e[1]) in EMBEDDED_PREVIEW_EXTS] if len(images) < limit else []
-    picked = _round_robin(images, limit)
+    embedded = [e for e in entries if _ext(e[1]) in EMBEDDED_PREVIEW_EXTS]
+    picked = _round_robin(images, limit)  # drops what is no picture (.mtl, .txt): count after
     return picked + _round_robin(embedded, limit - len(picked))
 
 
@@ -230,10 +236,12 @@ def build_previews(
         WHERE f.root = ? AND a.status = 'ok' AND (
             a.preview_state IS NULL
             -- Unity's own previews are small already: older sheets of them look the same.
-            OR (a.preview_state = 1 AND a.sheet_version IS NOT ? AND f.ext != 'unitypackage')
+            OR (a.preview_state = 1 AND IFNULL(a.sheet_version, 0) < ? AND f.ext != 'unitypackage')
+            OR (a.preview_state = 0 AND IFNULL(a.sheet_version, 0) < ? AND f.ext != 'unitypackage'
+                AND EXISTS (SELECT 1 FROM archive_entries e WHERE e.file_id = a.file_id AND e.ext IN (?, ?)))
         )
         """,
-        (root_name, SHEET_VERSION),
+        (root_name, SHEET_LAYOUT_VERSION, DRAWN_VERSION, *DRAWN_EXTS),
     ).fetchall()
     rows = [r for r in rows if not r["rel_path"].startswith(ASIDE)]  # on their way out: no picture needed
     built = empty = skipped = 0

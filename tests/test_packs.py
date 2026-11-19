@@ -286,3 +286,23 @@ def test_the_agent_endpoint_sorts_newest_first(lib):
 
     assert body["packs"][0]["name"] == "Zz - 新.zip"
     assert bad.status_code == 422
+
+
+def test_a_folder_of_drawings_takes_one_as_its_cover(tmp_path):
+    root = tmp_path / "lib"
+    icons = root / "01_2D/UI/Icons - 图标"
+    _write(icons / "a.svg", b"<svg/>")
+    _write(icons / "readme.txt")
+    shots = root / "01_2D/UI/Shots - 截图"
+    _write(shots / "b.svg", b"<svg/>")
+    Image.new("RGB", (8, 8)).save(shots / "z.png")
+    settings = Settings(roots={"art": root}, data_dir=tmp_path / "data")
+    conn = connect(settings.db_path)
+    scan_root(conn, "art", root)
+    ids = {r["name"]: r["id"] for r in conn.execute("SELECT id, name FROM files")}
+
+    found = {p["name"]: p["links"].get("thumb") for p in packs.search_packs(conn, "").packs}
+    conn.close()
+
+    assert found["Icons - 图标"] == f"/api/files/{ids['a.svg']}/thumb"
+    assert found["Shots - 截图"] == f"/api/files/{ids['z.png']}/thumb"  # a real picture comes first

@@ -5,8 +5,8 @@ const DEBOUNCE_MS = 300;
 const BROWSER_IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']);
 const THUMB_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'tga', 'psd', 'tif', 'tiff']);
 // Files whose thumbnail the server can render: images, plus ones carrying an image
-// (.uasset editor thumbnail, .eps preview).
-const PREVIEW_EXTS = new Set([...THUMB_EXTS, 'uasset', 'eps']);
+// (.uasset editor thumbnail, .eps preview) and ones it draws (.svg, .obj).
+const PREVIEW_EXTS = new Set([...THUMB_EXTS, 'uasset', 'eps', 'svg', 'obj']);
 const KIND_LABELS = {
   image: '图片', audio: '音频', video: '视频', model: '模型',
   archive: '压缩包', unreal: 'Unreal', other: '其他',

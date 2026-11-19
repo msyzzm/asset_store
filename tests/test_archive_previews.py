@@ -333,6 +333,13 @@ def _state_of(settings, name):
         conn.close()
 
 
+def test_files_that_are_no_picture_leave_room_for_drawn_ones():
+    """Modular Dungeon 2: 90 .obj beside 90 .mtl; the .mtl once filled every slot."""
+    entries = [(i, f"Set/m{i:02d}.mtl", 10) for i in range(40)] + [(100, "Set/wall.obj", 10)]
+
+    assert choose_candidates(entries, limit=15) == [(100, "Set/wall.obj")]
+
+
 def test_real_images_are_tried_before_uassets():
     entries = [(1, "A/BP.uasset", 10), (2, "B/M.uasset", 10), (3, "C/icon.png", 10)]
 
@@ -390,3 +397,51 @@ def test_failed_rebuild_keeps_the_old_cover(conn, preview_root, tmp_path, monkey
 
     assert sheet_path(thumbs, file_id, mtime).exists()
     assert _state(conn, "icons.zip") == 1
+
+
+SVG_ICON = b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#fff" d="M8 8h48v48H8z"/></svg>'
+OBJ_TRIANGLES = b"v 0 0 0\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\nf 1 2 4\nf 1 3 4\nf 2 3 4\n"
+
+
+@needs_bsdtar
+def test_svg_icons_and_obj_models_make_a_cover(tmp_path):
+    root = tmp_path / "packs"
+    _zip(root / "icons.zip", {f"icons/{n}.svg": SVG_ICON for n in ("a", "b")})
+    _zip(root / "dungeon.zip", {"Set/wall.obj": OBJ_TRIANGLES, "Set/wall.mtl": b"newmtl x\n"})
+    loose = root / "loose"
+    loose.mkdir()
+    (loose / "badge.svg").write_bytes(SVG_ICON)
+    (loose / "crate.obj").write_bytes(OBJ_TRIANGLES)
+    settings = Settings(roots={"art": root}, data_dir=tmp_path / "data")
+
+    with TestClient(create_app(settings)) as client:
+        conn = connect(settings.db_path)
+        stats = _build(conn, root, settings.thumb_dir)
+        ids = _ids(conn)
+        entry = conn.execute("SELECT id FROM archive_entries WHERE path = 'icons/a.svg'").fetchone()[0]
+        conn.close()
+
+        assert stats.built == 2
+        assert _state_of(settings, "icons.zip") == 1 and _state_of(settings, "dungeon.zip") == 1
+        assert client.get(f"/api/files/{ids['icons.zip']}/entries/{entry}/thumb").status_code == 200
+        assert client.get(f"/api/files/{ids['badge.svg']}/thumb").status_code == 200
+        assert client.get(f"/api/files/{ids['crate.obj']}/thumb").status_code == 200
+
+
+@needs_bsdtar
+def test_empty_archives_holding_svg_or_obj_are_tried_again_once(conn, tmp_path):
+    """Built before svg and obj could be drawn: they were judged to have no picture."""
+    root = tmp_path / "packs"
+    _zip(root / "icons.zip", {"icons/a.svg": SVG_ICON})
+    _zip(root / "sounds.zip", {"a.wav": b"RIFF"})
+    thumbs = tmp_path / "thumbs"
+    _build(conn, root, thumbs)
+    with conn:
+        conn.execute("UPDATE archives SET preview_state = 0, sheet_version = 2")  # as left by the last release
+
+    again = build_previews(conn, "art", root, thumbs, TOOL)
+
+    assert again.built == 1 and again.empty == 0  # icons.zip only: sounds.zip is not retried
+    assert _state(conn, "icons.zip") == 1 and _state(conn, "sounds.zip") == 0
+    last = build_previews(conn, "art", root, thumbs, TOOL)
+    assert last.built == last.empty == 0

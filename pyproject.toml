@@ -10,6 +10,7 @@ dependencies = [
     "py7zr>=1.1.4",
     "rarfile>=4.5",
     "numpy>=2.1",
+    "resvg-py>=0.5.0",
 ]
 
 [dependency-groups]

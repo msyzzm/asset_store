@@ -29,6 +29,7 @@ ASIDE = (TO_DELETE + "/", DUPLICATES + "/")
 DIMS = (("01_2D/", "2D"), ("02_3D/", "3D"), ("03_Audio/", "audio"))
 UNREAL_EXTS = ("uasset", "umap")
 UNITY_EXTS = ("unitypackage", "unity", "prefab")
+DRAWN_EXTS = ("svg", "obj")  # drawn by the server: a cover only when the pack has no picture
 # What decides how a root splits into packs: its files, and the user's splits, joins and
 # decided folder packs (see units.stored_layout).
 LAYOUT_KEY = """
@@ -169,12 +170,13 @@ def _folder_pack(req: _Request, pack: _Found) -> tuple[int, int, int | None, str
         "SELECT COUNT(*), IFNULL(SUM(size), 0) FROM files WHERE root = ? AND rel_path >= ? AND rel_path < ?",
         (pack.root, low, high),
     ).fetchone()
-    exts = sorted(THUMBNAIL_EXTS)
-    thumb = conn.execute(
-        f"SELECT id FROM files WHERE root = ? AND rel_path >= ? AND rel_path < ? AND ext IN ({','.join('?' * len(exts))})"
-        " ORDER BY rel_path LIMIT 1",
-        (pack.root, low, high, *exts),
-    ).fetchone()
+    thumb = None
+    for exts in (sorted(THUMBNAIL_EXTS), DRAWN_EXTS):
+        thumb = thumb or conn.execute(
+            f"SELECT id FROM files WHERE root = ? AND rel_path >= ? AND rel_path < ? AND ext IN ({','.join('?' * len(exts))})"
+            " ORDER BY rel_path LIMIT 1",
+            (pack.root, low, high, *exts),
+        ).fetchone()
     engine = conn.execute(
         "SELECT a.engine FROM files f JOIN archives a ON a.file_id = f.id"
         " WHERE f.root = ? AND f.rel_path >= ? AND f.rel_path < ? AND a.engine IS NOT NULL LIMIT 1",
@@ -226,12 +228,15 @@ def _file_members(req: _Request, pack: _Found) -> list[sqlite3.Row]:
 
 
 def _thumb(rows: list[sqlite3.Row], pack: _Found) -> int | None:
+    drawn = None
     for row in sorted(rows, key=lambda r: (r["rel_path"] != pack.path, r["rel_path"])):
         if row["ext"] in LISTABLE_ARCHIVE_EXTS and row["preview_state"] == 1:
             return row["id"]
         if row["ext"] in THUMBNAIL_EXTS:
             return row["id"]
-    return None
+        if drawn is None and row["ext"] in DRAWN_EXTS:
+            drawn = row["id"]
+    return drawn
 
 
 def _caption(conn: sqlite3.Connection, ids: list[int]) -> str | None:
