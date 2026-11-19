@@ -477,15 +477,19 @@ def create_app(settings: Settings) -> FastAPI:
 
     def grid_cells(conn: sqlite3.Connection, root: str, folder: str) -> list:
         """The folder's grid members' own thumbnails (cached for the cards too); files
-        without one are skipped and remembered."""
+        without one are skipped and remembered. A render slot is held per file only, so
+        other cards' thumbnails are not kept waiting behind a whole grid."""
         cells = []
         for row in pack_grid.members(conn, root, folder):
             thumb = file_thumb_path(settings.thumb_dir, row["id"], row["mtime"])
             if not thumb.exists() and not recently_failed(thumb):
                 try:
                     _, path = resolve(conn, row["id"])
-                    _render_or_415(_thumb_source(path, row["ext"], row["size"]), thumb)
-                except HTTPException:
+                    with thumb_slots:
+                        if not thumb.exists():
+                            _render_or_415(_thumb_source(path, row["ext"], row["size"]), thumb)
+                except Exception as err:  # HTTPException (415, 404), or a parser's own error
+                    log.debug("no grid cell from file %d: %r", row["id"], err)
                     remember_failure(thumb)
             if thumb.exists():
                 try:
@@ -510,13 +514,11 @@ def create_app(settings: Settings) -> FastAPI:
         if not target.exists():
             if recently_failed(target):
                 raise HTTPException(415, "no thumbnails in this folder")
-            with thumb_slots:
-                if not target.exists():
-                    cells = grid_cells(conn, root, path)
-                    if not cells:
-                        remember_failure(target)
-                        raise HTTPException(415, "no thumbnails in this folder")
-                    compose_sheet(cells, target)
+            cells = grid_cells(conn, root, path)  # one cell: a full-size cover, like a lone image
+            if not cells:
+                remember_failure(target)
+                raise HTTPException(415, "no thumbnails in this folder")
+            compose_sheet(cells, target)  # atomic: two requests building it at once is harmless
         return _webp(target)
 
     @app.get("/api/fab-covers/status")

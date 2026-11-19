@@ -51,3 +51,12 @@ def test_no_thumbnail_in_any_uasset_is_no_grid(tmp_path):
     with TestClient(create_app(settings)) as client:
         assert client.get(url).status_code == 415
         assert client.get("/api/packs/grid", params={"root": "nope", "path": "x"}).status_code == 404
+
+
+def test_a_file_replaced_in_place_gives_a_new_grid_address(tmp_path):
+    settings = _library(tmp_path)
+    before = _grid_url(settings)
+    chair = settings.roots["art"] / "UE/Pub - 酒馆/Content/Meshes/SM_Chair.uasset"
+    chair.write_bytes(make_uasset("JPEG"))
+
+    assert _grid_url(settings) != before

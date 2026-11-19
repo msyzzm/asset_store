@@ -133,3 +133,44 @@ def test_cover_shows_for_ue_packs_without_a_picture_only(tmp_path):
         assert client.get(f"/api/fab-covers/{UID}.webp").headers["content-type"] == "image/webp"
         assert client.get("/api/fab-covers/..%2Findex.db").status_code == 404
         assert client.get("/api/fab-covers/status").json()["matched"] == 1
+
+
+def test_answers_about_one_name_are_recorded_and_the_rest_still_asked(conn, tmp_path):
+    """A picture Pillow cannot read, or a 404, says nothing of the other names."""
+    broken = _Fab({"Neon City": [_listing("Neon City")], "Subway": [_listing("Subway", OTHER_UID)]})
+    broken.fetch = lambda url: b"not an image"
+
+    stats = _run(conn, tmp_path, ["Neon City", "Subway"], broken)
+
+    assert (stats.checked, stats.matched, stats.error) == (2, 0, None)
+    assert {r[0] for r in conn.execute("SELECT status FROM fab_matches")} == {"none"}
+
+
+def test_listings_that_changed_shape_stop_and_record_nothing(conn, tmp_path):
+    changed = _listing("Neon City")
+    changed["thumbnails"] = "moved elsewhere"
+
+    stats = _run(conn, tmp_path, ["Neon City"], _Fab({"Neon City": [changed]}))
+
+    assert stats.error and stats.checked == 0
+    assert conn.execute("SELECT COUNT(*) FROM fab_matches").fetchone()[0] == 0
+
+
+def test_a_unity_edition_beside_the_unreal_one_does_not_hide_it(conn, tmp_path):
+    fab = _Fab({"Neon City": [_listing("Neon City", OTHER_UID, formats=("unity",)), _listing("Neon City")]})
+
+    assert _run(conn, tmp_path, ["Neon City"], fab).matched == 1
+    assert fab.fetched == [f"https://media.fab.com/{UID}/big.jpg"]
+
+
+def test_a_scan_spends_at_most_its_time_budget(conn, tmp_path):
+    ticks = iter(range(0, 10_000, 100))  # each look at the clock: 100 s later
+    stats = match_pending(conn, tmp_path, ["A", "B", "C"], find=_Fab({}).find, fetch=_Fab({}).fetch,
+                          sleep=lambda _: None, clock=lambda: next(ticks))
+
+    assert stats.checked == 1  # the second name would start past the 120 s budget
+
+
+def test_cover_names_must_be_exactly_a_listing_id():
+    assert fab_covers.is_cover_file(f"{UID}.webp")
+    assert not fab_covers.is_cover_file(f"{UID}.webp\n") and not fab_covers.is_cover_file("../index.db")

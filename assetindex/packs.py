@@ -204,6 +204,12 @@ def _folder_pack(req: _Request, pack: _Found) -> tuple[int, int, int | None, int
         ).fetchone()
         for exts in (sorted(THUMBNAIL_EXTS), DRAWN_EXTS)
     )
+    # No picture: an archive's contact sheet is one (a folder of several archives, too).
+    picture = picture or conn.execute(
+        "SELECT f.id FROM files f JOIN archives a ON a.file_id = f.id"
+        " WHERE f.root = ? AND f.rel_path >= ? AND f.rel_path < ? AND a.preview_state = 1 ORDER BY f.rel_path LIMIT 1",
+        (pack.root, low, high),
+    ).fetchone()
     engine = conn.execute(
         "SELECT a.engine FROM files f JOIN archives a ON a.file_id = f.id"
         " WHERE f.root = ? AND f.rel_path >= ? AND f.rel_path < ? AND a.engine IS NOT NULL LIMIT 1",

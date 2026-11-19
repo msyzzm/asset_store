@@ -31,16 +31,18 @@ def _in_folder(exts: tuple[str, ...]) -> str:
 
 
 def summary(conn: sqlite3.Connection, root: str, folder: str) -> tuple[int, int | None, str]:
-    """(how many carry a picture, the one to show if only one, version for the URL)."""
+    """(how many carry a picture, the one to show if only one, version for the URL: it
+    changes when a file is added, removed or replaced in place)."""
     low, high = under(folder)
-    count, newest = conn.execute(
-        f"SELECT COUNT(*), MAX(id) FROM files WHERE {_in_folder(CARRIED_EXTS)}", (root, low, high, *CARRIED_EXTS)
+    count, newest, changed, size = conn.execute(
+        f"SELECT COUNT(*), MAX(id), MAX(mtime), SUM(size) FROM files WHERE {_in_folder(CARRIED_EXTS)}",
+        (root, low, high, *CARRIED_EXTS),
     ).fetchone()
     first = conn.execute(
         f"SELECT id FROM files WHERE {_in_folder(CARRIED_EXTS)} ORDER BY {MESHES_FIRST}, rel_path LIMIT 1",
         (root, low, high, *CARRIED_EXTS),
     ).fetchone()
-    return count, first[0] if first else None, f"{count}.{newest or 0}"
+    return count, first[0] if first else None, f"{count}.{newest or 0}.{int(changed or 0)}.{size or 0}"
 
 
 def members(conn: sqlite3.Connection, root: str, folder: str) -> list[sqlite3.Row]:
