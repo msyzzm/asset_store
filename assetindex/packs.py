@@ -12,9 +12,11 @@ import sqlite3
 import threading
 from dataclasses import dataclass, field
 
+from assetindex import pack_grid
 from assetindex.archive_queries import entry_hits
 from assetindex.categories import DUPLICATES, TO_DELETE
 from assetindex.classify import under
+from assetindex.fab_covers import cover_url as fab_cover_url
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.search import _where_with_terms, parse_terms
 from assetindex.tags import STYLES, VIEWS, tags_of
@@ -29,16 +31,10 @@ ASIDE = (TO_DELETE + "/", DUPLICATES + "/")
 DIMS = (("01_2D/", "2D"), ("02_3D/", "3D"), ("03_Audio/", "audio"))
 UNREAL_EXTS = ("uasset", "umap")
 UNITY_EXTS = ("unitypackage", "unity", "prefab")
-DRAWN_EXTS = ("svg", "hdr", "exr", "obj", "fbx", "glb", "gltf")  # drawn by the server: a cover only when the pack has no picture
-# Last: files carrying a picture of their own (an .uasset's editor thumbnail), for an
-# unpacked UE project with no picture at all. A mesh shows a pack better than a material.
-CARRIED_EXTS = ("uasset", "eps")
-# Names vary (BumpingPub calls its meshes M_CupBoard_01 and keeps a BasicMaterial among
-# them): an SM_ name first, then the Meshes folder less anything named a material.
-MESHES_FIRST = (
-    "(CASE WHEN name LIKE 'SM\\_%' ESCAPE '\\' THEN 0"
-    " WHEN rel_path LIKE '%/Meshes/%' AND name NOT LIKE '%material%' THEN 1 ELSE 2 END)"
-)
+# A pack's cover, best first: a picture in it (or an archive's contact sheet); for a UE
+# pack, its Fab listing's picture; a file the server draws (DRAWN_EXTS); a grid of the
+# editor thumbnails its .uasset carry; one such thumbnail.
+DRAWN_EXTS = ("svg", "hdr", "exr", "obj", "fbx", "glb", "gltf")
 # What decides how a root splits into packs: its files, and the user's splits, joins and
 # decided folder packs (see units.stored_layout).
 LAYOUT_KEY = """
@@ -120,6 +116,26 @@ def _newest(req: _Request) -> dict[tuple[str, str], int]:
     return newest
 
 
+def pictureless_unreal(conn: sqlite3.Connection, root: str) -> list[str]:
+    """Paths of the UE packs with no picture or contact sheet in them, in one pass: the
+    ones a Fab cover is looked for."""
+    layout = _cached_layout(conn, root)
+    found: dict[str, list[bool]] = {}  # path -> [has a picture, is Unreal]
+    rows = conn.execute(
+        "SELECT f.rel_path, f.ext, a.preview_state, a.engine FROM files f"
+        " LEFT JOIN archives a ON a.file_id = f.id WHERE f.root = ?",
+        (root,),
+    )
+    for rel_path, ext, preview_state, engine in rows:
+        path = layout.unit_of(rel_path)[0]
+        if path.startswith(ASIDE):
+            continue
+        seen = found.setdefault(path, [False, False])
+        seen[0] = seen[0] or ext in THUMBNAIL_EXTS or (ext in LISTABLE_ARCHIVE_EXTS and preview_state == 1)
+        seen[1] = seen[1] or ext in UNREAL_EXTS or engine == "unreal"
+    return sorted(path for path, (picture, unreal) in found.items() if unreal and not picture)
+
+
 def _in_category(path: str, category: str) -> bool:
     parent = path.rpartition("/")[0]
     return not category or parent == category or parent.startswith(category + "/")
@@ -172,20 +188,22 @@ def _every_pack(req: _Request, category: str) -> list[_Found]:
     return sorted(found.values(), key=lambda p: (p.root, p.path.casefold(), p.path))  # "nikke" beside "Nier"
 
 
-def _folder_pack(req: _Request, pack: _Found) -> tuple[int, int, int | None, str | None, list[int]]:
-    """(files, bytes, thumbnail id, engine, a few ids for a caption) of a folder pack."""
+def _folder_pack(req: _Request, pack: _Found) -> tuple[int, int, int | None, int | None, str | None, list[int]]:
+    """(files, bytes, a picture's id, a drawn file's id, engine, a few ids for a caption)
+    of a folder pack."""
     conn, (low, high) = req.conn, under(pack.path)
     files, size = conn.execute(
         "SELECT COUNT(*), IFNULL(SUM(size), 0) FROM files WHERE root = ? AND rel_path >= ? AND rel_path < ?",
         (pack.root, low, high),
     ).fetchone()
-    thumb = None
-    for exts in (sorted(THUMBNAIL_EXTS), DRAWN_EXTS, CARRIED_EXTS):
-        thumb = thumb or conn.execute(
+    picture, drawn = (
+        conn.execute(
             f"SELECT id FROM files WHERE root = ? AND rel_path >= ? AND rel_path < ? AND ext IN ({','.join('?' * len(exts))})"
-            f" ORDER BY {MESHES_FIRST + ', ' if exts is CARRIED_EXTS else ''}rel_path LIMIT 1",
+            " ORDER BY rel_path LIMIT 1",
             (pack.root, low, high, *exts),
         ).fetchone()
+        for exts in (sorted(THUMBNAIL_EXTS), DRAWN_EXTS)
+    )
     engine = conn.execute(
         "SELECT a.engine FROM files f JOIN archives a ON a.file_id = f.id"
         " WHERE f.root = ? AND f.rel_path >= ? AND f.rel_path < ? AND a.engine IS NOT NULL LIMIT 1",
@@ -200,7 +218,8 @@ def _folder_pack(req: _Request, pack: _Found) -> tuple[int, int, int | None, str
         "SELECT id FROM files WHERE root = ? AND rel_path >= ? AND rel_path < ? ORDER BY rel_path LIMIT ?",
         (pack.root, low, high, MAX_CAPTION_IDS),
     )]
-    return files, size, thumb[0] if thumb else None, engine[0] if engine else _engine_of(found_ext), ids
+    first = lambda row: row[0] if row else None  # noqa: E731
+    return files, size, first(picture), first(drawn), engine[0] if engine else _engine_of(found_ext), ids
 
 
 def _lone_archive(req: _Request, pack: _Found, files: int) -> sqlite3.Row | None:
@@ -236,18 +255,34 @@ def _file_members(req: _Request, pack: _Found) -> list[sqlite3.Row]:
     return [r for r in req.in_folder(pack.root, folder) if shape.unit_of(r["rel_path"]) == (pack.path, False)]
 
 
-def _thumb(rows: list[sqlite3.Row], pack: _Found) -> int | None:
+def _thumbs(rows: list[sqlite3.Row], pack: _Found) -> tuple[int | None, int | None]:
+    """(a picture or contact sheet, else a file to stand in for one) of a file pack."""
     drawn = carried = None
     for row in sorted(rows, key=lambda r: (r["rel_path"] != pack.path, r["rel_path"])):
         if row["ext"] in LISTABLE_ARCHIVE_EXTS and row["preview_state"] == 1:
-            return row["id"]
+            return row["id"], None
         if row["ext"] in THUMBNAIL_EXTS:
-            return row["id"]
+            return row["id"], None
         if drawn is None and row["ext"] in DRAWN_EXTS:
             drawn = row["id"]
-        if carried is None and row["ext"] in CARRIED_EXTS:
+        if carried is None and row["ext"] in pack_grid.CARRIED_EXTS:
             carried = row["id"]
-    return drawn or carried
+    return None, drawn or carried
+
+
+def _stand_in(req: _Request, pack: _Found, engine: str | None, drawn: int | None) -> str | None:
+    """The cover of a pack with no picture: Fab's (UE packs), a drawn file, then the
+    .uasset thumbnails, as a grid when there are several (folders only)."""
+    if engine == "unreal" and (fab := fab_cover_url(req.conn, pack.path)):
+        return fab
+    if drawn is not None:
+        return f"/api/files/{drawn}/thumb"
+    if not pack.is_dir:
+        return None
+    count, first, version = pack_grid.summary(req.conn, pack.root, pack.path)
+    if count > 1:
+        return pack_grid.url(pack.root, pack.path, version)
+    return f"/api/files/{first}/thumb" if first is not None else None
 
 
 def _caption(conn: sqlite3.Connection, ids: list[int]) -> str | None:
@@ -264,23 +299,25 @@ def describe(req: _Request, pack: _Found) -> dict:
     """A pack as an agent sees it."""
     links, own = {}, None
     if pack.is_dir:
-        files, size, thumb, engine, ids = _folder_pack(req, pack)
+        files, size, picture, drawn, engine, ids = _folder_pack(req, pack)
         kind = "folder"
         own = _lone_archive(req, pack, files)  # then the card shows it and a click opens it
-        if own is not None and thumb is None and own["preview_state"] == 1:
-            thumb = own["id"]
+        if own is not None and picture is None and own["preview_state"] == 1:
+            picture = own["id"]
     else:
         rows = _file_members(req, pack)
         own = next((r for r in rows if r["rel_path"] == pack.path), None)
-        files, size, thumb = len(rows), sum(r["size"] for r in rows), _thumb(rows, pack)
+        files, size = len(rows), sum(r["size"] for r in rows)
+        picture, drawn = _thumbs(rows, pack)
         engine = next((r["engine"] for r in rows if r["engine"]), None) or _engine_of(r["ext"] for r in rows)
         ids = [own["id"]] if own is not None else [r["id"] for r in rows]
         kind = "archive" if own is not None and own["ext"] in LISTABLE_ARCHIVE_EXTS else "file"
     if own is not None:
         links["detail"] = f"/api/agent/files/{own['id']}"
         links["download"] = f"/api/files/{own['id']}/download"
-    if thumb is not None:
-        links["thumb"] = f"/api/files/{thumb}/thumb"
+    cover = f"/api/files/{picture}/thumb" if picture is not None else _stand_in(req, pack, engine, drawn)
+    if cover is not None:
+        links["thumb"] = cover
     category, _, name = pack.path.rpartition("/")
     hits = sorted(pack.hits)
     if kind == "archive":  # the files inside that matched, not the archive's own name

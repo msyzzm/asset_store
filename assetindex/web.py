@@ -45,6 +45,7 @@ from assetindex.scan_request import is_requested, read_status, request_scan, sto
 from assetindex.scan_request import request_stop as request_scan_stop
 from assetindex.scanlock import is_scan_running
 from assetindex.search import MAX_LIMIT, MAX_QUERY_LENGTH, fetch_items, parse_terms, search
+from assetindex import fab_covers, pack_grid
 from assetindex.packs import pack_facets, search_packs
 from assetindex.tags import add_tag_routes
 from assetindex.semantic import NoVectors, VectorIndex, ranked_ids, semantic_search
@@ -52,8 +53,11 @@ from assetindex.sequences import frames_of
 from assetindex.updater import add_update_routes
 from assetindex.thumbs import (
     EMBEDDED_PREVIEW_EXTS,
+    THUMB_SIZE,
+    compose_sheet,
     entry_thumb_path,
     file_thumb_path,
+    open_image,
     preview_image_bytes,
     render_thumbnail,
     sheet_path,
@@ -469,6 +473,64 @@ def create_app(settings: Settings) -> FastAPI:
                     except HTTPException:
                         remember_failure(target)
                         raise
+        return _webp(target)
+
+    def grid_cells(conn: sqlite3.Connection, root: str, folder: str) -> list:
+        """The folder's grid members' own thumbnails (cached for the cards too); files
+        without one are skipped and remembered."""
+        cells = []
+        for row in pack_grid.members(conn, root, folder):
+            thumb = file_thumb_path(settings.thumb_dir, row["id"], row["mtime"])
+            if not thumb.exists() and not recently_failed(thumb):
+                try:
+                    _, path = resolve(conn, row["id"])
+                    _render_or_415(_thumb_source(path, row["ext"], row["size"]), thumb)
+                except HTTPException:
+                    remember_failure(thumb)
+            if thumb.exists():
+                try:
+                    cells.append(open_image(thumb, THUMB_SIZE))
+                except Exception as err:  # a cached file damaged on disk: leave it out
+                    log.warning("cannot open cached thumbnail %r: %r", str(thumb), err)
+            if len(cells) >= pack_grid.GRID_CELLS:
+                break
+        return cells
+
+    @app.get("/api/packs/grid")
+    def api_pack_grid(
+        root: str = Query(..., max_length=100),
+        path: str = Query(..., min_length=1, max_length=MAX_PREFIX_LENGTH),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> FileResponse:
+        """A folder pack's .uasset thumbnails as one picture (see pack_grid). The v= in
+        its URL only keeps browsers from showing an older grid."""
+        if root not in settings.roots:
+            raise HTTPException(404, "asset root not configured")
+        target = pack_grid.grid_path(settings.thumb_dir, root, path, pack_grid.summary(conn, root, path)[2])
+        if not target.exists():
+            if recently_failed(target):
+                raise HTTPException(415, "no thumbnails in this folder")
+            with thumb_slots:
+                if not target.exists():
+                    cells = grid_cells(conn, root, path)
+                    if not cells:
+                        remember_failure(target)
+                        raise HTTPException(415, "no thumbnails in this folder")
+                    compose_sheet(cells, target)
+        return _webp(target)
+
+    @app.get("/api/fab-covers/status")
+    def api_fab_status() -> dict:
+        """The last Fab lookup after a scan: how many names, how many matched, its error."""
+        return fab_covers.read_status(settings.data_dir)
+
+    @app.get("/api/fab-covers/{name}")
+    def api_fab_cover(name: str) -> FileResponse:
+        if not fab_covers.is_cover_file(name):
+            raise HTTPException(404, "no such cover")
+        target = settings.data_dir / fab_covers.COVER_DIR / name
+        if not target.is_file():
+            raise HTTPException(404, "no such cover")
         return _webp(target)
 
     @app.get("/api/files/{file_id}/entries/{entry_id}/thumb")

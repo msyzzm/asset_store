@@ -113,9 +113,10 @@ def prune_thumbs(conn: sqlite3.Connection, thumb_dir: Path, max_bytes: int, now:
             sub.rmdir()  # only succeeds once empty
         except OSError:
             pass
-    for sub in _subdirs(thumb_dir / "entries", _HEX_DIR):
-        # Keyed by a hash of the archive's identity: not checkable, only the cap applies.
-        evictable += pruner.sweep(sub, _ENTRY_THUMB, lambda m: True)
+    for folder in ("entries", "grids"):  # pack grids are keyed by a hash too, and can be built again
+        for sub in _subdirs(thumb_dir / folder, _HEX_DIR):
+            # Keyed by a hash of the archive's identity: not checkable, only the cap applies.
+            evictable += pruner.sweep(sub, _ENTRY_THUMB, lambda m: True)
 
     total = sum(c.size for c in evictable)
     for cached in sorted(evictable, key=lambda c: c.mtime):

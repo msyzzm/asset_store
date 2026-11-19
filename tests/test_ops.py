@@ -215,3 +215,15 @@ def test_check_tests_the_embedding_api_once_configured(settings, asset_root):
         server.fail_status = 401
         result = next(r for r in run_checks(settings) if r.name == "embedding API")
         assert not result.ok and "401" in result.detail
+
+
+def test_pack_grids_are_evicted_under_the_cap_like_entry_thumbs(conn, tmp_path):
+    from assetindex.pack_grid import grid_path
+
+    thumbs = tmp_path / "thumbs"
+    old = _put(grid_path(thumbs, "art", "Pub", "3.10"), size=400, mtime=OLD - 300)
+    new = _put(grid_path(thumbs, "art", "Pub", "4.11"), size=400, mtime=OLD - 100)
+
+    prune_thumbs(conn, thumbs, max_bytes=500)
+
+    assert not old.exists() and new.exists()

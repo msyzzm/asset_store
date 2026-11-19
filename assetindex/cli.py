@@ -10,8 +10,9 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
-from assetindex import (aria2, attempts, caption_job, downloads, ext_keys, fetch_job, move_job, organize, organize_apply,
-                        scan_request, tags)
+from assetindex import (aria2, attempts, caption_job, downloads, ext_keys, fab_covers, fetch_job, move_job, organize,
+                        organize_apply, scan_request, tags)
+from assetindex.packs import pictureless_unreal
 from assetindex.caption import CaptionClient
 from assetindex.archive_index import index_archives
 from assetindex.archive_previews import build_previews
@@ -157,6 +158,7 @@ def _scan(only_root: str | None, retry_errors: bool = False) -> int:
                 _embed(conn, replace(settings, roots=roots), retry_errors, should_stop, progress)
                 ok = all(results)
                 _auto_organize(conn, settings, [n for n, done in zip(roots, results) if done])
+                _fab_covers(conn, settings, [n for n, done in zip(roots, results) if done], should_stop)
             except ScanStopped as err:
                 stopped = True
                 log.info("scan stopped from the web UI (%s); the rest waits for the next round", err)
@@ -189,6 +191,22 @@ def _auto_organize(conn: sqlite3.Connection, settings: Settings, roots: list[str
     except (OSError, sqlite3.Error):
         log.exception("could not request the analysis of %s", DOWNLOADS)  # the scan itself went fine
     return None
+
+
+def _fab_covers(
+    conn: sqlite3.Connection, settings: Settings, roots: list[str], should_stop: Callable[[], bool]
+) -> None:
+    """Fab covers for UE packs with no picture, names not looked up yet. Extra like the
+    vectors: a failure is logged and the next scan tries again."""
+    try:
+        names = [fab_covers.name_of(path) for root in roots for path in pictureless_unreal(conn, root)]
+        stats = fab_covers.match_pending(conn, settings.data_dir, names, should_stop)
+    except Exception:  # e.g. "database is locked": covers are extra, the scan itself worked
+        log.exception("Fab covers failed, will try again next scan")
+        return
+    log.info("Fab covers: %d names looked up, %d matched", stats.checked, stats.matched)
+    if stats.error:
+        log.warning("Fab lookups stopped early, will continue next scan: %s", stats.error)
 
 
 def _settle_moves(conn: sqlite3.Connection, settings: Settings) -> list[str]:

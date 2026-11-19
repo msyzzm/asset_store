@@ -154,6 +154,7 @@ GET 请求不需要认证。POST 请求要带请求头 `X-Requested-With: anythi
 | 取包内单个文件 | `GET /api/agent/files/{id}/entries/{entry_id}/download` |
 | 下载整个文件 | `GET /api/files/{id}/download` |
 | 缩略图 | `GET /api/files/{id}/thumb` |
+| 包封面 | 包的 `links.thumb` 照原样请求：可能是 `GET /api/files/{id}/thumb`，没有图片的 UE 包可能是 `GET /api/fab-covers/{name}`（Fab 商城上同名商品的宣传图）或包里 .uasset 缩略图拼成的九宫格；`GET /api/fab-covers/status` 看上次扫描后 Fab 查了几个、配上几个、出了什么错 |
 | 任务状态 | `GET /api/agent/tasks` |
 | 扫描 | `POST /api/scan`，body 为 `{}` |
 | 描述图片 | `POST /api/captions`，body 为 `{"root":"nas","prefix":"文件夹","redo":false}` |

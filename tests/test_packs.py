@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from assetindex import packs
+from assetindex import pack_grid, packs
 from assetindex.archive_index import index_archives
 from assetindex.config import Settings
 from assetindex.db import connect
@@ -308,20 +308,27 @@ def test_a_folder_of_drawings_takes_one_as_its_cover(tmp_path):
     assert found["Shots - 截图"] == f"/api/files/{ids['z.png']}/thumb"  # a real picture comes first
 
 
-def test_a_folder_of_uassets_takes_a_mesh_as_its_cover(tmp_path):
+def test_a_folder_of_uassets_gets_a_grid_of_their_thumbnails_meshes_first(tmp_path):
     """BumpingPub: an unpacked UE project, 299 .uasset and no picture; their editor
-    thumbnails are the only pictures, a mesh shows the pack best."""
+    thumbnails are the only pictures. One of a kind (Bag_01..Bag_02 give one bag), meshes
+    before materials, a material kept in the Meshes folder last of the meshes."""
     root = tmp_path / "lib"
     pub = root / "02_3D/Environments/Pub - 酒馆/Content/Pub"
     for name in ("Materials/M_Base.uasset", "Meshes/BasicMaterial.uasset", "Meshes/Chair_01.uasset",
-                 "Textures/T_Wood_D.uasset", "Maps/Pub.umap"):
+                 "Meshes/Bag_01.uasset", "Meshes/Bag_02.uasset", "Textures/T_Wood_D.uasset", "Maps/Pub.umap"):
         _write(pub / name)
+    lone = root / "02_3D/Props/Barrel - 木桶/Barrel.uasset"
+    _write(lone)
     settings = Settings(roots={"art": root}, data_dir=tmp_path / "data")
     conn = connect(settings.db_path)
     scan_root(conn, "art", root)
     ids = {r["name"]: r["id"] for r in conn.execute("SELECT id, name FROM files")}
 
     found = {p["name"]: p["links"].get("thumb") for p in packs.search_packs(conn, "").packs}
+    members = [r["name"] for r in pack_grid.members(conn, "art", "02_3D/Environments/Pub - 酒馆")]
     conn.close()
 
-    assert found["Pub - 酒馆"] == f"/api/files/{ids['Chair_01.uasset']}/thumb"
+    assert found["Pub - 酒馆"].startswith("/api/packs/grid?root=art&path=02_3D%2FEnvironments%2FPub%20-%20")
+    # Meshes, then the rest by path: a material in the Meshes folder no longer leads.
+    assert members == ["Bag_01.uasset", "Chair_01.uasset", "M_Base.uasset", "BasicMaterial.uasset", "T_Wood_D.uasset"]
+    assert found["Barrel - 木桶"] == f"/api/files/{ids['Barrel.uasset']}/thumb"  # one: no grid

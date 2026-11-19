@@ -233,6 +233,16 @@ CREATE TABLE IF NOT EXISTS download_parts (
     done        INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (download_id, idx)
 );
+-- Fab covers by pack name (see assetindex/fab_covers.py): 'none' rows are not asked again.
+CREATE TABLE IF NOT EXISTS fab_matches (
+    name_key TEXT PRIMARY KEY,  -- the name's letters and digits, lower case
+    query    TEXT NOT NULL,
+    status   TEXT NOT NULL,     -- 'matched' | 'none'
+    listing  TEXT,
+    title    TEXT,
+    image    TEXT,              -- file name under <data>/fab_covers
+    checked  REAL NOT NULL
+);
 """
 
 # Columns added after the first release; old databases get them via ALTER TABLE.
