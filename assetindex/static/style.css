@@ -243,7 +243,21 @@ body {
 @keyframes task-pulse { 50% { opacity: 0.35; transform: scale(0.75); } }
 @media (prefers-reduced-motion: reduce) { .task.busy .task-dot { animation: none; } }
 
-.summary { margin: 16px 20px 0; color: var(--muted); }
+.results-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 20px 0; }
+.summary { margin: 0; color: var(--muted); }
+.sort {
+  height: 30px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.sort:hover { border-color: var(--muted); }
+.sort:focus-visible { outline: 2px solid var(--select); outline-offset: 1px; }
+.sort.on { border-color: var(--select); font-weight: 600; }
 
 /* ---- results: the wells are the cards ---- */
 .grid {
@@ -562,6 +576,6 @@ body.drop-target { outline: 3px dashed var(--select); outline-offset: -6px; }
   .kinds { padding: 0 10px; }
   .tasks { grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 10px 16px 0; }
   .task { min-height: 70px; padding: 6px 6px 8px 10px; }
-  .summary { margin: 14px 16px 0; }
+  .results-bar { margin: 14px 16px 0; }
   .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 10px; padding: 10px 16px 24px; }
 }

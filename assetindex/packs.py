@@ -99,6 +99,17 @@ def _cached_layout(conn: sqlite3.Connection, root: str) -> Layout:
     return shape
 
 
+def _newest(req: _Request) -> dict[tuple[str, str], int]:
+    """Each pack's newest file id: a new row's id is above every row present, so the pack
+    that came in last has the largest (a move keeps a file's id)."""
+    newest: dict[tuple[str, str], int] = {}
+    for root, rel_path, file_id in req.conn.execute("SELECT root, rel_path, id FROM files"):
+        key = (root, req.layout(root).unit_of(rel_path)[0])
+        if file_id > newest.get(key, 0):
+            newest[key] = file_id
+    return newest
+
+
 def _in_category(path: str, category: str) -> bool:
     parent = path.rpartition("/")[0]
     return not category or parent == category or parent.startswith(category + "/")
@@ -324,10 +335,11 @@ def pack_facets(conn: sqlite3.Connection) -> dict:
 
 def search_packs(
     conn: sqlite3.Connection, query: str, category: str = "", limit: int = 20, offset: int = 0,
-    meaning: list[int] | None = None, view: str = "", style: str = "",
+    meaning: list[int] | None = None, view: str = "", style: str = "", sort: str = "",
 ) -> PackResult:
     """Packs for `query`; `meaning` is semantic search's file ids, best first, if any.
-    `view` and `style` keep only the packs tagged so (untagged ones drop out)."""
+    `view` and `style` keep only the packs tagged so (untagged ones drop out). `sort`
+    "new": the packs that came in last first, instead of best match (or path) first."""
     terms = parse_terms(query)
     req = _Request(conn, terms)
     if terms:
@@ -339,6 +351,9 @@ def search_packs(
     if view or style:
         fits = _tagged(conn, view, style)
         ranked = [p for p in ranked if (p.root, p.path) in fits]
+    if sort == "new":
+        newest = _newest(req)
+        ranked = sorted(ranked, key=lambda p: -newest.get((p.root, p.path), 0))
     start = max(0, offset)
     page = ranked[start : start + max(1, min(limit, MAX_PACKS))]
     return PackResult(total=len(ranked), packs=[describe(req, p) for p in page])

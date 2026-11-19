@@ -82,8 +82,10 @@ def search(
     limit: int = 50,
     offset: int = 0,
     prefix: str = "",
+    sort: str = "",
 ) -> SearchResult:
-    """`prefix`: only files under that folder (a pack's contents)."""
+    """`prefix`: only files under that folder (a pack's contents). `sort` "new": the files
+    indexed last first (a new row's id is above every row present, and a move keeps a file's id), else by path."""
     terms = parse_terms(query)
     if terms:
         where, params = _where_with_terms(terms, kind)
@@ -94,7 +96,8 @@ def search(
         where += " AND f.rel_path >= ? AND f.rel_path < ?"
         params = [*params, prefix.rstrip("/") + "/", prefix.rstrip("/") + "0"]
     # Evaluate the match once: ordered ids give both the total and the page.
-    ids = [r[0] for r in conn.execute(f"SELECT f.id FROM files f {where} ORDER BY f.rel_path, f.id", params)]
+    order = "f.id DESC" if sort == "new" else "f.rel_path, f.id"
+    ids = [r[0] for r in conn.execute(f"SELECT f.id FROM files f {where} ORDER BY {order}", params)]
     start = max(0, offset)
     page = ids[start : start + max(1, min(limit, MAX_LIMIT))]
     return SearchResult(total=len(ids), items=fetch_items(conn, page, terms))

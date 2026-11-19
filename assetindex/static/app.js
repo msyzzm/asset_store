@@ -33,7 +33,7 @@ const PACK_PAGE_SIZE = 48;
 const DIM_LABELS = { '2D': '2D', '3D': '3D', audio: '音频' };
 
 const $ = (id) => document.getElementById(id);
-const state = { q: '', kind: '', view: 'packs', prefix: '', cat: '', angle: '', style: '', offset: 0, requestSeq: 0, viewerSeq: 0, stopPlayer: null, stopModel: null, scanBusy: false, scanTimer: 0, scanSeq: 0, scanWaitingSince: null };
+const state = { q: '', kind: '', view: 'packs', prefix: '', cat: '', angle: '', style: '', sort: '', offset: 0, requestSeq: 0, viewerSeq: 0, stopPlayer: null, stopModel: null, scanBusy: false, scanTimer: 0, scanSeq: 0, scanWaitingSince: null };
 const frameCache = new Map();
 // Only one card plays at a time; a re-rendered grid never fires mouseleave, so stop it explicitly.
 let stopHover = null;
@@ -269,6 +269,7 @@ async function loadPacks(reset, seq, offset) {
   if (state.cat) params.set('category', state.cat);
   if (state.angle) params.set('view', state.angle);
   if (state.style) params.set('style', state.style);
+  if (state.sort) params.set('sort', state.sort);
   let body;
   try {
     const resp = await fetch(`/api/agent/packs?${params}`);
@@ -304,6 +305,8 @@ function showView() {
     $(id).value = value;
     $(id).classList.toggle('on', Boolean(value));
   }
+  $('f-sort').value = state.sort;
+  $('f-sort').classList.toggle('on', Boolean(state.sort));
 }
 
 // The folders and tags the pack page filters by; a folder's options are indented under its parent.
@@ -351,6 +354,7 @@ async function load(reset) {
   const params = new URLSearchParams({ q: state.q, limit: PAGE_SIZE, offset });
   if (state.prefix) params.set('prefix', state.prefix);
   if (state.kind) params.set('kind', state.kind);
+  if (state.sort) params.set('sort', state.sort);
 
   let body;
   try {
@@ -389,6 +393,7 @@ function syncUrl(push) {
   if (state.cat) params.set('cat', state.cat);
   if (state.angle) params.set('angle', state.angle);
   if (state.style) params.set('style', state.style);
+  if (state.sort) params.set('sort', state.sort);
   const query = params.toString();
   const url = query ? `?${query}` : location.pathname;
   if (push && url !== (location.search || location.pathname)) history.pushState(null, '', url);
@@ -820,6 +825,7 @@ function readUrl() {
   state.cat = params.get('cat') ?? '';
   state.angle = params.get('angle') ?? '';
   state.style = params.get('style') ?? '';
+  state.sort = params.get('sort') === 'new' ? 'new' : '';
 }
 
 // Back/forward: show the page that history entry stands for, without writing the URL again.
@@ -838,6 +844,7 @@ function init() {
   $('f-cat').addEventListener('change', (e) => setFilter('cat', e.target.value));
   $('f-view').addEventListener('change', (e) => setFilter('angle', e.target.value));
   $('f-style').addEventListener('change', (e) => setFilter('style', e.target.value));
+  $('f-sort').addEventListener('change', (e) => setFilter('sort', e.target.value));
   $('view-packs').addEventListener('click', () => setView('packs'));
   $('view-files').addEventListener('click', () => setView('files'));
 

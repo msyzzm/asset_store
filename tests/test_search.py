@@ -70,3 +70,14 @@ def test_short_terms_do_not_depend_on_the_trigram_index(indexed):
     assert _names(search(indexed, "刀剑")) == ["刀剑特效.7z"]
     assert _names(search(indexed, "齿轮")) == ["knight_sword.fbx"]
     assert _names(search(indexed, "齿轮 kn")) == ["knight_sword.fbx"]
+
+
+def test_newest_first_lists_files_in_the_order_they_were_indexed(indexed, asset_root):
+    (asset_root / "aaa_new.png").write_bytes(b"x")  # sorts first by path, indexed last
+    scan_root(indexed, "art", asset_root)
+
+    newest = search(indexed, "", sort="new")
+
+    assert newest.items[0]["name"] == "aaa_new.png"
+    ids = [item["id"] for item in newest.items]
+    assert ids == sorted(ids, reverse=True)

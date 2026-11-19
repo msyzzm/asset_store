@@ -110,7 +110,13 @@
       <progress id="tags-task-bar" class="task-bar" max="1" value="0" hidden></progress>
     </div>
   </section>
-  <p id="summary" class="summary"></p>
+  <div class="results-bar">
+    <p id="summary" class="summary"></p>
+    <select id="f-sort" class="sort" aria-label="排序" title="最新入库：最近扫描进来的排前面">
+      <option value="">默认排序</option>
+      <option value="new">最新入库</option>
+    </select>
+  </div>
   <main id="grid" class="grid"></main>
   <button id="more" class="more" type="button" hidden>加载更多</button>
 

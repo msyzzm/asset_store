@@ -257,3 +257,32 @@ def test_the_agent_endpoint_filters_by_tag(lib):
     body = TestClient(create_app(settings)).get("/api/agent/packs", params={"view": "俯视"}).json()
 
     assert [p["name"] for p in body["packs"]] == ["Dungeon - 地牢瓦片.zip"]
+
+
+def test_newest_first_lists_the_packs_added_last_first(lib):
+    """Sorting by when packs came in: a new pack leads, though by path it would come last."""
+    conn, settings = lib
+    root = settings.roots["art"]
+    _zip(root / "02_3D/Props/zebra - 斑马.zip", ["zebra.fbx"])
+    scan_root(conn, "art", root)
+
+    newest = packs.search_packs(conn, "", sort="new")
+    found = packs.search_packs(conn, "steam", sort="new")
+
+    assert newest.packs[0]["name"] == "zebra - 斑马.zip" and newest.total == 5
+    assert _paths(packs.search_packs(conn, ""))[-1] == "art:/02_3D/Props/zebra - 斑马.zip"
+    assert found.total == 3  # still only the packs that match
+
+
+def test_the_agent_endpoint_sorts_newest_first(lib):
+    conn, settings = lib
+    root = settings.roots["art"]
+    _zip(root / "01_2D/Environments/Zz - 新.zip", ["a.png"])
+    scan_root(conn, "art", root)
+    client = TestClient(create_app(settings))
+
+    body = client.get("/api/agent/packs", params={"sort": "new", "limit": 1}).json()
+    bad = client.get("/api/agent/packs", params={"sort": "nope"})
+
+    assert body["packs"][0]["name"] == "Zz - 新.zip"
+    assert bad.status_code == 422

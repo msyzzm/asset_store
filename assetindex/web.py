@@ -220,6 +220,7 @@ def create_app(settings: Settings) -> FastAPI:
         offset: int = Query(0, ge=0),
         mode: Literal["text", "semantic"] = "text",
         prefix: str = Query("", max_length=MAX_PREFIX_LENGTH),
+        sort: Literal["", "new"] = "",  # "new": indexed last first; semantic search keeps its own order
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> dict:
         if kind and kind not in KINDS:
@@ -227,7 +228,7 @@ def create_app(settings: Settings) -> FastAPI:
         if mode == "semantic" and parse_terms(q):
             result = semantic(conn, q, kind, limit, offset)
         else:
-            result = search(conn, q, kind=kind, limit=limit, offset=offset, prefix=prefix)
+            result = search(conn, q, kind=kind, limit=limit, offset=offset, prefix=prefix, sort=sort)
         return {"total": result.total, "items": result.items}
 
     @app.get("/api/files/{file_id}/card")
@@ -376,7 +377,7 @@ def create_app(settings: Settings) -> FastAPI:
                 raise HTTPException(409, "还没有可用的向量") from None
 
     def agent_packs(conn: sqlite3.Connection, q: str, category: str, limit: int, offset: int, mode: str,
-                    view: str = "", style: str = ""):
+                    view: str = "", style: str = "", sort: str = ""):
         """Packs for agents: words first, then (unless mode is "text") what the meaning adds."""
         meaning, used, note = None, "text", None
         if mode != "text" and q.strip():  # no words: browsing, nothing to mean
@@ -384,7 +385,7 @@ def create_app(settings: Settings) -> FastAPI:
                 meaning, used = meaning_ids(conn, q), "text+semantic"
             except HTTPException as err:
                 note = f"语义搜索不可用（{err.detail}），只用了关键词"
-        return search_packs(conn, q, category, limit, offset, meaning, view, style), used, note
+        return search_packs(conn, q, category, limit, offset, meaning, view, style, sort), used, note
 
     @app.get("/api/packs/facets")
     def api_pack_facets(conn: sqlite3.Connection = Depends(get_conn)) -> dict:

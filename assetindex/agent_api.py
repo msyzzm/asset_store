@@ -106,12 +106,13 @@ def add_agent_routes(
         view: str = Query("", max_length=20),  # a view tag (俯视, 横版...): only packs tagged so
         style: str = Query("", max_length=20),  # a style tag (像素, 卡通...)
         mode: Literal["auto", "text"] = "auto",
+        sort: Literal["", "new"] = "",  # "new": the packs that came in last first
         limit: int = Query(20, ge=1, le=MAX_AGENT_LIMIT),
         offset: int = Query(0, ge=0),
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> dict:
         """Packs (folders, archives with their previews), one result each, best first."""
-        result, used, note = pack_search(conn, q, category.strip("/"), limit, offset, mode, view, style)
+        result, used, note = pack_search(conn, q, category.strip("/"), limit, offset, mode, view, style, sort)
         return {"total": result.total, "mode": used, "note": note, "packs": result.packs}
 
     def item_or_404(conn: sqlite3.Connection, file_id: int) -> dict:

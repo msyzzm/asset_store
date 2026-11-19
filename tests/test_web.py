@@ -296,3 +296,10 @@ def test_only_one_connection_test_at_a_time(client, embed_server, monkeypatch):
     client.put("/api/settings/embedding", json=update, headers=XRW)
     monkeypatch.setattr(web, "PROBE_SLOTS", 0)  # pretend one is already running
     assert client.post("/api/settings/embedding/test", headers=XRW).status_code == 429
+
+
+def test_search_endpoint_sorts_newest_first(client):
+    ids = [i["id"] for i in client.get("/api/search", params={"sort": "new"}).json()["items"]]
+
+    assert ids == sorted(ids, reverse=True) and len(ids) > 1
+    assert client.get("/api/search", params={"sort": "old"}).status_code == 422
