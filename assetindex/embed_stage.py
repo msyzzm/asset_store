@@ -27,6 +27,7 @@ from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.scan_request import ScanStopped, never, no_progress
 from assetindex.thumbs import (
     EMBEDDED_PREVIEW_EXTS,
+    MODEL_EXTS,
     file_thumb_path,
     open_image,
     preview_image_bytes,
@@ -87,7 +88,7 @@ def _has_image(row: sqlite3.Row) -> bool:
     ext = row["ext"]
     if ext in LISTABLE_ARCHIVE_EXTS:
         return row["preview_state"] == 1
-    return ext in THUMBNAIL_EXTS or ext in EMBEDDED_PREVIEW_EXTS
+    return ext in THUMBNAIL_EXTS or (ext in EMBEDDED_PREVIEW_EXTS and ext not in MODEL_EXTS)
 
 
 def _source_on_disk(settings: Settings, row: sqlite3.Row) -> Path:
@@ -284,7 +285,7 @@ def progress(conn: sqlite3.Connection, model: str) -> dict:
     """How far embedding has got with this model, for the settings page."""
     visible = "(f.seq_frames IS NULL OR f.seq_frames > 0)"
     current = f"JOIN files f ON f.id = e.file_id AND e.mtime = f.mtime WHERE e.model = ? AND {visible}"
-    picture_exts = sorted(THUMBNAIL_EXTS | EMBEDDED_PREVIEW_EXTS)
+    picture_exts = sorted(THUMBNAIL_EXTS | (EMBEDDED_PREVIEW_EXTS - MODEL_EXTS))
     archive_exts = sorted(LISTABLE_ARCHIVE_EXTS)
 
     def count(sql: str, params=()) -> int:

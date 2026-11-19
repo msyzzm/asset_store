@@ -29,7 +29,7 @@ ASIDE = (TO_DELETE + "/", DUPLICATES + "/")
 DIMS = (("01_2D/", "2D"), ("02_3D/", "3D"), ("03_Audio/", "audio"))
 UNREAL_EXTS = ("uasset", "umap")
 UNITY_EXTS = ("unitypackage", "unity", "prefab")
-DRAWN_EXTS = ("svg", "obj")  # drawn by the server: a cover only when the pack has no picture
+DRAWN_EXTS = ("svg", "obj", "fbx", "glb", "gltf")  # drawn by the server: a cover only when the pack has no picture
 # What decides how a root splits into packs: its files, and the user's splits, joins and
 # decided folder packs (see units.stored_layout).
 LAYOUT_KEY = """

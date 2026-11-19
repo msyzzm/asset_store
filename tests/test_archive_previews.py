@@ -449,3 +449,21 @@ def test_empty_archives_holding_svg_or_obj_are_tried_again_once(conn, tmp_path):
     assert _state(conn, "icons.zip") == 1 and _state(conn, "sounds.zip") == 0
     last = build_previews(conn, "art", root, thumbs, TOOL)
     assert last.built == last.empty == 0
+
+
+@needs_bsdtar
+def test_fbx_models_make_a_cover_and_old_empty_ones_are_retried(conn, tmp_path):
+    from tests.test_fbx_model import cube_scene
+
+    root = tmp_path / "packs"
+    _zip(root / "props.zip", {"Props/crate.fbx": cube_scene(), "Props/readme.txt": b"hi"})
+    _zip(root / "icons.zip", {"icons/a.svg": SVG_ICON})
+    thumbs = tmp_path / "thumbs"
+    first = _build(conn, root, thumbs)
+    assert first.built == 2
+    with conn:  # as left by the release that drew svg but not fbx
+        conn.execute("UPDATE archives SET preview_state = 0, sheet_version = 3")
+
+    again = build_previews(conn, "art", root, thumbs, TOOL)
+
+    assert again.built == 1 and _state(conn, "props.zip") == 1  # icons.zip was retried already
