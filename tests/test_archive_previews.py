@@ -432,7 +432,10 @@ def test_svg_icons_and_obj_models_make_a_cover(tmp_path):
 def test_empty_archives_holding_svg_or_obj_are_tried_again_once(conn, tmp_path):
     """Built before svg and obj could be drawn: they were judged to have no picture."""
     root = tmp_path / "packs"
+    from tests.test_uasset import make_uasset
+
     _zip(root / "icons.zip", {"icons/a.svg": SVG_ICON})
+    _zip(root / "ue.zip", {"BP.uasset": make_uasset("PNG"), **{f"m{i}.umap": b"x" for i in range(20)}})
     _zip(root / "sounds.zip", {"a.wav": b"RIFF"})
     thumbs = tmp_path / "thumbs"
     _build(conn, root, thumbs)
@@ -441,7 +444,8 @@ def test_empty_archives_holding_svg_or_obj_are_tried_again_once(conn, tmp_path):
 
     again = build_previews(conn, "art", root, thumbs, TOOL)
 
-    assert again.built == 1 and again.empty == 0  # icons.zip only: sounds.zip is not retried
+    assert again.built == 2 and again.empty == 0  # icons.zip and ue.zip: sounds.zip is not retried
+    assert _state(conn, "ue.zip") == 1
     assert _state(conn, "icons.zip") == 1 and _state(conn, "sounds.zip") == 0
     last = build_previews(conn, "art", root, thumbs, TOOL)
     assert last.built == last.empty == 0

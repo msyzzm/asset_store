@@ -49,14 +49,15 @@ ARCHIVE_TIME_BUDGET_SECONDS = 60
 # shrinks them for a 2x2 or 3x3 grid.
 CELL_BOX = THUMB_SIZE
 # Written with each attempt. Built sheets older than SHEET_LAYOUT_VERSION are redone on
-# the next scan; archives found empty before DRAWN_VERSION are retried if they hold
-# a kind of file drawn since.
+# the next scan; archives found empty before DRAWN_VERSION are retried once if they hold
+# a kind of file that may give a picture now.
 # 2: a single image fills the cover instead of sitting half-size in the middle.
 # 3: .svg and .obj are drawn too.
 SHEET_VERSION = 3
 SHEET_LAYOUT_VERSION = 2
 DRAWN_VERSION = 3
-DRAWN_EXTS = ("svg", "obj")
+# svg, obj: drawn since; uasset, eps: crowded out by .txt/.mtl and the like until then.
+RETRY_EXTS = ("svg", "obj", "uasset", "eps")
 UNITY_PREVIEW_BOX = (128, 128)
 MAX_UNITY_PREVIEWS = 2000
 MAX_UNITY_PREVIEW_BYTES = 512 * 1024
@@ -238,10 +239,10 @@ def build_previews(
             -- Unity's own previews are small already: older sheets of them look the same.
             OR (a.preview_state = 1 AND IFNULL(a.sheet_version, 0) < ? AND f.ext != 'unitypackage')
             OR (a.preview_state = 0 AND IFNULL(a.sheet_version, 0) < ? AND f.ext != 'unitypackage'
-                AND EXISTS (SELECT 1 FROM archive_entries e WHERE e.file_id = a.file_id AND e.ext IN (?, ?)))
+                AND EXISTS (SELECT 1 FROM archive_entries e WHERE e.file_id = a.file_id AND e.ext IN (?, ?, ?, ?)))
         )
         """,
-        (root_name, SHEET_LAYOUT_VERSION, DRAWN_VERSION, *DRAWN_EXTS),
+        (root_name, SHEET_LAYOUT_VERSION, DRAWN_VERSION, *RETRY_EXTS),
     ).fetchall()
     rows = [r for r in rows if not r["rel_path"].startswith(ASIDE)]  # on their way out: no picture needed
     built = empty = skipped = 0
