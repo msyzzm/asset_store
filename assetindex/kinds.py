@@ -3,7 +3,7 @@
 _KIND_EXTS: dict[str, frozenset[str]] = {
     "image": frozenset({
         "png", "jpg", "jpeg", "gif", "webp", "bmp", "tga", "psd",
-        "tif", "tiff", "exr", "dds", "svg", "aseprite", "eps",
+        "tif", "tiff", "exr", "hdr", "dds", "svg", "aseprite", "eps",
     }),
     "audio": frozenset({"mp3", "wav", "ogg", "flac", "m4a", "aac", "aif", "aiff"}),
     "video": frozenset({"mp4", "webm", "mov", "avi", "mkv"}),

@@ -54,12 +54,14 @@ CELL_BOX = THUMB_SIZE
 # 2: a single image fills the cover instead of sitting half-size in the middle.
 # 3: .svg and .obj are drawn too.
 # 4: .fbx, .glb and .gltf are drawn too.
-SHEET_VERSION = 4
+# 5: .hdr is read too.
+SHEET_VERSION = 5
 SHEET_LAYOUT_VERSION = 2
 RETRIES = (
     # svg, obj: drawn since; uasset, eps: crowded out by .txt/.mtl and the like until then.
     (3, ("svg", "obj", "uasset", "eps")),
     (4, ("fbx", "glb", "gltf")),
+    (5, ("hdr",)),
 )
 UNITY_PREVIEW_BOX = (128, 128)
 MAX_UNITY_PREVIEWS = 2000

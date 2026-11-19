@@ -16,6 +16,7 @@ from PIL import Image
 from assetindex.eps import MAX_EPS_BYTES, find_preview
 from assetindex.fbx_model import MAX_FBX_BYTES, render_fbx
 from assetindex.gltf_model import MAX_GLTF_BYTES, render_gltf
+from assetindex.hdr import MAX_HDR_BYTES, render_hdr
 from assetindex.kinds import THUMBNAIL_EXTS
 from assetindex.obj_model import MAX_OBJ_BYTES, render_obj
 from assetindex.svg import MAX_SVG_BYTES, render_svg
@@ -42,8 +43,8 @@ THUMB_DECODERS = ("PNG", "JPEG", "GIF", "WEBP", "BMP", "TGA", "PSD", "TIFF")
 
 
 # Files Pillow can't open that still give a picture: an .uasset's editor thumbnail, an
-# .eps preview, an .svg or a 3D model drawn by us.
-EMBEDDED_PREVIEW_EXTS = frozenset({"uasset", "eps", "svg", "obj", "fbx", "glb", "gltf"})
+# .eps preview, an .svg or a 3D model drawn by us, an .hdr tone-mapped by us.
+EMBEDDED_PREVIEW_EXTS = frozenset({"uasset", "eps", "svg", "obj", "fbx", "glb", "gltf", "hdr"})
 # 3D models drawn grey by us: thumbnails and covers only. Describing or embedding every
 # loose model (thousands of .fbx, many of them animation without a mesh) is not worth it.
 MODEL_EXTS = frozenset({"obj", "fbx", "glb", "gltf"})
@@ -65,6 +66,8 @@ def source_limit(ext: str) -> int | None:
         return MAX_FBX_BYTES
     if ext in ("glb", "gltf"):
         return MAX_GLTF_BYTES
+    if ext == "hdr":
+        return MAX_HDR_BYTES
     return None
 
 
@@ -82,6 +85,8 @@ def preview_image_bytes(ext: str, data: bytes) -> bytes | None:
         return render_fbx(data)
     if ext in ("glb", "gltf"):
         return render_gltf(data)
+    if ext == "hdr":
+        return render_hdr(data)
     return data
 
 

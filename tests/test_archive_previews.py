@@ -467,3 +467,23 @@ def test_fbx_models_make_a_cover_and_old_empty_ones_are_retried(conn, tmp_path):
     again = build_previews(conn, "art", root, thumbs, TOOL)
 
     assert again.built == 1 and _state(conn, "props.zip") == 1  # icons.zip was retried already
+
+
+@needs_bsdtar
+def test_hdr_skies_make_a_cover_and_a_loose_thumbnail(tmp_path):
+    from tests.test_hdr import _sky
+
+    root = tmp_path / "packs"
+    _zip(root / "skies.zip", {"sky_2k.hdr": _sky(), "readme.txt": b"hi"})
+    (root / "loose.hdr").write_bytes(_sky())
+    settings = Settings(roots={"art": root}, data_dir=tmp_path / "data")
+
+    with TestClient(create_app(settings)) as client:
+        conn = connect(settings.db_path)
+        _build(conn, root, settings.thumb_dir)
+        ids = _ids(conn)
+        kind = conn.execute("SELECT kind FROM files WHERE name = 'loose.hdr'").fetchone()[0]
+        conn.close()
+
+        assert _state_of(settings, "skies.zip") == 1 and kind == "image"
+        assert client.get(f"/api/files/{ids['loose.hdr']}/thumb").status_code == 200
