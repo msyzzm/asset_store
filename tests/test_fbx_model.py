@@ -130,3 +130,16 @@ def test_a_model_turns_in_its_own_rotation_order():
     assert points[:, 1].max() <= 1e-9 and points[:, 1].min() == -5
     turned_xyz = fbx_model._rotation([90, 0, 180]) @ np.array([0, 0, 5])
     assert turned_xyz[1] > 0  # the default order would have stood it the other way up
+
+
+def test_an_empty_array_is_not_inflated_without_a_limit():
+    bomb = zlib.compress(b"\0" * 10_000_000)
+    array = fbx_model._Array(np.dtype("<f8"), 0, 1, bomb)
+
+    assert len(array.values()) == 0
+
+
+def test_an_array_longer_than_its_node_is_refused():
+    data = cube_scene(packed=False)
+    at = data.index(b"Vertices") + len(b"Vertices") + 1 + 8  # the array's byte size
+    assert render_fbx(data[:at] + struct.pack("<I", 0xFFFFFF) + data[at + 4:]) is None

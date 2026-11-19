@@ -24,6 +24,7 @@ MAX_ARRAY_BYTES = 64 * 1024**2  # one inflated array
 MAX_DEPTH = 32
 # FBX 6 lists a mesh's numbers one property each: three per vertex.
 MAX_PROPS = 3 * MAX_VERTICES
+MAX_FILE_PROPS = 4_000_000  # all parsed nodes together: each is a Python object
 MAGIC = b"Kaydara FBX Binary  \x00"
 HEADER_BYTES = 27
 WANTED = frozenset({
@@ -45,6 +46,8 @@ class _Array:
         size = self.count * self.dtype.itemsize
         if size > MAX_ARRAY_BYTES:
             raise NotAModel(f"array of {size} bytes")
+        if size == 0:
+            return np.zeros(0, self.dtype)  # zlib takes a limit of 0 as no limit at all
         if self.encoding == 0:
             raw = self.blob
         elif self.encoding == 1:
@@ -76,7 +79,7 @@ def render_fbx(data: bytes) -> bytes | None:
     except NotAModel as err:
         log.debug("cannot draw fbx: %s", err)
         return None
-    except (struct.error, IndexError, ValueError, TypeError, OverflowError) as err:  # a malformed file
+    except (struct.error, IndexError, ValueError, TypeError, OverflowError, RecursionError) as err:  # malformed
         log.debug("cannot read fbx: %r", err)
         return None
 
@@ -92,6 +95,7 @@ class _Reader:
     def __init__(self, data: bytes, wide: bool):
         self.data = data
         self.header = struct.Struct("<QQQB" if wide else "<IIIB")
+        self.props_read = 0
 
     def nodes(self, pos: int, end: int, depth: int) -> list[_Node]:
         if depth > MAX_DEPTH:
@@ -106,7 +110,8 @@ class _Reader:
             name_at = pos + self.header.size
             name = self.data[name_at:name_at + name_len].decode("ascii", "replace")
             if name in WANTED:
-                if prop_count > MAX_PROPS:
+                self.props_read += prop_count
+                if prop_count > MAX_PROPS or self.props_read > MAX_FILE_PROPS:
                     raise NotAModel(f"node {name} with {prop_count} properties")
                 props_at = name_at + name_len
                 props = self._props(props_at, prop_count, node_end)
@@ -132,11 +137,15 @@ class _Reader:
             elif code in _ARRAYS:
                 count_, encoding, size = struct.unpack_from("<III", data, pos)
                 pos += 12
+                if pos + size > end:
+                    raise NotAModel("array runs past its node")
                 props.append(_Array(_ARRAYS[code], count_, encoding, data[pos:pos + size]))
                 pos += size
             elif code in (b"S", b"R"):
                 size = struct.unpack_from("<I", data, pos)[0]
                 pos += 4
+                if pos + size > end:
+                    raise NotAModel("string runs past its node")
                 raw = data[pos:pos + size]
                 props.append(raw.decode("utf-8", "replace") if code == b"S" else raw)
                 pos += size
@@ -236,7 +245,8 @@ def _scene_mesh(top: list[_Node]) -> tuple[np.ndarray, np.ndarray]:
         worlds[key] = matrix
         return matrix
 
-    pieces: list[tuple[np.ndarray, np.ndarray]] = []
+    pieces: list[tuple[tuple[np.ndarray, np.ndarray], np.ndarray]] = []
+    vertex_count = face_count = 0
     # 7.x: meshes are Geometry nodes, connected to the models that place them;
     # 6.x: a model holds its mesh itself.
     for node in objects.children:
@@ -247,7 +257,12 @@ def _scene_mesh(top: list[_Node]) -> tuple[np.ndarray, np.ndarray]:
             transforms = [world(p) @ _geometric(_settings(models[p])) if p is not None else np.eye(4) for p in placed]
         else:
             transforms = [world(node.props[0]) @ _geometric(_settings(node))]
-        pieces.extend((_points(node), transform) for transform in transforms)
+        mesh = _points(node)  # read once, however many models place it
+        vertex_count += len(mesh[0]) * len(transforms)
+        face_count += len(mesh[1]) * len(transforms)
+        if vertex_count > MAX_VERTICES or face_count > MAX_FACES:
+            raise NotAModel("too big a scene")
+        pieces.extend((mesh, transform) for transform in transforms)
     # 7.x keeps GlobalSettings at the top, 6.x inside Objects.
     return _merge(pieces, _up_axis(by_name.get("GlobalSettings") or objects.child("GlobalSettings")))
 
@@ -272,9 +287,7 @@ def _merge(pieces, up: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     if not pieces:
         raise NotAModel("no meshes")
     points, faces, offset = [], [], 0
-    for (local, triangles), transform in pieces:
-        if offset + len(local) > MAX_VERTICES or sum(len(f) for f in faces) + len(triangles) > MAX_FACES:
-            raise NotAModel("too big a scene")
+    for (local, triangles), transform in pieces:  # sizes checked while collecting them
         placed = local @ transform[:3, :3].T + transform[:3, 3]
         points.append(placed @ up.T)
         faces.append(triangles + offset)

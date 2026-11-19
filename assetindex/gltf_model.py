@@ -15,7 +15,9 @@ from assetindex.mesh_render import MAX_FACES, MAX_VERTICES, NotAModel, render_me
 log = logging.getLogger(__name__)
 
 MAX_GLTF_BYTES = 64 * 1024**2
+MAX_JSON_BYTES = 16 * 1024**2  # parsed into Python objects: far bigger in memory
 MAX_NODE_DEPTH = 64
+MAX_NODE_VISITS = 10_000  # nodes may share children: the tree can be far bigger than the list
 GLB_MAGIC = b"glTF"
 CHUNK_JSON = 0x4E4F534A
 CHUNK_BIN = 0x004E4942
@@ -32,7 +34,8 @@ def render_gltf(data: bytes) -> bytes | None:
     except NotAModel as err:
         log.debug("cannot draw gltf: %s", err)
         return None
-    except (struct.error, KeyError, IndexError, TypeError, ValueError, AttributeError) as err:  # malformed
+    except (struct.error, KeyError, IndexError, TypeError, ValueError, AttributeError, OverflowError,
+            RecursionError) as err:  # malformed
         log.debug("cannot read gltf: %r", err)
         return None
 
@@ -40,12 +43,16 @@ def render_gltf(data: bytes) -> bytes | None:
 def _split(data: bytes) -> tuple[dict, bytes | None]:
     """The JSON document, and a .glb's binary chunk."""
     if not data.startswith(GLB_MAGIC):
+        if len(data) > MAX_JSON_BYTES:
+            raise NotAModel("gltf JSON too big")
         return json.loads(data.decode("utf-8-sig")), None
     pos, document, binary = 12, None, None
     while pos + 8 <= len(data):
         size, kind = struct.unpack_from("<II", data, pos)
         chunk = data[pos + 8:pos + 8 + size]
         if kind == CHUNK_JSON and document is None:
+            if len(chunk) > MAX_JSON_BYTES:
+                raise NotAModel("glb JSON too big")
             document = json.loads(chunk.decode("utf-8"))
         elif kind == CHUNK_BIN and binary is None:
             binary = chunk
@@ -79,7 +86,7 @@ def _accessor(document: dict, buffers: list, index: int, kind: str) -> np.ndarra
         raise NotAModel("data in another file")
     dtype = np.dtype(_COMPONENTS[accessor["componentType"]])
     width, count = _WIDTH[kind], int(accessor["count"])
-    if count > 3 * MAX_VERTICES:
+    if not 0 <= count <= 3 * MAX_VERTICES:
         raise NotAModel("accessor too long")
     start = int(view.get("byteOffset", 0)) + int(accessor.get("byteOffset", 0))
     stride = int(view.get("byteStride") or dtype.itemsize * width)
@@ -114,23 +121,25 @@ def _scene(document: dict, buffers: list) -> tuple[np.ndarray, np.ndarray]:
     else:  # no scene: every node nobody holds
         held = {c for n in nodes for c in n.get("children", [])}
         roots = [i for i in range(len(nodes)) if i not in held]
-    points, faces, offset = [], [], 0
+    points, faces, offset, face_count, visits = [], [], 0, 0, 0
+    decoded: dict[int, list] = {}  # mesh index -> its primitives, read once
     stack = [(i, np.eye(4), 0) for i in roots]
     while stack:
         index, parent, depth = stack.pop()
-        if depth > MAX_NODE_DEPTH:
-            raise NotAModel("nodes nested too deep")
+        visits += 1
+        if depth > MAX_NODE_DEPTH or visits > MAX_NODE_VISITS:
+            raise NotAModel("node tree too deep or too big")
         node = nodes[index]
         world = parent @ _local(node)
         stack.extend((c, world, depth + 1) for c in node.get("children", []))
         if "mesh" not in node:
             continue
-        for primitive in document["meshes"][node["mesh"]].get("primitives", []):
-            piece = _primitive(document, buffers, primitive)
-            if piece is None:
-                continue
-            local, triangles = piece
-            if offset + len(local) > MAX_VERTICES or sum(map(len, faces)) + len(triangles) > MAX_FACES:
+        if node["mesh"] not in decoded:
+            primitives = document["meshes"][node["mesh"]].get("primitives", [])
+            decoded[node["mesh"]] = [p for p in (_primitive(document, buffers, q) for q in primitives) if p is not None]
+        for local, triangles in decoded[node["mesh"]]:
+            face_count += len(triangles)
+            if offset + len(local) > MAX_VERTICES or face_count > MAX_FACES:
                 raise NotAModel("too big a scene")
             points.append(local @ world[:3, :3].T + world[:3, 3])
             faces.append(triangles + offset)
@@ -155,4 +164,6 @@ def _primitive(document: dict, buffers: list, primitive: dict) -> tuple[np.ndarr
         return None
     if len(corners) % 3:
         raise NotAModel("triangles not in threes")
+    if len(corners) and (corners.min() < 0 or corners.max() >= len(points)):
+        raise NotAModel("index past the primitive's points")
     return points, corners.reshape(-1, 3)

@@ -12,7 +12,9 @@ import math
 import numpy as np
 from PIL import Image, ImageDraw
 
-MAX_FACES = 100_000  # triangles: about 2 s to paint (measured 2026-11-18); more takes too long
+# Triangles: about 2 s to paint random small ones (measured 2026-11-18); painting time
+# follows the area filled more than the count, so a worst case may take longer.
+MAX_FACES = 100_000
 MAX_VERTICES = 200_000
 MAX_COORD = 1e12  # beyond this, squares overflow; no real model is that big
 SIZE = 320

@@ -76,3 +76,19 @@ def test_missing_or_broken_data_has_no_picture():
     assert render_gltf(_glb(_document({"byteLength": len(BINARY)}), BINARY[:20])) is None  # cut short
     assert render_gltf(b"glTF\x02\0\0\0") is None
     assert render_gltf(b"not json") is None
+
+
+def test_shared_children_cannot_blow_up_the_walk():
+    """Each node lists the next one twice: 2**40 paths through 41 nodes."""
+    document = _document({"byteLength": len(BINARY)})
+    document["nodes"] = [{"children": [i + 1, i + 1]} for i in range(40)] + [{"mesh": 0}]
+
+    assert render_gltf(_glb(document, BINARY)) is None
+
+
+def test_negative_counts_and_deep_nesting_have_no_picture():
+    document = _document({"byteLength": len(BINARY)})
+    document["accessors"][1]["count"] = -1
+
+    assert render_gltf(_glb(document, BINARY)) is None
+    assert render_gltf(b"[" * 100_000) is None  # nesting deeper than Python recurses
