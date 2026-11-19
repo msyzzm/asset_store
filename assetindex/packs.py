@@ -33,7 +33,12 @@ DRAWN_EXTS = ("svg", "hdr", "exr", "obj", "fbx", "glb", "gltf")  # drawn by the 
 # Last: files carrying a picture of their own (an .uasset's editor thumbnail), for an
 # unpacked UE project with no picture at all. A mesh shows a pack better than a material.
 CARRIED_EXTS = ("uasset", "eps")
-MESHES_FIRST = "(CASE WHEN rel_path LIKE '%/Meshes/%' OR name LIKE 'SM\\_%' ESCAPE '\\' THEN 0 ELSE 1 END)"
+# Names vary (BumpingPub calls its meshes M_CupBoard_01 and keeps a BasicMaterial among
+# them): an SM_ name first, then the Meshes folder less anything named a material.
+MESHES_FIRST = (
+    "(CASE WHEN name LIKE 'SM\\_%' ESCAPE '\\' THEN 0"
+    " WHEN rel_path LIKE '%/Meshes/%' AND name NOT LIKE '%material%' THEN 1 ELSE 2 END)"
+)
 # What decides how a root splits into packs: its files, and the user's splits, joins and
 # decided folder packs (see units.stored_layout).
 LAYOUT_KEY = """

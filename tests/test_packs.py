@@ -313,7 +313,8 @@ def test_a_folder_of_uassets_takes_a_mesh_as_its_cover(tmp_path):
     thumbnails are the only pictures, a mesh shows the pack best."""
     root = tmp_path / "lib"
     pub = root / "02_3D/Environments/Pub - 酒馆/Content/Pub"
-    for name in ("Materials/M_Base.uasset", "Meshes/Chair_01.uasset", "Textures/T_Wood_D.uasset", "Maps/Pub.umap"):
+    for name in ("Materials/M_Base.uasset", "Meshes/BasicMaterial.uasset", "Meshes/Chair_01.uasset",
+                 "Textures/T_Wood_D.uasset", "Maps/Pub.umap"):
         _write(pub / name)
     settings = Settings(roots={"art": root}, data_dir=tmp_path / "data")
     conn = connect(settings.db_path)
