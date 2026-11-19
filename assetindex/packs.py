@@ -30,6 +30,10 @@ DIMS = (("01_2D/", "2D"), ("02_3D/", "3D"), ("03_Audio/", "audio"))
 UNREAL_EXTS = ("uasset", "umap")
 UNITY_EXTS = ("unitypackage", "unity", "prefab")
 DRAWN_EXTS = ("svg", "hdr", "exr", "obj", "fbx", "glb", "gltf")  # drawn by the server: a cover only when the pack has no picture
+# Last: files carrying a picture of their own (an .uasset's editor thumbnail), for an
+# unpacked UE project with no picture at all. A mesh shows a pack better than a material.
+CARRIED_EXTS = ("uasset", "eps")
+MESHES_FIRST = "(CASE WHEN rel_path LIKE '%/Meshes/%' OR name LIKE 'SM\\_%' ESCAPE '\\' THEN 0 ELSE 1 END)"
 # What decides how a root splits into packs: its files, and the user's splits, joins and
 # decided folder packs (see units.stored_layout).
 LAYOUT_KEY = """
@@ -171,10 +175,10 @@ def _folder_pack(req: _Request, pack: _Found) -> tuple[int, int, int | None, str
         (pack.root, low, high),
     ).fetchone()
     thumb = None
-    for exts in (sorted(THUMBNAIL_EXTS), DRAWN_EXTS):
+    for exts in (sorted(THUMBNAIL_EXTS), DRAWN_EXTS, CARRIED_EXTS):
         thumb = thumb or conn.execute(
             f"SELECT id FROM files WHERE root = ? AND rel_path >= ? AND rel_path < ? AND ext IN ({','.join('?' * len(exts))})"
-            " ORDER BY rel_path LIMIT 1",
+            f" ORDER BY {MESHES_FIRST + ', ' if exts is CARRIED_EXTS else ''}rel_path LIMIT 1",
             (pack.root, low, high, *exts),
         ).fetchone()
     engine = conn.execute(
@@ -228,7 +232,7 @@ def _file_members(req: _Request, pack: _Found) -> list[sqlite3.Row]:
 
 
 def _thumb(rows: list[sqlite3.Row], pack: _Found) -> int | None:
-    drawn = None
+    drawn = carried = None
     for row in sorted(rows, key=lambda r: (r["rel_path"] != pack.path, r["rel_path"])):
         if row["ext"] in LISTABLE_ARCHIVE_EXTS and row["preview_state"] == 1:
             return row["id"]
@@ -236,7 +240,9 @@ def _thumb(rows: list[sqlite3.Row], pack: _Found) -> int | None:
             return row["id"]
         if drawn is None and row["ext"] in DRAWN_EXTS:
             drawn = row["id"]
-    return drawn
+        if carried is None and row["ext"] in CARRIED_EXTS:
+            carried = row["id"]
+    return drawn or carried
 
 
 def _caption(conn: sqlite3.Connection, ids: list[int]) -> str | None:

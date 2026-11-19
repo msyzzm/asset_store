@@ -306,3 +306,21 @@ def test_a_folder_of_drawings_takes_one_as_its_cover(tmp_path):
 
     assert found["Icons - 图标"] == f"/api/files/{ids['a.svg']}/thumb"
     assert found["Shots - 截图"] == f"/api/files/{ids['z.png']}/thumb"  # a real picture comes first
+
+
+def test_a_folder_of_uassets_takes_a_mesh_as_its_cover(tmp_path):
+    """BumpingPub: an unpacked UE project, 299 .uasset and no picture; their editor
+    thumbnails are the only pictures, a mesh shows the pack best."""
+    root = tmp_path / "lib"
+    pub = root / "02_3D/Environments/Pub - 酒馆/Content/Pub"
+    for name in ("Materials/M_Base.uasset", "Meshes/Chair_01.uasset", "Textures/T_Wood_D.uasset", "Maps/Pub.umap"):
+        _write(pub / name)
+    settings = Settings(roots={"art": root}, data_dir=tmp_path / "data")
+    conn = connect(settings.db_path)
+    scan_root(conn, "art", root)
+    ids = {r["name"]: r["id"] for r in conn.execute("SELECT id, name FROM files")}
+
+    found = {p["name"]: p["links"].get("thumb") for p in packs.search_packs(conn, "").packs}
+    conn.close()
+
+    assert found["Pub - 酒馆"] == f"/api/files/{ids['Chair_01.uasset']}/thumb"
