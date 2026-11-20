@@ -13,7 +13,7 @@ import threading
 from dataclasses import dataclass, field
 
 from assetindex import pack_grid
-from assetindex.archive_previews import cover_version
+from assetindex.archive_previews import cover_version, folder_cover
 from assetindex.archive_queries import entry_hits
 from assetindex.categories import DUPLICATES, TO_DELETE
 from assetindex.classify import under
@@ -205,8 +205,10 @@ def _folder_pack(req: _Request, pack: _Found) -> tuple[int, int, int | None, int
         ).fetchone()
         for exts in (sorted(THUMBNAIL_EXTS), DRAWN_EXTS)
     )
-    # No picture: an archive's contact sheet is one (a folder of several archives, too).
-    picture = picture or conn.execute(
+    # The folder's own Preview.png or Cover.jpg first; no picture: an archive's contact
+    # sheet is one (a folder of several archives, too).
+    named = folder_cover(conn, pack.root, pack.path)
+    picture = (named,) if named is not None else picture or conn.execute(
         "SELECT f.id FROM files f JOIN archives a ON a.file_id = f.id"
         " WHERE f.root = ? AND f.rel_path >= ? AND f.rel_path < ? AND a.preview_state = 1 ORDER BY f.rel_path LIMIT 1",
         (pack.root, low, high),

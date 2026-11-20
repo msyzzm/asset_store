@@ -150,6 +150,20 @@ def named_cover(entries: Iterable[tuple[int, str, int]]) -> str | None:
     return shallowest[0] if len(shallowest) == 1 else None
 
 
+def folder_cover(conn: sqlite3.Connection, root: str, folder: str) -> int | None:
+    """A folder pack's named cover by file id, the same rule as named_cover's."""
+    prefix = folder + "/"
+    likes = [f"%/{stem}.%" for stem in COVER_STEMS]
+    rows = conn.execute(
+        "SELECT id, rel_path, size FROM files WHERE root = ? AND rel_path >= ? AND rel_path < ?"
+        f" AND ({' OR '.join(['rel_path LIKE ?'] * len(likes))})",
+        (root, prefix, folder + "0", *likes),  # "0" sorts right after "/"
+    ).fetchall()
+    ids = {r["rel_path"].removeprefix(prefix): r["id"] for r in rows}
+    cover = named_cover((r["id"], r["rel_path"].removeprefix(prefix), r["size"]) for r in rows)
+    return ids[cover] if cover is not None else None
+
+
 def cover_version(conn: sqlite3.Connection, file_id: int) -> str:
     """'?v=N' for an archive's cover URL: browsers keep a cover a week, so a redone sheet
     needs a new URL. Empty for other files (their thumbnail URL never changes content)."""

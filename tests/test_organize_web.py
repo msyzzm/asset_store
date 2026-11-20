@@ -419,3 +419,16 @@ def test_a_folder_holding_only_an_archive_takes_its_contact_sheet_as_cover(tmp_p
 
     assert _thumb_id(conn, "lib", "Chars", True, {}) == ids["Chars/chars.zip"]
     assert _thumb_id(conn, "lib", "Chars Pics", True, {}) == ids["Chars Pics/cover.png"]  # a real picture first
+
+
+def test_a_folder_takes_its_preview_picture_as_cover_and_shows_it_first(env, tmp_path, conn):
+    from assetindex.organize_web import _pictures, _thumb_id
+
+    root = tmp_path / "kit"
+    _png(root / "Kit" / "Models" / "a.png", (255, 0, 0))
+    _png(root / "Kit" / "Preview.png", (0, 255, 0))
+    scan_root(conn, "kit", root)
+    ids = {r["rel_path"]: r["id"] for r in conn.execute("SELECT id, rel_path FROM files WHERE root = 'kit'")}
+
+    assert _thumb_id(conn, "kit", "Kit", True, {}) == ids["Kit/Preview.png"]
+    assert [p["name"] for p in _pictures(conn, "kit", "Kit", True, [])] == ["Preview.png", "Models/a.png"]

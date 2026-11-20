@@ -21,7 +21,7 @@ from assetindex.config import Settings
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.move_web import start_apply
 from assetindex.scanlock import is_scan_running
-from assetindex.archive_previews import cover_version
+from assetindex.archive_previews import cover_version, folder_cover
 from assetindex.thumbs import EMBEDDED_PREVIEW_EXTS
 from assetindex.units import companions_by_unit, is_container_name
 
@@ -139,6 +139,10 @@ def _pictures(conn: sqlite3.Connection, root: str, path: str, is_dir: bool, comp
             f"{select} AND f.rel_path >= ? AND f.rel_path < ? ORDER BY f.rel_path LIMIT ?",
             (root, *_PICTURE_EXTS, *under(path), PICTURE_LIMIT * 4),  # some archives may have no sheet
         ))
+        cover = folder_cover(conn, root, path)  # shown first, as on the card
+        if cover is not None:
+            first = conn.execute(f"{select} AND f.id = ?", (root, *_PICTURE_EXTS, cover)).fetchall()
+            rows = first + [r for r in rows if r["id"] != cover]
         base = path + "/"
     else:
         members = [path, *companions]
@@ -179,6 +183,9 @@ def _thumb_id(conn: sqlite3.Connection, root: str, path: str, is_dir: bool, comp
             elif row["ext"] in THUMBNAIL_EXTS or row["ext"] in EMBEDDED_PREVIEW_EXTS:
                 return row["id"]
         return None
+    cover = folder_cover(conn, root, path)  # its Preview.png or Cover.jpg
+    if cover is not None:
+        return cover
     exts = sorted(THUMBNAIL_EXTS)
     row = conn.execute(
         f"SELECT id FROM files WHERE root = ? AND rel_path >= ? AND rel_path < ? AND ext IN ({','.join('?' * len(exts))})"

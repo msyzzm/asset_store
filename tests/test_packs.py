@@ -332,3 +332,28 @@ def test_a_folder_of_uassets_gets_a_grid_of_their_thumbnails_meshes_first(tmp_pa
     # Meshes, then the rest by path: a material in the Meshes folder no longer leads.
     assert members == ["Bag_01.uasset", "Chair_01.uasset", "M_Base.uasset", "BasicMaterial.uasset", "T_Wood_D.uasset"]
     assert found["Barrel - 木桶"] == f"/api/files/{ids['Barrel.uasset']}/thumb"  # one: no grid
+
+
+def test_a_folder_names_its_cover_with_preview_or_cover(tmp_path):
+    root = tmp_path / "lib"
+    for folder, names in {
+        "02_3D/Kit - 套件": ("Models/a.png", "Preview.png"),
+        "02_3D/Market - 商城": ("Market/Cover.jpg", "Market/Textures/t.png", "Market/a.png"),
+        "02_3D/Items - 物件": ("A/preview.png", "B/preview.png", "A/a.png"),  # each item's own
+        "02_3D/Deep - 深层": ("X/Y/preview.png", "X/a.png"),
+    }.items():
+        for name in names:
+            (root / folder / name).parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (8, 8)).save(root / folder / name)
+    settings = Settings(roots={"art": root}, data_dir=tmp_path / "data")
+    conn = connect(settings.db_path)
+    scan_root(conn, "art", root)
+    ids = {r["rel_path"].split("/", 2)[2]: r["id"] for r in conn.execute("SELECT id, rel_path FROM files")}
+
+    found = {p["name"]: p["links"].get("thumb") for p in packs.search_packs(conn, "").packs}
+    conn.close()
+
+    assert found["Kit - 套件"] == f"/api/files/{ids['Preview.png']}/thumb"
+    assert found["Market - 商城"] == f"/api/files/{ids['Market/Cover.jpg']}/thumb"
+    assert found["Items - 物件"] == f"/api/files/{ids['A/a.png']}/thumb"  # first by path, as before
+    assert found["Deep - 深层"] == f"/api/files/{ids['X/Y/preview.png']}/thumb"
