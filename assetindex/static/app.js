@@ -63,9 +63,11 @@ function dirname(relPath) {
   return cut < 0 ? '' : relPath.slice(0, cut);
 }
 
-// mtime in the URL: thumbnails are cached for a week, so a changed file needs a new URL.
+// mtime in the URL: thumbnails are cached for a week, so a changed file needs a new URL;
+// so does an archive's cover redone at a newer sheet version.
 function thumbUrl(item) {
-  return `/api/files/${item.id}/thumb?v=${Math.trunc(item.mtime)}`;
+  const sheet = item.sheet_version ? `.${item.sheet_version}` : '';
+  return `/api/files/${item.id}/thumb?v=${Math.trunc(item.mtime)}${sheet}`;
 }
 
 function extBadge(item) {

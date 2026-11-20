@@ -21,6 +21,7 @@ from assetindex.config import Settings
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.move_web import start_apply
 from assetindex.scanlock import is_scan_running
+from assetindex.archive_previews import cover_version
 from assetindex.thumbs import EMBEDDED_PREVIEW_EXTS
 from assetindex.units import companions_by_unit, is_container_name
 
@@ -149,11 +150,12 @@ def _pictures(conn: sqlite3.Connection, root: str, path: str, is_dir: bool, comp
         if not _showable(row):
             continue
         url = f"/api/files/{row['id']}"
+        thumb = f"{url}/thumb{cover_version(conn, row['id'])}"  # a sheet's URL changes when redone
         pictures.append({
             "id": row["id"], "name": row["rel_path"].removeprefix(base),
             "large": f"{url}/raw" if row["ext"] in _BROWSER_IMAGE_EXTS and row["size"] <= RAW_PICTURE_MAX_BYTES
-            else f"{url}/thumb",
-            "thumb": f"{url}/thumb",
+            else thumb,
+            "thumb": thumb,
         })
         if len(pictures) >= PICTURE_LIMIT:
             break
@@ -274,7 +276,7 @@ def add_organize_routes(app: FastAPI, settings: Settings, get_conn: Callable, pa
                 "path": r["path"], "is_dir": bool(r["is_dir"]), "files": r["files"], "size": r["size"],
                 "category": r["category"], "name": r["name"], "target": r["target"], "reason": r["reason"],
                 "status": r["status"], "dup_of": r["dup_of"], "error": r["error"],
-                "thumb": f"/api/files/{thumb}/thumb" if thumb else None,
+                "thumb": f"/api/files/{thumb}/thumb{cover_version(conn, thumb)}" if thumb else None,
             })
         return {"total": total, "items": items}
 

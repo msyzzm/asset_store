@@ -524,3 +524,78 @@ def test_exr_maps_make_a_cover(conn, tmp_path):
     stats = _build(conn, root, tmp_path / "thumbs")
 
     assert stats.built == 1 and _state(conn, "crate.zip") == 1
+
+
+def _sheet_colors(thumbs, conn, name):
+    file_id = _ids(conn)[name]
+    mtime = conn.execute("SELECT mtime FROM files WHERE id = ?", (file_id,)).fetchone()[0]
+    sheet = Image.open(sheet_path(thumbs, file_id, mtime)).convert("RGBA")
+    counts = {}
+    for count, (r, g, b, a) in sheet.getcolors(1 << 20):
+        hue = GREEN[:3] if g > 200 and r < 60 else RED[:3] if r > 200 and g < 60 else None  # webp is lossy
+        if a == 255 and hue:
+            counts[hue] = counts.get(hue, 0) + count
+    return {hue for hue, count in counts.items() if count >= 500}  # not just blended edges
+
+
+GREEN, RED = (0, 255, 0, 255), (255, 0, 0, 255)
+
+
+@needs_bsdtar
+def test_a_preview_or_cover_picture_is_the_whole_cover(conn, tmp_path):
+    root = tmp_path / "packs"
+    _zip(root / "kenney.zip", {"Preview.png": _png(GREEN), "Skins/a.png": _png(RED), "Skins/b.png": _png(RED)})
+    _zip(root / "market.rar.zip", {"Pack/Cover.jpg": _png(GREEN), "Pack/Textures/t.png": _png(RED)})
+    thumbs = tmp_path / "thumbs"
+
+    _build(conn, root, thumbs)
+
+    assert _sheet_colors(thumbs, conn, "kenney.zip") == {GREEN[:3]}
+    assert _sheet_colors(thumbs, conn, "market.rar.zip") == {GREEN[:3]}
+
+
+@needs_bsdtar
+def test_previews_of_single_items_still_make_a_sheet(conn, tmp_path):
+    root = tmp_path / "packs"
+    _zip(root / "items.zip", {"A/preview.png": _png(GREEN), "B/preview.png": _png(RED)})  # one per item
+    _zip(root / "deep.zip", {"Pack/Item/preview.png": _png(GREEN), "Pack/x.png": _png(RED)})
+    _zip(root / "broken.zip", {"Preview.png": b"not a png", "x.png": _png(RED)})
+    thumbs = tmp_path / "thumbs"
+
+    _build(conn, root, thumbs)
+
+    assert _sheet_colors(thumbs, conn, "items.zip") == {GREEN[:3], RED[:3]}
+    assert _sheet_colors(thumbs, conn, "deep.zip") == {GREEN[:3], RED[:3]}
+    assert _sheet_colors(thumbs, conn, "broken.zip") == {RED[:3]}  # falls back to the sheet
+
+
+@needs_bsdtar
+def test_old_sheets_are_redone_only_where_a_preview_picture_is(conn, tmp_path):
+    root = tmp_path / "packs"
+    _zip(root / "kenney.zip", {"Preview.png": _png(GREEN), "a.png": _png(RED)})
+    _zip(root / "plain.zip", {"a.png": _png(RED), "b.png": _png(RED)})
+    thumbs = tmp_path / "thumbs"
+    _build(conn, root, thumbs)
+    conn.execute("UPDATE archives SET sheet_version = 6")  # built before covers were picked by name
+
+    again = build_previews(conn, "art", root, thumbs, TOOL)
+    once_more = build_previews(conn, "art", root, thumbs, TOOL)
+
+    assert again.built == 1 and once_more.built == 0
+
+
+@needs_bsdtar
+def test_cover_links_change_when_a_sheet_is_redone(preview_root, tmp_path):
+    from assetindex.archive_previews import SHEET_VERSION
+
+    settings = Settings(roots={"art": preview_root}, data_dir=tmp_path / "data")
+    with TestClient(create_app(settings)) as client:
+        conn = connect(settings.db_path)
+        _build(conn, preview_root, settings.thumb_dir)
+        conn.close()
+
+        packs = {p["name"]: p for p in client.get("/api/agent/packs").json()["packs"]}
+        item = client.get("/api/search", params={"q": "icons"}).json()["items"][0]
+
+        assert packs["icons.zip"]["links"]["thumb"].endswith(f"/thumb?v={SHEET_VERSION}")
+        assert item["sheet_version"] == SHEET_VERSION

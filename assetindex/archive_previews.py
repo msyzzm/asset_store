@@ -22,6 +22,7 @@ from assetindex import attempts
 from assetindex.archives import ArchiveError, read_unity_previews
 from assetindex.categories import DUPLICATES, TO_DELETE
 from assetindex.extract import ExtractError, ExtractTimeout, read_member
+from assetindex.kinds import THUMBNAIL_EXTS
 from assetindex.scan_request import ScanStopped, never, no_progress
 from assetindex.sequences import sequence_of
 from assetindex.thumbs import (
@@ -56,7 +57,13 @@ CELL_BOX = THUMB_SIZE
 # 4: .fbx, .glb and .gltf are drawn too.
 # 5: .hdr is read too.
 # 6: .exr is read too.
-SHEET_VERSION = 6
+# 7: a picture named as the pack's cover (COVER_STEMS) is the whole cover.
+SHEET_VERSION = 7
+NAMED_COVER_VERSION = 7
+# Kenney's Preview.png, Marketplace packs' Cover.jpg (live library, 2026-11-20). At the
+# top or in the one folder wrapping the pack; deeper ones belong to a single item.
+COVER_STEMS = ("preview", "cover")
+COVER_MAX_DEPTH = 1
 SHEET_LAYOUT_VERSION = 2
 RETRIES = (
     # svg, obj: drawn since; uasset, eps: crowded out by .txt/.mtl and the like until then.
@@ -126,6 +133,30 @@ def _round_robin(entries: Iterable[tuple[int, str, int]], limit: int) -> list[tu
     return chosen[:limit]
 
 
+def named_cover(entries: Iterable[tuple[int, str, int]]) -> str | None:
+    """The picture the pack names as its cover (Preview.png, Cover.jpg), if exactly one
+    sits at the shallowest depth where any does; several there are items' own previews."""
+    found: dict[int, list[str]] = {}
+    for _, path, size in entries:
+        ext = _ext(path)
+        stem = path.rsplit("/", 1)[-1][: -len(ext) - 1].lower()
+        depth = path.count("/")
+        if (stem in COVER_STEMS and ext in THUMBNAIL_EXTS and depth <= COVER_MAX_DEPTH
+                and size <= (source_limit(ext) or 0) and not _is_junk(path)):
+            found.setdefault(depth, []).append(path)
+    if not found:
+        return None
+    shallowest = found[min(found)]
+    return shallowest[0] if len(shallowest) == 1 else None
+
+
+def cover_version(conn: sqlite3.Connection, file_id: int) -> str:
+    """'?v=N' for an archive's cover URL: browsers keep a cover a week, so a redone sheet
+    needs a new URL. Empty for other files (their thumbnail URL never changes content)."""
+    row = conn.execute("SELECT sheet_version FROM archives WHERE file_id = ?", (file_id,)).fetchone()
+    return f"?v={row[0]}" if row and row[0] else ""
+
+
 class _PreviewPending(Exception):
     """Nothing usable yet, but only for transient reasons (timeouts): retry next scan."""
 
@@ -134,6 +165,14 @@ def _member_images(conn: sqlite3.Connection, file_id: int, archive: Path, tool: 
     entries = conn.execute(
         "SELECT id, path, size FROM archive_entries WHERE file_id = ?", (file_id,)
     ).fetchall()
+    cover = named_cover((r["id"], r["path"], r["size"]) for r in entries)
+    if cover is not None:
+        try:
+            ext = _ext(cover)
+            encoded = preview_image_bytes(ext, read_member(archive, cover, source_limit(ext), tool))
+            return [open_image(io.BytesIO(encoded), CELL_BOX)]
+        except Exception as err:  # ExtractError, or Pillow's many types: make a sheet instead
+            log.debug("cannot use %r from %s as its cover: %r", cover, archive, err)
     candidates = choose_candidates(((r["id"], r["path"], r["size"]) for r in entries), SHEET_IMAGES + SPARE_CANDIDATES)
     deadline = time.monotonic() + ARCHIVE_TIME_BUDGET_SECONDS
     images: list[Image.Image] = []
@@ -242,6 +281,7 @@ def build_previews(
         f" WHERE e.file_id = a.file_id AND e.ext IN ({','.join('?' * len(exts))})))"
         for _, exts in RETRIES
     )
+    named = " OR ".join(["e.path LIKE ?"] * (2 * len(COVER_STEMS)))  # LIKE ignores ASCII case
     rows = conn.execute(
         f"""
         SELECT f.id, f.rel_path, f.ext, a.size, a.mtime, a.preview_state
@@ -251,9 +291,13 @@ def build_previews(
             -- Unity's own previews are small already: older sheets of them look the same.
             OR (a.preview_state = 1 AND IFNULL(a.sheet_version, 0) < ? AND f.ext != 'unitypackage')
             OR (a.preview_state = 0 AND f.ext != 'unitypackage' AND ({retry}))
+            -- Sheets made before a named cover was taken whole; a loose match is fine.
+            OR (a.preview_state = 1 AND IFNULL(a.sheet_version, 0) < ? AND f.ext != 'unitypackage'
+                AND EXISTS (SELECT 1 FROM archive_entries e WHERE e.file_id = a.file_id AND ({named})))
         )
         """,
-        (root_name, SHEET_LAYOUT_VERSION, *(v for version, exts in RETRIES for v in (version, *exts))),
+        (root_name, SHEET_LAYOUT_VERSION, *(v for version, exts in RETRIES for v in (version, *exts)),
+         NAMED_COVER_VERSION, *(f"{p}{stem}.%" for stem in COVER_STEMS for p in ("", "%/"))),
     ).fetchall()
     rows = [r for r in rows if not r["rel_path"].startswith(ASIDE)]  # on their way out: no picture needed
     built = empty = skipped = 0

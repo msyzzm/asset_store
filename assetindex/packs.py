@@ -13,6 +13,7 @@ import threading
 from dataclasses import dataclass, field
 
 from assetindex import pack_grid
+from assetindex.archive_previews import cover_version
 from assetindex.archive_queries import entry_hits
 from assetindex.categories import DUPLICATES, TO_DELETE
 from assetindex.classify import under
@@ -321,7 +322,10 @@ def describe(req: _Request, pack: _Found) -> dict:
     if own is not None:
         links["detail"] = f"/api/agent/files/{own['id']}"
         links["download"] = f"/api/files/{own['id']}/download"
-    cover = f"/api/files/{picture}/thumb" if picture is not None else _stand_in(req, pack, engine, drawn)
+    cover = (
+        f"/api/files/{picture}/thumb{cover_version(req.conn, picture)}" if picture is not None
+        else _stand_in(req, pack, engine, drawn)
+    )
     if cover is not None:
         links["thumb"] = cover
     category, _, name = pack.path.rpartition("/")
