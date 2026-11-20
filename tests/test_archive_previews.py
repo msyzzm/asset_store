@@ -201,6 +201,29 @@ def test_web_serves_sheet_and_entry_thumbnails(preview_root, tmp_path):
         assert client.get(f"/api/files/{ids['sounds.zip']}/thumb").status_code == 415
 
 
+@needs_bsdtar
+def test_entry_pictures_come_large_for_the_big_view(tmp_path):
+    root = tmp_path / "packs"
+    _zip(root / "chars.zip", {"Preview.png": _png(size=(1000, 600))})
+    settings = Settings(roots={"art": root}, data_dir=tmp_path / "data")
+    with TestClient(create_app(settings)) as client:
+        conn = connect(settings.db_path)
+        _build(conn, root, settings.thumb_dir)
+        file_id = _ids(conn)["chars.zip"]
+        conn.close()
+        entry = client.get(f"/api/files/{file_id}/entries").json()["entries"][0]
+        url = f"/api/files/{file_id}/entries/{entry['id']}/thumb"
+
+        small = client.get(url)
+        large = client.get(url, params={"size": "large"})
+        small_again = client.get(url)  # the large one is cached apart from the small one
+
+        assert Image.open(io.BytesIO(small.content)).size == (160, 96)
+        assert large.status_code == 200 and Image.open(io.BytesIO(large.content)).size == (1000, 600)
+        assert Image.open(io.BytesIO(small_again.content)).size == (160, 96)
+        assert client.get(url, params={"size": "huge"}).status_code == 422
+
+
 def test_tiny_sprites_are_scaled_up_crisply_in_sheet(tmp_path):
     from assetindex.thumbs import compose_sheet
 

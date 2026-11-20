@@ -183,6 +183,14 @@ def _thumb_id(conn: sqlite3.Connection, root: str, path: str, is_dir: bool, comp
         " ORDER BY rel_path LIMIT 1",
         (root, *under(path), *exts),
     ).fetchone()
+    if row is None:  # no picture: an archive's contact sheet, as the large view shows
+        archives = sorted(LISTABLE_ARCHIVE_EXTS)
+        row = conn.execute(
+            "SELECT f.id FROM files f JOIN archives a ON a.file_id = f.id"
+            f" WHERE f.root = ? AND f.rel_path >= ? AND f.rel_path < ? AND f.ext IN ({','.join('?' * len(archives))})"
+            " AND a.preview_state = 1 ORDER BY f.rel_path LIMIT 1",
+            (root, *under(path), *archives),
+        ).fetchone()
     return row["id"] if row else None
 
 

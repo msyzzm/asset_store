@@ -81,6 +81,7 @@ class _RevalidatedStaticFiles(StaticFiles):
 THUMB_CACHE_SECONDS = 7 * 24 * 3600
 THUMB_CONCURRENCY = 4  # decoding big PSD/TIFF is memory-heavy; bound parallel renders
 ENTRY_THUMB_BOX = (160, 160)
+ENTRY_LARGE_BOX = (2048, 2048)  # the large view of a picture inside an archive
 # Extracting from a big solid archive can take seconds: keep it off the regular
 # thumbnail slots, cap it tighter, and don't park request threads waiting for a slot.
 EXTRACT_CONCURRENCY = 2
@@ -537,7 +538,10 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.get("/api/files/{file_id}/entries/{entry_id}/thumb")
     def api_entry_thumb(
-        file_id: FileId, entry_id: FileId, conn: sqlite3.Connection = Depends(get_conn)
+        file_id: FileId,
+        entry_id: FileId,
+        size: Literal["", "large"] = "",
+        conn: sqlite3.Connection = Depends(get_conn),
     ) -> FileResponse:
         entry = conn.execute(
             """
@@ -563,7 +567,7 @@ def create_app(settings: Settings) -> FastAPI:
         if tool is None:
             raise HTTPException(415, "archive previews need bsdtar")
         _, archive = resolve(conn, file_id)
-        target = entry_thumb_path(settings.thumb_dir, file_id, entry["mtime"], entry["size"], entry["path"])
+        target = entry_thumb_path(settings.thumb_dir, file_id, entry["mtime"], entry["size"], entry["path"], size)
         if target.exists():
             return _webp(target)
         if recently_failed(target):
@@ -577,7 +581,7 @@ def create_app(settings: Settings) -> FastAPI:
                     encoded = preview_image_bytes(entry["ext"], data)
                     if encoded is None:
                         raise HTTPException(415, "no embedded thumbnail")
-                    _render_or_415(io.BytesIO(encoded), target, ENTRY_THUMB_BOX)
+                    _render_or_415(io.BytesIO(encoded), target, ENTRY_LARGE_BOX if size else ENTRY_THUMB_BOX)
                 except (ExtractError, HTTPException) as err:
                     remember_failure(target)
                     raise HTTPException(415, "cannot extract entry") from err

@@ -114,10 +114,14 @@ def unity_preview_path(thumb_dir: Path, file_id: int, mtime: float, entry_id: in
     return archive_preview_dir(thumb_dir, file_id) / f"u_{int(mtime)}_{entry_id}.webp"
 
 
-def entry_thumb_path(thumb_dir: Path, file_id: int, mtime: float, size: int, inner_path: str) -> Path:
+def entry_thumb_path(
+    thumb_dir: Path, file_id: int, mtime: float, size: int, inner_path: str, variant: str = ""
+) -> Path:
     """On-demand thumbnail of a file inside an archive. Entry ids are reused after a relist,
-    so the key is derived from the archive's identity and the inner path instead."""
-    key = hashlib.sha256(f"{file_id}\0{mtime}\0{size}\0{inner_path}".encode()).hexdigest()
+    so the key is derived from the archive's identity and the inner path instead. `variant`
+    keeps other sizes (the large view's) apart from the thumbnail."""
+    extra = f"\0{variant}" if variant else ""
+    key = hashlib.sha256(f"{file_id}\0{mtime}\0{size}\0{inner_path}{extra}".encode()).hexdigest()
     return thumb_dir / "entries" / key[:2] / f"{key}.webp"
 
 

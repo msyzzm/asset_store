@@ -457,6 +457,10 @@ body {
   border-radius: 4px;
 }
 .entry-thumb { object-fit: contain; image-rendering: pixelated; }
+.entry-thumb-btn { flex: none; padding: 0; line-height: 0; background: none; border: 0; border-radius: 4px; cursor: zoom-in; }
+.entry-thumb-btn:focus-visible { outline: 2px solid var(--select); outline-offset: 1px; }
+.entry-viewer { width: min(1100px, calc(100vw - 32px)); }
+.entry-viewer .viewer-preview img { max-height: 75vh; }
 .entry-icon {
   display: grid;
   place-items: center;

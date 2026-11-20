@@ -398,3 +398,24 @@ def test_a_name_whose_previews_would_mix_with_another_pack_is_refused(env, conn)
     assert retarget("2D/B.zip", "01_2D/UI/Other").status_code == 200  # its own name again is fine
     assert retarget("2D/B.zip", "01_2D/UI/same_").status_code == 409  # "Same.png" would go with either
     assert retarget("2D/B.zip", "01_2D/UI/Same 2").json()["target"] == "01_2D/UI/Same 2.zip"
+
+
+def test_a_folder_holding_only_an_archive_takes_its_contact_sheet_as_cover(tmp_path, conn):
+    import zipfile
+
+    from assetindex.archive_index import index_archives
+    from assetindex.organize_web import _thumb_id
+
+    root = tmp_path / "lib"
+    for pack in ("Chars", "Chars Pics"):
+        (root / pack).mkdir(parents=True)
+        with zipfile.ZipFile(root / pack / "chars.zip", "w") as z:
+            z.writestr("a.txt", b"x")
+    _png(root / "Chars Pics" / "cover.png", (0, 255, 0))
+    scan_root(conn, "lib", root)
+    index_archives(conn, "lib", root)
+    conn.execute("UPDATE archives SET preview_state = 1")  # as if their sheets were built
+    ids = {r["rel_path"]: r["id"] for r in conn.execute("SELECT id, rel_path FROM files")}
+
+    assert _thumb_id(conn, "lib", "Chars", True, {}) == ids["Chars/chars.zip"]
+    assert _thumb_id(conn, "lib", "Chars Pics", True, {}) == ids["Chars Pics/cover.png"]  # a real picture first

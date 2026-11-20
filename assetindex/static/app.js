@@ -474,14 +474,21 @@ function entryIcon(entry) {
 function entryThumb(item, entry) {
   const hasThumb = item.ext === 'unitypackage' ? entry.has_preview : PREVIEW_EXTS.has(entry.ext);
   if (!hasThumb) return entryIcon(entry);
-  const img = el('img', {
-    className: 'entry-thumb',
-    loading: 'lazy',
-    alt: '',
-    src: `/api/files/${item.id}/entries/${entry.id}/thumb?v=${Math.trunc(item.mtime)}`,
-  });
-  img.addEventListener('error', () => img.replaceWith(entryIcon(entry)), { once: true });
-  return img;
+  const url = `/api/files/${item.id}/entries/${entry.id}/thumb?v=${Math.trunc(item.mtime)}`;
+  const img = el('img', { className: 'entry-thumb', loading: 'lazy', alt: '', src: url });
+  const button = el('button', { type: 'button', className: 'entry-thumb-btn', title: '看大图', 'aria-label': `看大图：${entry.path}` }, [img]);
+  button.addEventListener('click', () => openEntryPicture(entry, `${url}&size=large`));
+  img.addEventListener('error', () => button.replaceWith(entryIcon(entry)), { once: true });
+  return button;
+}
+
+// The large view sits on top of the pack's dialog, so closing it goes back to the list as it was.
+function openEntryPicture(entry, url) {
+  const img = el('img', { src: url, alt: entry.path });
+  img.addEventListener('error', () => img.replaceWith(el('p', { className: 'muted', text: '这张图显示不出来' })), { once: true });
+  $('ev-name').textContent = entry.path;
+  $('ev-preview').replaceChildren(img);
+  $('entry-viewer').showModal();
 }
 
 function entryRow(item, entry) {
@@ -856,6 +863,8 @@ function init() {
   });
   $('more').addEventListener('click', () => load(false));
   $('v-close').addEventListener('click', () => $('viewer').close());
+  $('ev-close').addEventListener('click', () => $('entry-viewer').close());
+  $('entry-viewer').addEventListener('close', () => $('ev-preview').replaceChildren());
   // Clearing the preview stops audio/video playback when the dialog closes.
   $('viewer').addEventListener('close', () => {
     state.viewerSeq += 1; // drop a frames response still in flight
