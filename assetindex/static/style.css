@@ -471,6 +471,10 @@ body {
   text-transform: uppercase;
   color: var(--well-text);
 }
+.entry-play { border: 0; cursor: pointer; font-size: 14px; }
+.entry-play:hover { color: var(--select); }
+.entry-play:focus-visible { outline: 2px solid var(--select); outline-offset: 1px; }
+.entry-play.playing { background: var(--select); color: var(--accent-text); }
 .archive-panel .btn { justify-self: center; }
 
 .model-panel { display: grid; gap: 8px; width: 100%; padding: 12px; }

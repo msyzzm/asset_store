@@ -599,3 +599,35 @@ def test_cover_links_change_when_a_sheet_is_redone(preview_root, tmp_path):
 
         assert packs["icons.zip"]["links"]["thumb"].endswith(f"/thumb?v={SHEET_VERSION}")
         assert item["sheet_version"] == SHEET_VERSION
+
+
+@needs_bsdtar
+def test_sounds_inside_an_archive_play_in_the_browser(tmp_path, monkeypatch):
+    from assetindex import web
+
+    root = tmp_path / "packs"
+    _zip(root / "sfx.zip", {"Audio/click.ogg": b"OggS sound", "Audio/hit.wav": b"RIFF wave", "readme.txt": b"hi"})
+    _zip(root / "other.zip", {"x.ogg": b"OggS"})
+    settings = Settings(roots={"art": root}, data_dir=tmp_path / "data")
+    with TestClient(create_app(settings)) as client:
+        conn = connect(settings.db_path)
+        _build(conn, root, settings.thumb_dir)
+        ids = _ids(conn)
+        conn.close()
+        entries = {e["path"]: e["id"] for e in client.get(f"/api/files/{ids['sfx.zip']}/entries").json()["entries"]}
+        url = f"/api/files/{ids['sfx.zip']}/entries/{{}}/audio"
+
+        ogg = client.get(url.format(entries["Audio/click.ogg"]))
+        wav = client.get(url.format(entries["Audio/hit.wav"]))
+
+        assert ogg.status_code == 200 and ogg.content == b"OggS sound"
+        assert ogg.headers["content-type"] == "audio/ogg"
+        assert ogg.headers["x-content-type-options"] == "nosniff"
+        assert wav.headers["content-type"] == "audio/wav"
+        assert client.get(url.format(entries["readme.txt"])).status_code == 415
+        # An entry id must belong to the archive in the URL.
+        other = client.get(f"/api/files/{ids['other.zip']}/entries").json()["entries"][0]["id"]
+        assert client.get(url.format(other)).status_code == 404
+
+        monkeypatch.setattr(web, "MAX_ENTRY_AUDIO_BYTES", 3)
+        assert client.get(url.format(entries["Audio/click.ogg"])).status_code == 413

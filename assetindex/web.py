@@ -15,10 +15,10 @@ from typing import Annotated, Literal
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
 from fastapi import Path as PathParam
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from assetindex.agent_api import add_agent_routes
+from assetindex.agent_api import EXTRACTABLE_EXTS, add_agent_routes
 from assetindex.archive_queries import list_entries
 from assetindex.caption_web import add_caption_routes
 from assetindex.config import Settings
@@ -87,6 +87,13 @@ ENTRY_LARGE_BOX = (2048, 2048)  # the large view of a picture inside an archive
 EXTRACT_CONCURRENCY = 2
 EXTRACT_SLOT_WAIT_SECONDS = 5
 ENTRY_EXTRACT_TIMEOUT_SECONDS = 10
+ENTRY_AUDIO_TIMEOUT_SECONDS = 30
+MAX_ENTRY_AUDIO_BYTES = 64 * 1024**2  # held in memory while it is sent
+# Fixed types rather than mimetypes: its answer for these depends on the host's registry.
+ENTRY_AUDIO_TYPES = {
+    "mp3": "audio/mpeg", "wav": "audio/wav", "ogg": "audio/ogg", "flac": "audio/flac",
+    "m4a": "audio/mp4", "aac": "audio/aac", "aif": "audio/aiff", "aiff": "audio/aiff",
+}
 FAILED_ENTRY_TTL_SECONDS = 600
 MAX_FAILED_ENTRIES = 10_000
 SQLITE_MAX_INT = 2**63 - 1
@@ -588,6 +595,35 @@ def create_app(settings: Settings) -> FastAPI:
         finally:
             extract_slots.release()
         return _webp(target)
+
+    @app.get("/api/files/{file_id}/entries/{entry_id}/audio")
+    def api_entry_audio(file_id: FileId, entry_id: FileId, conn: sqlite3.Connection = Depends(get_conn)) -> Response:
+        """A sound inside a zip/rar/7z, typed so the page's audio player can play it."""
+        entry = conn.execute(
+            "SELECT e.path, e.ext, e.size, f.ext AS archive_ext FROM archive_entries e"
+            " JOIN files f ON f.id = e.file_id WHERE e.id = ? AND e.file_id = ?",
+            (entry_id, file_id),
+        ).fetchone()
+        if entry is None:
+            raise HTTPException(404, "no such entry in this archive")
+        media_type = ENTRY_AUDIO_TYPES.get(entry["ext"])
+        if media_type is None or entry["archive_ext"] not in EXTRACTABLE_EXTS:
+            raise HTTPException(415, "this entry can't be played here")
+        if entry["size"] > MAX_ENTRY_AUDIO_BYTES:
+            raise HTTPException(413, "sound is too large to play here; download the archive")
+        tool = find_bsdtar()
+        if tool is None:
+            raise HTTPException(503, "bsdtar is not installed on the server")
+        _, archive = resolve(conn, file_id)
+        if not extract_slots.acquire(timeout=EXTRACT_SLOT_WAIT_SECONDS):
+            raise HTTPException(503, "busy extracting other files", headers={"Retry-After": "5"})
+        try:
+            data = read_member(archive, entry["path"], MAX_ENTRY_AUDIO_BYTES, tool, ENTRY_AUDIO_TIMEOUT_SECONDS)
+        except ExtractError as err:
+            raise HTTPException(422, f"cannot extract this entry ({err})") from None
+        finally:
+            extract_slots.release()
+        return Response(data, media_type=media_type, headers=RAW_SECURITY_HEADERS)
 
     app.mount("/", _RevalidatedStaticFiles(directory=STATIC_DIR, html=True), name="static")
     return app

@@ -18,6 +18,8 @@ const MAX_HOVER_FRAMES = 24;
 const PLAY_FPS = 12;
 const MAX_PLAY_FRAMES = 120;
 const ENTRY_PAGE_SIZE = 100;
+// Sounds inside a zip/rar/7z the server plays through /entries/{id}/audio; a .unitypackage can't.
+const AUDIO_EXTS = new Set(['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'aif', 'aiff']);
 const ENGINE_LABELS = { unreal: 'UE', unity: 'Unity' };
 const MODEL_EXTS = new Set(['fbx']);
 // Parsing runs on the main thread; bigger files would freeze the tab for many seconds.
@@ -493,9 +495,53 @@ function openEntryPicture(entry, url) {
   $('entry-viewer').showModal();
 }
 
+// One sound at a time: { audio, button } of the row playing now.
+let entryAudio = null;
+
+function stopEntryAudio() {
+  const playing = entryAudio;
+  if (!playing) return;
+  entryAudio = null;
+  playing.audio.pause();
+  // Drop the source too, or the browser keeps fetching the rest of the sound.
+  playing.audio.removeAttribute('src');
+  playing.audio.load();
+  playing.button.classList.remove('playing');
+  playing.button.textContent = '▶';
+  playing.button.title = '试听';
+}
+
+// Clicking the row that plays stops it; any other row takes over.
+function entryPlayButton(item, entry) {
+  const button = el('button', {
+    type: 'button', className: 'entry-icon entry-play', title: '试听', 'aria-label': `试听：${entry.path}`, text: '▶',
+  });
+  button.addEventListener('click', () => {
+    const wasPlaying = entryAudio?.button === button;
+    stopEntryAudio();
+    if (wasPlaying) return;
+    const audio = new Audio(`/api/files/${item.id}/entries/${entry.id}/audio`);
+    entryAudio = { audio, button };
+    button.classList.add('playing');
+    button.textContent = '■';
+    button.title = '停止';
+    audio.addEventListener('ended', () => { if (entryAudio?.audio === audio) stopEntryAudio(); });
+    audio.addEventListener('error', () => {
+      if (entryAudio?.audio !== audio) return;
+      stopEntryAudio();
+      button.textContent = '✕';
+      button.title = '这个音频放不出来';
+    });
+    // A failed load rejects here too; the error listener above reports it.
+    audio.play().catch(() => {});
+  });
+  return button;
+}
+
 function entryRow(item, entry) {
+  const playable = item.ext !== 'unitypackage' && AUDIO_EXTS.has(entry.ext);
   return el('li', {}, [
-    entryThumb(item, entry),
+    playable ? entryPlayButton(item, entry) : entryThumb(item, entry),
     el('span', { className: 'entry-path', title: entry.path, text: entry.path }),
     el('span', { className: 'muted', text: formatSize(entry.size) }),
   ]);
@@ -531,7 +577,7 @@ function archivePanel(item) {
       return;
     }
     if (seq !== requestSeq || viewerSeq !== state.viewerSeq) return;
-    if (reset) list.replaceChildren();
+    if (reset) { stopEntryAudio(); list.replaceChildren(); }
     list.append(...body.entries.map((entry) => entryRow(item, entry)));
     offset = start + body.entries.length;
     summary.textContent = archiveSummary(body.archive, body.total, Boolean(filter.value.trim()));
@@ -613,6 +659,7 @@ async function openViewer(item) {
   const seq = ++state.viewerSeq;
   stopPlayer();
   stopModel();
+  stopEntryAudio();
   $('v-name').textContent = item.name;
   $('v-preview').replaceChildren(previewFor(item));
   $('v-meta').replaceChildren(...metaRows(item));
@@ -872,6 +919,7 @@ function init() {
     state.viewerSeq += 1; // drop a frames response still in flight
     stopPlayer();
     stopModel();
+    stopEntryAudio();
     $('v-preview').replaceChildren();
   });
 
