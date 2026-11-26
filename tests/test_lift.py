@@ -32,9 +32,13 @@ class Fake7zz:
         if self.password is not None and given != self.password:
             return subprocess.CompletedProcess(args, 2, b"", b"ERROR: CRC Failed in encrypted file. Wrong password?")
         out = next(a[2:] for a in args if a.startswith("-o"))
+        wanted = args[args.index(src) + 1:]  # like 7zz: only the members named after the archive
         for member, data in files.items():
-            os.makedirs(os.path.dirname(os.path.join(out, member)), exist_ok=True)
-            with open(os.path.join(out, member), "wb") as f:
+            if wanted and member not in wanted:
+                continue
+            target = os.path.join(out, member if args[0] == "x" else os.path.basename(member))  # "e": no folders
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as f:
                 f.write(data)
         return subprocess.CompletedProcess(args, 0, b"Everything is Ok", b"")
 
@@ -82,14 +86,14 @@ def test_same_name_and_kind_inside_still_works(lib, monkeypatch):
 
 
 @pytest.mark.parametrize("members", [
-    {"a.zip": INNER, "b.zip": INNER},
     {"a.zip": INNER, "model.fbx": b"fbx"},
+    {"a.zip": INNER, "b.zip": INNER, "model.fbx": b"fbx"},
     {"model.fbx": b"fbx"},
 ])
 def test_anything_more_than_a_wrapper_is_left_alone(lib, monkeypatch, members):
     monkeypatch.setattr(unpack, "run_7zz", Fake7zz({"Fight - 格斗.7z": members}))
 
-    with pytest.raises(lift.LiftError, match="不是只套了一个压缩包"):
+    with pytest.raises(lift.LiftError, match="不是只套了压缩包"):
         lift.lift_one(lib, OUTER, None, [], move=fake_move)
     assert os.listdir(lib / "C") == ["Fight - 格斗.7z"] and not (lib / "_待删除").exists()
 
@@ -206,6 +210,63 @@ def test_the_job_tries_the_saved_passwords(lib, tmp_path, monkeypatch):
 
     assert done.moved == 1 and not done.problems and (lib / "C/Fight - 格斗.zip").exists()
     conn.close()
+
+
+BUNDLE = "C/Bundle 100565.rar"
+BUNDLED = {
+    "100565/IM1_Lianna.zip": INNER, "100565/IM1_Lianna.jpg": b"jpg1",
+    "100565/IM2_Remy.zip": INNER + b"2", "100565/IM2_Remy.jpg": b"jpg2",
+    "100565/ad.url": b"ad",
+}
+
+
+def test_a_bundle_of_archives_opens_into_a_folder_of_its_name(lib, monkeypatch):
+    (lib / BUNDLE).write_bytes(b"rar outer")
+    monkeypatch.setattr(unpack, "run_7zz", Fake7zz({"Bundle 100565.rar": BUNDLED}))
+
+    new = lift.lift_one(lib, BUNDLE, None, [], move=fake_move)
+
+    assert new == "C/Bundle 100565"
+    assert sorted(os.listdir(lib / new)) == ["IM1_Lianna.jpg", "IM1_Lianna.zip", "IM2_Remy.jpg", "IM2_Remy.zip"]
+    assert (lib / new / "IM2_Remy.zip").read_bytes() == INNER + b"2"  # no links, no inner folder
+    assert os.listdir(lib / "_待删除") == ["Bundle 100565.rar"]
+    assert sorted(os.listdir(lib / "C")) == ["Bundle 100565", "Fight - 格斗.7z"]  # no scratch left
+
+
+def test_a_locked_bundle_opens_with_a_saved_password(lib, monkeypatch):
+    (lib / BUNDLE).write_bytes(b"rar outer")
+    monkeypatch.setattr(unpack, "run_7zz", Fake7zz({"Bundle 100565.rar": BUNDLED}, password="pack-pw"))
+
+    assert lift.lift_one(lib, BUNDLE, None, [], move=fake_move, known=("pack-pw",)) == "C/Bundle 100565"
+    assert len(os.listdir(lib / "C/Bundle 100565")) == 4
+
+
+def test_a_bundle_whose_files_share_a_name_is_left_alone(lib, monkeypatch):
+    (lib / BUNDLE).write_bytes(b"rar outer")
+    monkeypatch.setattr(unpack, "run_7zz", Fake7zz({"Bundle 100565.rar": {"a/x.zip": INNER, "b/X.zip": INNER}}))
+
+    with pytest.raises(lift.LiftError, match="同名"):
+        lift.lift_one(lib, BUNDLE, None, [], move=fake_move)
+    assert (lib / BUNDLE).exists() and not (lib / "_待删除").exists()
+
+
+def test_a_bundle_folder_name_already_taken_is_refused(lib, monkeypatch):
+    (lib / BUNDLE).write_bytes(b"rar outer")
+    (lib / "C/Bundle 100565").mkdir()
+    monkeypatch.setattr(unpack, "run_7zz", Fake7zz({"Bundle 100565.rar": BUNDLED}))
+
+    with pytest.raises(lift.LiftError, match="已经有了"):
+        lift.lift_one(lib, BUNDLE, None, [], move=fake_move)
+    assert os.listdir(lib / "C/Bundle 100565") == [] and (lib / BUNDLE).exists()
+
+
+def test_a_bundle_whose_outer_will_not_go_aside_says_the_folder_is_in(lib, monkeypatch):
+    (lib / BUNDLE).write_bytes(b"rar outer")
+    monkeypatch.setattr(unpack, "run_7zz", Fake7zz({"Bundle 100565.rar": BUNDLED}))
+
+    with pytest.raises(lift.LiftHalfDone, match="外层没能移进待删除"):
+        lift.lift_one(lib, BUNDLE, None, [], move=failing_on(2))
+    assert len(os.listdir(lib / "C/Bundle 100565")) == 4 and (lib / BUNDLE).exists()
 
 
 def test_the_job_lifts_each_path_and_asks_for_a_scan(lib, tmp_path):
