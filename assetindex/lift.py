@@ -21,6 +21,7 @@ ARCHIVES = frozenset({"zip", "7z", "rar"})
 PICTURES = frozenset({"png", "jpg", "jpeg", "gif", "webp", "bmp"})
 EXTRAS = PICTURES | {"url", "txt", "html", "htm", "lnk", "website", "nfo", "ini"}  # what a wrapper adds
 NO_PASSWORD = "none"  # 7zz must never stop to ask for one
+COVER_STEMS = ("preview", "cover")  # a folder's named cover (archive_previews.COVER_STEMS)
 Mover = Callable[[str, str, bool], None]
 
 
@@ -54,6 +55,8 @@ def lift_one(base: Path, rel: str, password: str | None, companions: list[str],
     src = base / rel
     if not src.is_file():
         raise LiftError("压缩包已经不在了（可能已经处理过，等扫描更新）")
+    if _ext(rel) in PICTURES:
+        return _take_in_cover(base, src, move)
     if src.suffix.lower().lstrip(".") not in ARCHIVES or unpack.VOLUME.search(rel):
         raise LiftError("只处理 7z、rar、zip（不处理分卷）")
     if src.suffix.lower() == ".zip" and unpack._has_gbk_names(src):
@@ -64,7 +67,7 @@ def lift_one(base: Path, rel: str, password: str | None, companions: list[str],
     except unpack.UnpackError as err:
         raise LiftError(str(err)) from None
     if len(inners) > 1:
-        return _expand(base, src, inners, pictures, tries, move, free)
+        return _expand(base, src, inners, pictures, tries, companions, move, free)
     (inner, size), = inners
     dest = src.with_name(f"{src.stem}.{_ext(inner)}")
     same = dest.name.casefold() == src.name.casefold()  # X.zip in X.zip (or X.ZIP): it takes the outer's very place
@@ -133,11 +136,12 @@ def _first(move: Mover, src: Path, dst: Path) -> None:
 
 
 def _expand(base: Path, src: Path, inners: list[tuple[str, int]], pictures: list[str], tries: list[str],
-            move: Mover, free) -> str:
+            companions: list[str], move: Mover, free) -> str:
     """A bundle of archives (2026-11-26: 100565.rar held twelve DAZ products, each a zip and
     its picture): they and the pictures go, without the bundle's folders, into a folder
     named as the outer, which goes to _待删除/. Each zip and its same-name picture there is
-    a pack of its own. Returns the folder's path."""
+    a pack of its own. The outer's cover beside it goes in too (see _cover_place).
+    Returns the folder's path."""
     names = [PurePosixPath(path).name for path, _ in inners] + [PurePosixPath(path).name for path in pictures]
     if len({name.casefold() for name in names}) != len(names):
         raise LiftError("包里不同文件夹有同名的文件，放进一个文件夹会重名，没动")
@@ -167,7 +171,41 @@ def _expand(base: Path, src: Path, inners: list[tuple[str, int]], pictures: list
             raise LiftHalfDone(f"已展开到「{dest.name}」，外层没能移进待删除，要手动移：{err!r}") from None
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+    for cover in (base / c for c in companions):
+        if not cover.is_file():
+            continue
+        try:  # the folder is done; at worst its cover stays where it was
+            move(str(cover), str(_cover_place(base, dest, cover)), False)
+        except OSError as err:
+            log.warning("cover %s not moved into %s: %r", cover, dest, err)
     return dest.relative_to(base).as_posix()
+
+
+def _take_in_cover(base: Path, src: Path, move: Mover) -> str:
+    """A cover left beside the folder its archive opened into (lifts before 2026-11-26 left
+    20 such pictures): it goes where _expand now puts one. Returns its new path."""
+    folder = src.with_name(src.stem)
+    if not folder.is_dir():
+        raise LiftError("旁边没有同名的文件夹，没动")
+    place = _cover_place(base, folder, src)
+    _first(move, src, place)
+    return place.relative_to(base).as_posix()
+
+
+def _cover_place(base: Path, folder: Path, cover: Path) -> Path:
+    """Inside as Preview.<ext>, the folder's cover; aside when the folder is a bundle of
+    products that each have a picture (one more would be a pack of its own), or already
+    names a cover."""
+    files = [p for p in folder.iterdir() if p.is_file()]
+    stems = {p.stem.casefold() for p in files if _ext(p.name) in PICTURES}
+    archives = [p for p in files if _ext(p.name) in ARCHIVES]
+    bundle = len(archives) > 1 and all(p.stem.casefold() in stems for p in archives)
+    named = any(p.stem.casefold() in COVER_STEMS and _ext(p.name) in PICTURES for p in files)
+    if bundle or named:
+        aside = unpack._free_name(base / TO_DELETE, cover.name)
+        aside.parent.mkdir(parents=True, exist_ok=True)
+        return aside
+    return folder / f"Preview.{_ext(cover.name)}"
 
 
 def _members_with_any(src: Path, candidates: list[str]) -> tuple[list[tuple[str, int]], list[str], list[str]]:

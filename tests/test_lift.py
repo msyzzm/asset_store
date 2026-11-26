@@ -260,6 +260,69 @@ def test_a_bundle_folder_name_already_taken_is_refused(lib, monkeypatch):
     assert os.listdir(lib / "C/Bundle 100565") == [] and (lib / BUNDLE).exists()
 
 
+PRODUCT = "C/Hoodie.rar"
+PRODUCT_FILES = {"104311/Hoodie_156859.zip": INNER, "104311/Templates_156861.zip": INNER + b"t", "104311/a.url": b"ad"}
+
+
+def test_the_cover_beside_a_product_goes_into_its_folder_as_preview(lib, monkeypatch):
+    (lib / PRODUCT).write_bytes(b"rar outer")
+    (lib / "C/Hoodie.jpg").write_bytes(b"cover")
+    monkeypatch.setattr(unpack, "run_7zz", Fake7zz({"Hoodie.rar": PRODUCT_FILES}))
+
+    assert lift.lift_one(lib, PRODUCT, None, ["C/Hoodie.jpg"], move=fake_move) == "C/Hoodie"
+    assert sorted(os.listdir(lib / "C/Hoodie")) == ["Hoodie_156859.zip", "Preview.jpg", "Templates_156861.zip"]
+    assert (lib / "C/Hoodie/Preview.jpg").read_bytes() == b"cover" and not (lib / "C/Hoodie.jpg").exists()
+
+
+def test_the_cover_beside_a_bundle_of_products_goes_aside(lib, monkeypatch):
+    """Each product there has its own picture; one more would be a pack of its own."""
+    (lib / BUNDLE).write_bytes(b"rar outer")
+    (lib / "C/Bundle 100565.jpg").write_bytes(b"cover")
+    monkeypatch.setattr(unpack, "run_7zz", Fake7zz({"Bundle 100565.rar": BUNDLED}))
+
+    lift.lift_one(lib, BUNDLE, None, ["C/Bundle 100565.jpg"], move=fake_move)
+
+    assert len(os.listdir(lib / "C/Bundle 100565")) == 4
+    assert sorted(os.listdir(lib / "_待删除")) == ["Bundle 100565.jpg", "Bundle 100565.rar"]
+
+
+def _opened(lib, name, files):
+    folder = lib / "C" / name
+    folder.mkdir()
+    for file in files:
+        (folder / file).write_bytes(b"x")
+    (lib / "C" / f"{name}.jpg").write_bytes(b"cover")
+
+
+def test_a_cover_left_beside_an_opened_product_is_taken_in(lib):
+    _opened(lib, "RO158958", ["Sylph.zip", "Templates.zip"])
+
+    assert lift.lift_one(lib, "C/RO158958.jpg", None, [], move=fake_move) == "C/RO158958/Preview.jpg"
+    assert (lib / "C/RO158958/Preview.jpg").read_bytes() == b"cover" and not (lib / "C/RO158958.jpg").exists()
+
+
+def test_a_cover_left_beside_an_opened_bundle_goes_aside(lib):
+    _opened(lib, "100565", ["Lianna.zip", "Lianna.jpg", "Remy.zip", "Remy.jpg"])
+
+    assert lift.lift_one(lib, "C/100565.jpg", None, [], move=fake_move) == "_待删除/100565.jpg"
+    assert sorted(os.listdir(lib / "C/100565")) == ["Lianna.jpg", "Lianna.zip", "Remy.jpg", "Remy.zip"]
+
+
+def test_a_folder_with_a_preview_already_keeps_it(lib):
+    _opened(lib, "Pack", ["Prod.zip", "Preview.png"])
+
+    assert lift.lift_one(lib, "C/Pack.jpg", None, [], move=fake_move) == "_待删除/Pack.jpg"
+    assert (lib / "C/Pack/Preview.png").read_bytes() == b"x"
+
+
+def test_a_picture_with_no_folder_of_its_name_is_left_alone(lib):
+    (lib / "C/Lonely.jpg").write_bytes(b"cover")
+
+    with pytest.raises(lift.LiftError, match="同名的文件夹"):
+        lift.lift_one(lib, "C/Lonely.jpg", None, [], move=fake_move)
+    assert (lib / "C/Lonely.jpg").exists()
+
+
 def test_a_bundle_whose_outer_will_not_go_aside_says_the_folder_is_in(lib, monkeypatch):
     (lib / BUNDLE).write_bytes(b"rar outer")
     monkeypatch.setattr(unpack, "run_7zz", Fake7zz({"Bundle 100565.rar": BUNDLED}))
