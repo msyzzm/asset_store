@@ -22,7 +22,7 @@ python scripts/asset_store.py tasks
 0. **先按包找**（找"做某种游戏用的素材"时从这里开始）：`python scripts/asset_store.py packs 蒸汽朋克 --limit 20`
    - 一个素材包（文件夹，或压缩包加它的预览图）只占一条，不会被包里几百个文件刷屏。
    - 排序：包名里有全部搜索词的在前（`match: name`），其次是包里文件命中的（`match: inside`，`hit_count` 多的在前），最后是按意思找到的（`match: meaning`）。不带搜索词时按路径列出全部包（`match: all`）。
-   - 每条有 `category`（分类路径）、`dim`（2D/3D/audio）、`engine`（unreal/unity，不知道时为空）、`caption`（画面描述）、`tags`（打过标签才有：`view` 视角、`style` 画风、`themes` 题材）、`files`、`size`、`hits`（命中的几个文件）、`links`。
+   - 每条有 `category`（分类路径）、`dim`（2D/3D/audio）、`engine`（unreal/unity/daz，不知道时为空；daz 是 DAZ Studio 的产品包，下载后要用 DAZ 的安装工具装进内容目录才能用）、`caption`（画面描述）、`tags`（打过标签才有：`view` 视角、`style` 画风、`themes` 题材）、`files`、`size`、`hits`（命中的几个文件）、`links`。
    - `--category 02_3D/Environments` 只看某个分类；分类有 `01_2D/*`、`02_3D/*`、`03_Audio/*`、`04_Tools/*`、`05_Reference`。
    - `--view` 只留这个视角的包：`俯视 等距 横版 第一人称 第三人称 不限`；`--style` 只留这个画风的包：`写实 卡通 像素 低多边形 风格化 手绘 其他`。
    - 标签只打了一小部分包，没打标签的包会被 `--view`/`--style` 直接筛掉。先不带这两个选项搜一次；结果太多、又只要 2D 素材时再用它们缩小范围，找 3D 素材时不要用。3D 场景和道具大多什么视角都能用（标签是「不限」），不要因为名字里没有"俯视"就排除。拿不准时用 `thumb` 看预览图。
@@ -37,7 +37,7 @@ python scripts/asset_store.py tasks
    - `path`：形如 `根目录:/相对路径`。
    - `caption`：看图模型写的画面描述，有就优先参考。
    - `frames`：大于 0 表示这是一组序列帧，按一张卡片显示。
-   - `archive`：压缩包的文件数，以及 `engine`（unity 或 unreal）。
+   - `archive`：压缩包的文件数，以及 `engine`（unity、unreal 或 daz）。
    - `matches_inside`：包里哪些文件命中了搜索词。
    - 要亲眼看图时，用 `thumb ID --out <临时目录>` 存下缩略图（webp），再用读图工具打开。缩略图只有 `links.thumb` 存在时才有。
 3. **细看压缩包**：

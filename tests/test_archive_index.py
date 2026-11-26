@@ -236,3 +236,21 @@ def test_unchanged_archive_gets_its_engine_rechecked(conn, tmp_path):
 
     assert stats.unchanged == 1
     assert conn.execute("SELECT engine FROM archives").fetchone()[0] is None
+
+
+def test_unchanged_daz_archive_gets_its_engine(conn, tmp_path):
+    root = tmp_path / "packs"
+    _zip(root / "Usagi.zip", ["Content/People/Genesis 8 Female/Usagi.duf", "Content/Runtime/Textures/skin.jpg"])
+    _zip(root / "plain.zip", ["a.png"])
+    _index(conn, root)
+    # Listed before DAZ was recognised; the file itself has not changed since.
+    conn.execute("UPDATE archives SET engine = NULL")
+    conn.commit()
+
+    stats = index_archives(conn, "art", root)
+
+    engines = dict(conn.execute(
+        "SELECT f.rel_path, a.engine FROM files f JOIN archives a ON a.file_id = f.id"
+    ).fetchall())
+    assert stats.unchanged == 2
+    assert engines == {"Usagi.zip": "daz", "plain.zip": None}

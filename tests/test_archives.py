@@ -141,6 +141,15 @@ def test_entries_are_capped(tmp_path, monkeypatch):
         ("zip", ["Models/GLB/desk.GLB", "Furniture.unitypackage"], (None, None)),
         # A Unity project folder holding models is still a Unity pack.
         ("zip", ["Assets/M/desk.fbx", "Assets/M/desk.fbx.meta"], ("unity", None)),
+        # DAZ Studio products: scenes and presets (.duf), data (.dsf), scripts (.dsa/.dse),
+        # and the install manifest (.dsx) are DAZ's own formats.
+        ("zip", ["Content/People/Genesis 8 Female/Usagi.duf", "Content/data/Usagi/Usagi.dsf"], ("daz", None)),
+        ("zip", ["Content/data/Morphs/FBMGirl.DSF"], ("daz", None)),
+        ("zip", ["Manifest.dsx", "Content/Runtime/Textures/Sonne/skin.jpg"], ("daz", None)),
+        ("zip", ["Content/Scripts/Diffeomorphic/export.dsa"], ("daz", None)),
+        ("zip", ["Content/Scripts/tool.dse"], ("daz", None)),
+        # A texture-only part of a multi-part product carries nothing DAZ's own.
+        ("zip", ["Content/Runtime/Textures/Sonne/skin.jpg"], (None, None)),
         ("zip", ["a.png"], (None, None)),
     ],
 )

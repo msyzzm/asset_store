@@ -105,6 +105,20 @@ def test_a_pack_tells_what_it_is(lib):
     assert packs.search_packs(conn, "地牢").packs[0]["dim"] == "2D"
 
 
+@pytest.mark.parametrize(
+    ("exts", "engine"),
+    [
+        (["duf", "png"], "daz"),  # an installed DAZ content folder
+        (["DSF"], "daz"),
+        (["uasset", "duf"], "unreal"),
+        (["prefab"], "unity"),
+        (["png", "fbx"], None),
+    ],
+)
+def test_a_folder_pack_engine_comes_from_its_files(exts, engine):
+    assert packs._engine_of(exts) == engine
+
+
 def test_category_filter_and_paging(lib):
     conn, _ = lib
 

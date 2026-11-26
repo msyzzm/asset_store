@@ -34,6 +34,8 @@ _UNSAFE_CHARS = re.compile(r"[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]")
 # Compressed RAR comments need the external unrar tool; never spawn it while listing.
 rarfile.NEED_COMMENTS = 0
 UNREAL_EXTS = frozenset({"uasset", "umap"})
+# DAZ Studio's own formats: scenes and presets, data, scripts, the install manifest.
+DAZ_EXTS = frozenset({"duf", "dsf", "dsa", "dse", "dsx"})
 # A folder named just like an engine version: "5.1", "UE5.3", "UE_4.27".
 _UE_VERSION = re.compile(r"^(?:UE[ _-]?)?([45]\.\d{1,2})$", re.IGNORECASE)
 
@@ -239,6 +241,8 @@ def detect_engine(ext: str, paths: Iterable[str]) -> tuple[str | None, str | Non
     unity_only = "unitypackage" in suffixes and not any(kind_of(s) == "model" for s in suffixes)
     if unity_only or has_unity_assets:
         return "unity", None
+    if suffixes & DAZ_EXTS:
+        return "daz", None
     return None, None
 
 

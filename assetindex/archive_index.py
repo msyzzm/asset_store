@@ -99,6 +99,7 @@ def index_archives(
             attempts.finish(conn, row["id"], STAGE)
     progress("archives", len(rows), len(rows))
     _recheck_unity(conn, root_name)
+    _recheck_daz(conn, root_name)
     return ArchiveStats(**counts)
 
 
@@ -118,6 +119,20 @@ def _recheck_unity(conn: sqlite3.Connection, root_name: str) -> None:
                 conn.execute(
                     "UPDATE archives SET engine = ?, engine_version = ? WHERE file_id = ?", (engine, version, row["id"])
                 )
+
+
+def _recheck_daz(conn: sqlite3.Connection, root_name: str) -> None:
+    """Archives listed before DAZ was recognised (2026-11-26) keep no engine until relisted:
+    mark the unchanged ones whose stored entries hold a DAZ file."""
+    placeholders = ",".join("?" * len(archives.DAZ_EXTS))
+    with conn:
+        conn.execute(
+            "UPDATE archives SET engine = 'daz', engine_version = NULL"
+            " WHERE engine IS NULL AND file_id IN (SELECT f.id FROM files f WHERE f.root = ?)"
+            f" AND EXISTS (SELECT 1 FROM archive_entries e WHERE e.file_id = archives.file_id"
+            f" AND lower(e.ext) IN ({placeholders}))",
+            (root_name, *sorted(archives.DAZ_EXTS)),
+        )
 
 
 def _misnamed(root: Path, row: sqlite3.Row) -> bool:

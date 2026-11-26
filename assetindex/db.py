@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS archives (
     error          TEXT,
     entry_count    INTEGER NOT NULL DEFAULT 0,
     truncated      INTEGER NOT NULL DEFAULT 0,
-    engine         TEXT,              -- 'unreal' | 'unity' | NULL
+    engine         TEXT,              -- 'unreal' | 'unity' | 'daz' | NULL
     engine_version TEXT,              -- inferred from folder names, e.g. '5.1'
     preview_state  INTEGER,           -- NULL pending, 0 nothing to show, 1 sheet built
     sheet_version  INTEGER            -- layout the sheet was built with; older ones get rebuilt

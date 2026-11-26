@@ -20,7 +20,7 @@ const MAX_PLAY_FRAMES = 120;
 const ENTRY_PAGE_SIZE = 100;
 // Sounds inside a zip/rar/7z the server plays through /entries/{id}/audio; a .unitypackage can't.
 const AUDIO_EXTS = new Set(['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'aif', 'aiff']);
-const ENGINE_LABELS = { unreal: 'UE', unity: 'Unity' };
+const ENGINE_LABELS = { unreal: 'UE', unity: 'Unity', daz: 'DAZ' };
 const MODEL_EXTS = new Set(['fbx']);
 // Parsing runs on the main thread; bigger files would freeze the tab for many seconds.
 const MAX_MODEL_BYTES = 64 * 1024 * 1024;

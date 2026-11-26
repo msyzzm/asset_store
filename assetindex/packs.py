@@ -32,6 +32,7 @@ ASIDE = (TO_DELETE + "/", DUPLICATES + "/")
 DIMS = (("01_2D/", "2D"), ("02_3D/", "3D"), ("03_Audio/", "audio"))
 UNREAL_EXTS = ("uasset", "umap")
 UNITY_EXTS = ("unitypackage", "unity", "prefab")
+DAZ_EXTS = ("duf", "dsf", "dsa", "dse", "dsx")
 # A pack's cover, best first: a picture in it (or an archive's contact sheet); for a UE
 # pack, its Fab listing's picture; a file the server draws (DRAWN_EXTS); a grid of the
 # editor thumbnails its .uasset carry; one such thumbnail.
@@ -254,6 +255,8 @@ def _engine_of(exts) -> str | None:
         return "unreal"
     if exts & set(UNITY_EXTS):
         return "unity"
+    if exts & set(DAZ_EXTS):
+        return "daz"
     return None
 
 

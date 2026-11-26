@@ -316,6 +316,7 @@ body {
 .engine-badge { left: 6px; top: 6px; font-weight: 600; background: #4a4d55; }
 .engine-badge.unreal { background: #0e7a5f; }
 .engine-badge.unity { background: #5a4bd1; }
+.engine-badge.daz { background: #b8462e; }
 
 .ext {
   max-width: 100%;
