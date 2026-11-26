@@ -316,7 +316,8 @@ def cmd_tag_stop(args):
     return _json(args, "/api/organize/tags/stop", body={})
 
 
-SETTINGS = ("caption", "embedding")
+SETTINGS = ("caption", "embedding", "passwords")
+TESTABLE = ("caption", "embedding")
 
 
 def cmd_settings(args):
@@ -437,7 +438,7 @@ def _admin_parsers(sub) -> None:
     p.add_argument("values", help="JSON object of the fields to change")
     p.set_defaults(func=cmd_settings_set)
     p = sub.add_parser("settings-test", help="try the settings: caption describes a sample picture, embedding embeds a word")
-    p.add_argument("which", choices=SETTINGS)
+    p.add_argument("which", choices=TESTABLE)
     p.set_defaults(func=cmd_settings_test)
 
     sub.add_parser("update", help="the server's version and whether a newer one is out").set_defaults(func=cmd_update)

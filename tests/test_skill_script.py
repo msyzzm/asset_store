@@ -151,6 +151,13 @@ def test_settings_are_changed_with_put_and_a_json_object(monkeypatch, capsys):
     assert calls == [("/api/settings/caption", {"model": "qwen"}, "PUT"), ("/api/update", {"action": "check"}, None)]
     assert skill.main(["settings-set", "embedding", "[1]"]) == 1
     assert "JSON object" in capsys.readouterr().err
+    assert skill.main(["settings-set", "passwords", '{"add": ["pw"]}']) == 0
+    assert calls[-1] == ("/api/settings/passwords", {"add": ["pw"]}, "PUT")
+    try:  # nothing to try: saved passwords are tried on the archives themselves
+        skill.main(["settings-test", "passwords"])
+        raise AssertionError("settings-test passwords should be refused")
+    except SystemExit:
+        pass
 
 
 def test_every_server_route_is_in_the_skill(tmp_path):

@@ -2,6 +2,7 @@
 undo, or settling a run a crash cut short), its progress, and the history of runs.
 The moving itself happens in the mover service (assetindex/move_job.py)."""
 
+import logging
 import sqlite3
 from collections.abc import Callable
 from dataclasses import asdict, replace
@@ -9,11 +10,13 @@ from typing import Annotated
 
 from fastapi import Body, Depends, FastAPI, HTTPException
 
-from assetindex import move_job, organize, organize_apply, purge, unpack
+from assetindex import archive_passwords, move_job, organize, organize_apply, purge, unpack
 from assetindex.categories import TO_DELETE
 from assetindex.config import Settings
 from assetindex.organize_move import build_plan
 from assetindex.scanlock import is_scan_running
+
+log = logging.getLogger(__name__)
 
 PLAN_SAMPLE = 200  # moves listed on the page; the count covers all
 LOCKED_SAMPLE = 50
@@ -45,6 +48,23 @@ def start_apply(data_dir, root: str) -> bool:
 def add_move_routes(app: FastAPI, settings: Settings, get_conn: Callable, page_request: Callable) -> None:
     data_dir = settings.data_dir
     guarded = [Depends(page_request)]
+
+    @app.get("/api/settings/passwords")
+    def api_password_settings() -> dict:
+        return archive_passwords.public_view(archive_passwords.load(data_dir))
+
+    @app.put("/api/settings/passwords", dependencies=guarded)
+    def api_save_password_settings(update: Annotated[dict, Body()]) -> dict:
+        try:
+            passwords = archive_passwords.apply_update(archive_passwords.load(data_dir), update)
+        except ValueError as err:
+            raise HTTPException(422, str(err)) from None
+        try:
+            archive_passwords.save(data_dir, passwords)
+        except OSError as err:
+            log.error("cannot save archive passwords: %r", err)
+            raise HTTPException(503, "密码保存失败，检查数据目录") from None
+        return archive_passwords.public_view(passwords)
 
     @app.get("/api/organize/moves")
     def api_moves() -> dict:

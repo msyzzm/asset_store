@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from assetindex import lift, move_job, unpack
+from assetindex import archive_passwords, lift, move_job, unpack
 from assetindex.config import Settings
 from assetindex.db import connect
 
@@ -16,8 +16,10 @@ def fake_move(src, dst, is_dir):
 class Fake7zz:
     """7zz over made-up archives: name -> {member: bytes}."""
 
-    def __init__(self, archives):
+    def __init__(self, archives, password=None):
         self.archives = archives
+        self.password = password  # names list without it, as in a RAR whose headers are not locked
+        self.tried = []
 
     def __call__(self, args):
         src = next(a for a in args if a.lower().endswith((".zip", ".7z", ".rar")))
@@ -25,6 +27,10 @@ class Fake7zz:
         if args[0] == "l":
             blocks = "\n\n".join(f"Path = {p}\nSize = {len(d)}\nAttributes = A" for p, d in files.items())
             return subprocess.CompletedProcess(args, 0, f"\n----------\n{blocks}\n".encode(), b"")
+        given = next(a[2:] for a in args if a.startswith("-p"))
+        self.tried.append(given)
+        if self.password is not None and given != self.password:
+            return subprocess.CompletedProcess(args, 2, b"", b"ERROR: CRC Failed in encrypted file. Wrong password?")
         out = next(a[2:] for a in args if a.startswith("-o"))
         for member, data in files.items():
             os.makedirs(os.path.dirname(os.path.join(out, member)), exist_ok=True)
@@ -156,6 +162,50 @@ def test_same_name_puts_the_outer_back_if_the_inner_will_not_go_in(lib, monkeypa
 def test_a_cover_that_will_not_move_does_not_undo_the_lift(lib):
     assert lift.lift_one(lib, OUTER, None, [], move=failing_on(3)) == "C/Fight - 格斗.zip"
     assert sorted(os.listdir(lib / "C")) == ["Fight - 格斗.zip"]
+
+
+LOCKED = {"Fight - 格斗.7z": {"Fight/Fight.zip": INNER, "Fight/cover.png": b"png"}}
+
+
+def test_a_saved_password_opens_a_locked_wrapper(lib, monkeypatch):
+    seven = Fake7zz(LOCKED, password="pack-pw")
+    monkeypatch.setattr(unpack, "run_7zz", seven)
+
+    new = lift.lift_one(lib, OUTER, None, [], move=fake_move, known=("wrong", "pack-pw", "later"))
+
+    assert new == "C/Fight - 格斗.zip" and (lib / new).read_bytes() == INNER
+    assert seven.tried == [lift.NO_PASSWORD, "wrong", "pack-pw"]  # stops at the one that works
+    assert sorted(os.listdir(lib / "C")) == ["Fight - 格斗.png", "Fight - 格斗.zip"]  # no scratch left
+
+
+def test_when_no_saved_password_fits_nothing_changes(lib, monkeypatch):
+    monkeypatch.setattr(unpack, "run_7zz", Fake7zz(LOCKED, password="pack-pw"))
+
+    with pytest.raises(lift.LiftError, match="密码") as err:
+        lift.lift_one(lib, OUTER, None, [], move=fake_move, known=("wrong",))
+    assert "wrong" not in str(err.value)
+    assert os.listdir(lib / "C") == ["Fight - 格斗.7z"] and not (lib / "_待删除").exists()
+
+
+def test_a_given_password_is_the_only_one_tried(lib, monkeypatch):
+    seven = Fake7zz(LOCKED, password="pack-pw")
+    monkeypatch.setattr(unpack, "run_7zz", seven)
+
+    with pytest.raises(lift.LiftError):
+        lift.lift_one(lib, OUTER, "typo", [], move=fake_move, known=("pack-pw",))
+    assert seven.tried == ["typo"]
+
+
+def test_the_job_tries_the_saved_passwords(lib, tmp_path, monkeypatch):
+    monkeypatch.setattr(unpack, "run_7zz", Fake7zz(LOCKED, password="pack-pw"))
+    settings = Settings(roots={"lib": lib}, data_dir=tmp_path / "data")
+    archive_passwords.save(settings.data_dir, ("pack-pw",))
+    conn = connect(settings.db_path)
+
+    done = move_job.run(conn, settings, {"action": "lift", "root": "lib", "paths": [OUTER]}, move=fake_move)
+
+    assert done.moved == 1 and not done.problems and (lib / "C/Fight - 格斗.zip").exists()
+    conn.close()
 
 
 def test_the_job_lifts_each_path_and_asks_for_a_scan(lib, tmp_path):

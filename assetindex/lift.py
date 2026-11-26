@@ -6,7 +6,7 @@ readmes) stays in the outer, which goes to _待删除/. Runs as the move job "li
 
 import logging
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path, PurePosixPath
 
 from assetindex import unpack
@@ -47,8 +47,9 @@ def _members(src: Path, password: str) -> tuple[tuple[str, int], list[str]]:
 
 
 def lift_one(base: Path, rel: str, password: str | None, companions: list[str],
-             move: Mover = move_no_replace, free=unpack.free_bytes) -> str:
-    """The inner archive's new path: the outer's, with the inner's suffix."""
+             move: Mover = move_no_replace, free=unpack.free_bytes, known: Sequence[str] = ()) -> str:
+    """The inner archive's new path: the outer's, with the inner's suffix. With no
+    `password`, no password is tried first, then each `known` one (archive_passwords.py)."""
     src = base / rel
     if not src.is_file():
         raise LiftError("压缩包已经不在了（可能已经处理过，等扫描更新）")
@@ -56,9 +57,9 @@ def lift_one(base: Path, rel: str, password: str | None, companions: list[str],
         raise LiftError("只处理 7z、rar、zip（不处理分卷）")
     if src.suffix.lower() == ".zip" and unpack._has_gbk_names(src):
         raise LiftError("zip 里的中文文件名不是 UTF-8，7-Zip 会解成乱码，没动")
-    password = password or NO_PASSWORD
+    candidates = [password] if password else [NO_PASSWORD, *known]
     try:
-        (inner, size), pictures = _members(src, password)
+        (inner, size), pictures, tries = _members_with_any(src, candidates)
     except unpack.UnpackError as err:
         raise LiftError(str(err)) from None
     dest = src.with_name(f"{src.stem}.{_ext(inner)}")
@@ -75,7 +76,7 @@ def lift_one(base: Path, rel: str, password: str | None, companions: list[str],
     keep_tmp = False
     try:
         try:
-            _take_out(src, tmp, inner, size, pictures, password)
+            _take_out_with_any(src, tmp, inner, size, pictures, tries)
         except unpack.UnpackError as err:  # no 7zz, or it ran too long
             raise LiftError(str(err)) from None
         aside = unpack._free_name(base / TO_DELETE, src.name)
@@ -127,11 +128,38 @@ def _first(move: Mover, src: Path, dst: Path) -> None:
         raise LiftError(f"移动时出错，没动：{err!r}") from None
 
 
-def _take_out(src: Path, tmp: Path, inner: str, size: int, pictures: list[str], password: str) -> None:
-    """The inner archive and the pictures, whole, under `tmp`."""
+def _members_with_any(src: Path, candidates: list[str]) -> tuple[tuple[str, int], list[str], list[str]]:
+    """_members by the first password that lists the archive, with the passwords left to
+    try from it on (a RAR lists its names with any password; one with locked headers not)."""
+    for i, password in enumerate(candidates):
+        try:
+            return (*_members(src, password), candidates[i:])
+        except unpack.UnpackError:
+            if i == len(candidates) - 1:
+                raise
+    raise AssertionError("no candidates")  # lift_one always passes one
+
+
+def _take_out_with_any(src: Path, tmp: Path, inner: str, size: int, pictures: list[str], tries: list[str]) -> None:
+    """_take_out by the first password that extracts; `tmp` is emptied between tries."""
     for path in (inner, *pictures):
         if PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts:
             raise LiftError(f"包里有不安全的路径：{path}")
+    for i, password in enumerate(tries):
+        try:
+            _take_out(src, tmp, inner, size, pictures, password)
+            return
+        except LiftError:
+            if i == len(tries) - 1:
+                if len(tries) > 1:
+                    raise LiftError(f"试了 {len(tries)} 个密码（含不用密码）都取不出里面的压缩包：密码不对，或者包坏了") from None
+                raise
+            shutil.rmtree(tmp, ignore_errors=True)
+            tmp.mkdir()
+
+
+def _take_out(src: Path, tmp: Path, inner: str, size: int, pictures: list[str], password: str) -> None:
+    """The inner archive and the pictures, whole, under `tmp`."""
     done = unpack.run_7zz(["x", "-bd", "-y", "-spd", f"-p{password}", f"-o{tmp}", "--", str(src), inner, *pictures])
     got = tmp / inner
     if done.returncode != 0 or not got.is_file() or got.stat().st_size != size:

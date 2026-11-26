@@ -19,7 +19,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
-from assetindex import lift, organize, organize_apply, purge, repair, scan_request, unpack, verify
+from assetindex import archive_passwords, lift, organize, organize_apply, purge, repair, scan_request, unpack, verify
 from assetindex.units import companions_by_unit, stored_layout
 from assetindex.config import Settings
 from assetindex.organize_move import Problem, build_plan
@@ -343,6 +343,7 @@ def _lift(conn, settings: Settings, raw: dict, status: MoveStatus, should_stop, 
     base = settings.roots[status.root].resolve()
     companions = companions_by_unit(*stored_layout(conn, status.root))
     paths = raw["paths"]
+    known = () if raw.get("password") else archive_passwords.load(settings.data_dir)
     status = replace(status, total=len(paths))
     report(status)
     lifted, changed, problems, stopped = 0, False, [], False
@@ -352,7 +353,8 @@ def _lift(conn, settings: Settings, raw: dict, status: MoveStatus, should_stop, 
             break
         report(replace(status, done=done))
         try:
-            lift.lift_one(base, rel, raw.get("password"), companions.get(rel, []), move=move, free=free_bytes)
+            lift.lift_one(base, rel, raw.get("password"), companions.get(rel, []), move=move, free=free_bytes,
+                          known=known)
             lifted += 1
         except lift.LiftHalfDone as err:  # the NAS did change: the index should learn of it
             changed = True

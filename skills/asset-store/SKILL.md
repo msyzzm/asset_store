@@ -118,10 +118,11 @@ python scripts/asset_store.py tasks
 - `move recover --root nas`：`unsettled` 大于 0 时，把上次中断的移动收尾。
 - `move unpack --root nas --password 密码 [--limit N] [路径…]`：把带密码的压缩包解成文件夹（`locked` 列出哪些可以解），原压缩包放进 `_待删除`。
 - `move verify --root nas 路径…`：只读，检查压缩包有没有损坏。用户问某个包坏没坏时可以直接用。
-- `move repair --root nas 副本1 副本2…`：用几份各坏一处的副本拼出一份完好的。`move lift --root nas 路径…`：外层压缩包里只套着另一个压缩包时，拆掉外层。
+- `move repair --root nas 副本1 副本2…`：用几份各坏一处的副本拼出一份完好的。`move lift --root nas 路径…`：外层压缩包里只套着另一个压缩包时，拆掉外层。外层带密码时：不给 `--password` 就先试不用密码，再依次试服务器上存的密码（见下面的 `settings-set passwords`）；给了 `--password` 就只用它。
 - **`move purge --root nas`：永久删除 `_待删除` 文件夹里的全部文件，不进 NAS 回收站，删了找不回来。** 先跑 `trash --root nas`，把文件数和总大小告诉用户；只有用户明确说“永久删除”才执行，绝不自己决定删除。
 - `move-stop`：做完手上这个包后停下。文件任务进行时，扫描和分析会等它做完。
 - `settings-set caption '{"model": "qwen3-vl"}'`、`settings-set embedding '{"enabled": true}'`：改看图模型、语义搜索的设置，只传要改的字段（看图模型：`base_url`、`model`、`api_key`、`workers`、`retries`、`retry_wait`、`max_failures`；语义搜索：`enabled`、`base_url`、`model`、`api_key`、`image_format`、`batch_size`）。key 只能写不能读；改了接口地址却没给新 key 时，旧 key 会被清掉。改完用 `settings-test caption`（描述一张示例图）或 `settings-test embedding` 试一下。改前告诉用户要改成什么。
+- `settings-set passwords '{"add": ["密码"]}'`：存一个拆外层时自动尝试的压缩包密码（`{"passwords": [...]}` 整个替换，`[]` 清空）。存在服务器的数据目录里，只能写不能读：`settings` 只显示有几个。密码只在用户给出时才存。
 - `update-run check` 查有没有新版本（`update` 里的 `behind`、`pending`）；`update-run update` 安装新版本并重启所有服务，约一分钟。重启会打断正在进行的扫描和分析（下载会续传），先用 `tasks` 看有没有扫描在跑，告诉用户再更新；更新完扫描不会自动接着做，需要时再 `scan`。`update-stop` 在重启前停下。
 
 ## 出错
