@@ -43,13 +43,14 @@ def _store(
     conn.execute(
         """
         INSERT OR REPLACE INTO archives
-            (file_id, size, mtime, status, error, entry_count, truncated, engine, engine_version)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (file_id, size, mtime, status, error, entry_count, truncated, engine, engine_version, encrypted)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             file_id, size, mtime, "error" if error else "ok", error, len(entries),
             int(bool(listing and listing.truncated)),
             listing.engine if listing else None, listing.engine_version if listing else None,
+            listing.encrypted if listing else None,
         ),
     )
 
@@ -100,7 +101,28 @@ def index_archives(
     progress("archives", len(rows), len(rows))
     _recheck_unity(conn, root_name)
     _recheck_daz(conn, root_name)
+    _count_encrypted(conn, root_name, root, should_stop)
     return ArchiveStats(**counts)
+
+
+def _count_encrypted(conn: sqlite3.Connection, root_name: str, root: Path, should_stop: Callable[[], bool]) -> None:
+    """Archives listed before locked files were counted (2026-11-26) get counted from their
+    directory alone: relisting would rebuild every cover. Once each; a failure leaves NULL."""
+    rows = conn.execute(
+        "SELECT f.id, f.rel_path, f.ext FROM files f JOIN archives a ON a.file_id = f.id"
+        " WHERE f.root = ? AND a.status = 'ok' AND a.encrypted IS NULL",
+        (root_name,),
+    ).fetchall()
+    for row in rows:
+        if should_stop():
+            return
+        try:
+            count = archives.encrypted_count(root / row["rel_path"], row["ext"])
+        except (OSError, MemoryError, ArchiveError) as err:
+            log.info("cannot count locked files in %r: %r", row["rel_path"], err)
+            continue
+        with conn:
+            conn.execute("UPDATE archives SET encrypted = ? WHERE file_id = ?", (count, row["id"]))
 
 
 def _recheck_unity(conn: sqlite3.Connection, root_name: str) -> None:

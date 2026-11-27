@@ -25,6 +25,7 @@ MAX_ENTRIES = 50_000  # per archive; beyond this the listing is marked truncated
 MAX_PATH_LENGTH = 1024
 MAX_PATHNAME_BYTES = 4096  # a unitypackage `pathname` member is one short line
 ZIP_UTF8_FLAG = 0x800
+ZIP_ENCRYPTED_FLAG = 0x1
 # A unitypackage must be fully decompressed to list it; stop gzip bombs.
 MAX_UNITYPACKAGE_BYTES = 32 * 1024**3
 MAX_UNITYPACKAGE_SECONDS = 15 * 60  # wall clock per streaming pass
@@ -50,6 +51,7 @@ class ArchiveEntry:
     size: int
     guid: str | None = None  # unitypackage asset folder, used to fetch its preview later
     has_preview: bool = False
+    encrypted: bool = False  # its name lists, its content needs a password
 
 
 @dataclass(frozen=True)
@@ -58,6 +60,7 @@ class ArchiveListing:
     truncated: bool
     engine: str | None
     engine_version: str | None
+    encrypted: int = 0  # entries whose content needs a password
 
 
 def _clean(path: str) -> str | None:
@@ -95,21 +98,22 @@ def _zip_entries(path: Path) -> Iterator[ArchiveEntry]:
     with zipfile.ZipFile(path) as z:
         for info in z.infolist():
             if not info.is_dir():
-                yield ArchiveEntry(_zip_name(info), info.file_size)
+                yield ArchiveEntry(_zip_name(info), info.file_size, encrypted=bool(info.flag_bits & ZIP_ENCRYPTED_FLAG))
 
 
 def _rar_entries(path: Path) -> Iterator[ArchiveEntry]:
     with rarfile.RarFile(path) as r:
         for info in r.infolist():
             if not info.is_dir():
-                yield ArchiveEntry(info.filename, info.file_size)
+                yield ArchiveEntry(info.filename, info.file_size, encrypted=bool(info.needs_password()))
 
 
 def _7z_entries(path: Path) -> Iterator[ArchiveEntry]:
-    with py7zr.SevenZipFile(path) as z:
+    with py7zr.SevenZipFile(path) as z:  # locked names: PasswordRequired, recorded as a bad archive
+        locked = bool(z.needs_password())
         for info in z.list():
             if not info.is_directory:
-                yield ArchiveEntry(info.filename, info.uncompressed or 0)
+                yield ArchiveEntry(info.filename, info.uncompressed or 0, encrypted=locked)
 
 
 class _CappedReader:
@@ -219,7 +223,7 @@ def _collect(raw: Iterable[ArchiveEntry]) -> tuple[list[ArchiveEntry], bool]:
             continue
         if len(entries) >= MAX_ENTRIES:
             return entries, True
-        entries.append(ArchiveEntry(path, max(0, entry.size), entry.guid, entry.has_preview))
+        entries.append(ArchiveEntry(path, max(0, entry.size), entry.guid, entry.has_preview, entry.encrypted))
     return entries, False
 
 
@@ -259,7 +263,18 @@ def list_archive(path: Path, ext: str) -> ArchiveListing:
             raise ArchiveError(f"{READ_AS}{fmt}) {err}") from err
         raise
     engine, version = detect_engine(ext, (e.path for e in entries))
-    return ArchiveListing(tuple(entries), truncated, engine, version)
+    return ArchiveListing(tuple(entries), truncated, engine, version, sum(e.encrypted for e in entries))
+
+
+def encrypted_count(path: Path, ext: str) -> int:
+    """How many files in an archive need a password, read from its directory only (an
+    archive listed before this was counted keeps its entries and cover). zip, rar and 7z
+    mark it; a unitypackage or tarball cannot be locked. Raises like list_archive."""
+    fmt = ext if ext == "unitypackage" else (_sniff_or_none(path) or ext)
+    if fmt not in ("zip", "rar", "7z"):
+        return 0
+    entries, _ = _read(_LISTERS[fmt], path)
+    return sum(e.encrypted for e in entries)
 
 
 def _sniff_or_none(path: Path) -> str | None:

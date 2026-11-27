@@ -37,7 +37,8 @@ python scripts/asset_store.py tasks
    - `path`：形如 `根目录:/相对路径`。
    - `caption`：看图模型写的画面描述，有就优先参考。
    - `frames`：大于 0 表示这是一组序列帧，按一张卡片显示。
-   - `archive`：压缩包的文件数，以及 `engine`（unity、unreal 或 daz）。
+   - `archive`：压缩包的文件数，以及 `engine`（unity、unreal 或 daz）和 `encrypted`（要密码才能解开的文件数；空表示还没数过）。
+   - 库里哪些压缩包要密码：`encrypted [--limit N --offset N]`，列出有加密文件的包（`encrypted` 是加密文件数），以及连文件名都加密、列不出来的 7z（`names_locked: true`）。
    - `matches_inside`：包里哪些文件命中了搜索词。
    - 要亲眼看图时，用 `thumb ID --out <临时目录>` 存下缩略图（webp），再用读图工具打开。缩略图只有 `links.thumb` 存在时才有。
 3. **细看压缩包**：
@@ -157,6 +158,7 @@ GET 请求不需要认证。POST 请求要带请求头 `X-Requested-With: anythi
 | 缩略图 | `GET /api/files/{id}/thumb` |
 | 包封面 | 包的 `links.thumb` 照原样请求：可能是 `GET /api/files/{id}/thumb`，没有图片的 UE 包可能是 `GET /api/fab-covers/{name}`（Fab 商城上同名商品的宣传图）或包里 .uasset 缩略图拼成的九宫格；`GET /api/fab-covers/status` 看上次扫描后 Fab 查了几个、配上几个、出了什么错 |
 | 任务状态 | `GET /api/agent/tasks` |
+| 要密码的压缩包 | `GET /api/agent/encrypted?limit=50&offset=0` |
 | 扫描 | `POST /api/scan`，body 为 `{}` |
 | 描述图片 | `POST /api/captions`，body 为 `{"root":"nas","prefix":"文件夹","redo":false}` |
 | 停止描述 | `POST /api/captions/stop` |

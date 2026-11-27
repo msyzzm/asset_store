@@ -134,6 +134,10 @@ def cmd_tasks(args):
     return _json(args, "/api/agent/tasks")
 
 
+def cmd_encrypted(args):
+    return _json(args, "/api/agent/encrypted", {"limit": args.limit, "offset": args.offset})
+
+
 def cmd_scan(args):
     return _json(args, "/api/scan", body={})
 
@@ -515,6 +519,10 @@ def _parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_thumb)
 
     sub.add_parser("tasks", help="what the scanner and the captioner are doing").set_defaults(func=cmd_tasks)
+    p = sub.add_parser("encrypted", help="archives that need a password: locked files, or locked names")
+    p.add_argument("--limit", type=int, default=50)
+    p.add_argument("--offset", type=int, default=0)
+    p.set_defaults(func=cmd_encrypted)
     sub.add_parser("scan", help="ask for a scan now (picks up new files on the NAS)").set_defaults(func=cmd_scan)
     sub.add_parser("scan-stop", help="stop the running scan (or drop one not started yet)").set_defaults(
         func=cmd_scan_stop

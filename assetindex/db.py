@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS archives (
     engine         TEXT,              -- 'unreal' | 'unity' | 'daz' | NULL
     engine_version TEXT,              -- inferred from folder names, e.g. '5.1'
     preview_state  INTEGER,           -- NULL pending, 0 nothing to show, 1 sheet built
-    sheet_version  INTEGER            -- layout the sheet was built with; older ones get rebuilt
+    sheet_version  INTEGER,           -- layout the sheet was built with; older ones get rebuilt
+    encrypted      INTEGER            -- files that need a password; NULL not counted yet
 );
 CREATE TABLE IF NOT EXISTS archive_entries (
     id          INTEGER PRIMARY KEY,
@@ -253,6 +254,7 @@ ADDED_COLUMNS = (
     ("archives", "preview_state", "INTEGER"),
     ("archives", "sheet_version", "INTEGER"),
     ("archives", "preview_postponed", "INTEGER"),  # scans whose preview timed out, in a row
+    ("archives", "encrypted", "INTEGER"),  # files that need a password (2026-11-26)
     ("downloads", "source_id", "TEXT"),
     ("downloads", "resolve", "TEXT"),
 )

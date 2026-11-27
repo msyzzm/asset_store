@@ -26,6 +26,7 @@ from assetindex.extract import ExtractError, find_bsdtar, read_member
 from assetindex.kinds import LISTABLE_ARCHIVE_EXTS, THUMBNAIL_EXTS
 from assetindex.search import MAX_QUERY_LENGTH, fetch_items, parse_terms
 from assetindex.thumbs import EMBEDDED_PREVIEW_EXTS
+from assetindex.unpack import LOCKED_ERROR
 from assetindex.updater import update_state
 
 MAX_AGENT_LIMIT = 50  # results per page: enough to choose from, small enough for a context window
@@ -57,7 +58,8 @@ def agent_item(item: dict) -> dict:
         links["thumb"] = f"/api/files/{item['id']}/thumb"
     archive = None
     if item["entry_count"] is not None:
-        archive = {"entries": item["entry_count"], "engine": item["engine"], "engine_version": item["engine_version"]}
+        archive = {"entries": item["entry_count"], "engine": item["engine"], "engine_version": item["engine_version"],
+                   "encrypted": item.get("encrypted")}
     return {
         "id": item["id"],
         "name": item["name"],
@@ -187,6 +189,28 @@ def add_agent_routes(
         finally:
             entry_slots.release()
         return Response(data, media_type="application/octet-stream", headers=headers)
+
+    @app.get("/api/agent/encrypted")
+    def agent_encrypted(
+        limit: Annotated[int, Query(ge=1, le=200)] = 50,
+        offset: Annotated[int, Query(ge=0)] = 0,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> dict:
+        """Archives that need a password: some files locked (`encrypted` counts them), or
+        even the names (`names_locked`: a 7z the scanner could not list)."""
+        where = "FROM files f JOIN archives a ON a.file_id = f.id WHERE a.encrypted > 0 OR (a.status = 'error' AND a.error LIKE ?)"
+        total = conn.execute(f"SELECT COUNT(*) {where}", (LOCKED_ERROR,)).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT f.id, f.root, f.rel_path, f.size, a.encrypted, a.entry_count, a.status {where}"
+            " ORDER BY f.root, f.rel_path LIMIT ? OFFSET ?",
+            (LOCKED_ERROR, limit, offset),
+        ).fetchall()
+        items = [{
+            "id": r["id"], "path": f"{r['root']}:/{r['rel_path']}", "size": r["size"], "encrypted": r["encrypted"],
+            "entries": r["entry_count"], "names_locked": r["status"] == "error",
+            "links": {"detail": f"/api/agent/files/{r['id']}"},
+        } for r in rows]
+        return {"total": total, "items": items}
 
     @app.get("/api/agent/tasks")
     def agent_tasks() -> dict:

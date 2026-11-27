@@ -11,7 +11,8 @@ MAX_QUERY_LENGTH = 200
 TRIGRAM = 3  # the index's token length: shorter terms cannot use it
 FILE_COLUMNS = (
     "f.id, f.root, f.rel_path, f.name, f.ext, f.kind, f.size, f.mtime, f.seq_frames AS frames,"
-    " a.engine, a.engine_version, a.entry_count, a.preview_state AS sheet, a.sheet_version, c.text AS caption"
+    " a.engine, a.engine_version, a.entry_count, a.preview_state AS sheet, a.sheet_version, a.encrypted,"
+    " c.text AS caption"
 )
 # Hidden sequence members (seq_frames = 0) are represented by their head row.
 VISIBLE = "(f.seq_frames IS NULL OR f.seq_frames > 0)"

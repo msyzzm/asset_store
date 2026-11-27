@@ -87,6 +87,9 @@ def test_rar_uses_rarfile(tmp_path, monkeypatch):
         def is_dir(self):
             return self._dir
 
+        def needs_password(self):
+            return False
+
     class FakeRar:
         def __init__(self, path):
             pass
